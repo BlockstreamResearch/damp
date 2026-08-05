@@ -48,7 +48,7 @@ It also makes transfer availability depend on the cosigning service.
 We replace that online decision with policy evaluation enforced by consensus.
 An issuer posts a policy snapshot and commits to it in a Simplicity verifier covenant \cite{simplicity}.
 Any holder with the snapshot can construct the required proofs.
-The issuer need not participate in an ordinary transfer.
+The issuer does not need to participate in an ordinary transfer.
 In this paper, \emph{decentralized} describes transfer execution and policy data distribution.
 It does not describe policy governance.
 The issuer still chooses and updates the rules.
@@ -440,6 +440,12 @@ It would permit explicit $A$ outputs only to a fixed redemption covenant or a pr
 Both forms of redemption require consent from the holder and the issuer.
 The issuer therefore cannot confiscate.
 
+\subsection{User-controlled UTXO discovery}
+
+Discovering UTXOs locked behind Simplicity scripts remains an open problem in the Liquid ecosystem at the time of writing.
+We propose to use script public keys alone to discover the necessary UTXOs.
+The Liquid Wallet Kit implements this approach as a descriptor variant \cite{lwk-spk-descriptor}.
+End-to-end wallet tests demonstrate it in practice \cite{lwk-spk-descriptor-test}.
 
 \section{Future Work}
 
@@ -448,7 +454,7 @@ Update races need a formal treatment, and sharded verifier outputs need evaluati
 A redemption path authorized by both parties remains to be developed.
 Private policy proofs deserve further study.
 Mechanical verification of the confinement invariant is also open.
-
+UTXO discovery for user-controlled balances remains an ecosystem problem.
 
 \section{Conclusion}
 
@@ -460,12 +466,12 @@ They can transfer under the published policy whenever its authenticated data rem
 \section*{AI Disclosure}
 
 Parts of this work were prepared with an AI assistant, Claude by Anthropic.
-The assistant helped draft and revise the manuscript under the author's direction.
+The assistant helped draft and revise the manuscript under the authors' direction.
 It also helped build and test the experimental SimplicityHL prototype that validated the covenant flow on Elements regtest.
 It cross-checked the stated tagged hash constructions against the Elements implementation.
 It verified that every cited reference resolves and supports the claim it accompanies.
-The protocol design, the paper's structure, and all final decisions are the author's.
-The author reviewed the generated content and takes full responsibility for it.
+The protocol design, the paper's structure, and all final decisions are the authors'.
+The authors reviewed the generated content and take full responsibility for it.
 
 {\small\sloppy
 \bibliographystyle{unsrt}
