@@ -1,0 +1,475 @@
+\documentclass[11pt]{article}
+
+\usepackage{fontspec}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\sha}{\operatorname{SHA256}}
+\newcommand{\pTwoTR}{\operatorname{P2TR}}
+\newcommand{\concat}{\mathbin\|}
+\setlength{\emergencystretch}{2em}
+
+\title{Decentralized Asset Management Protocol on Liquid using Simplicity}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We propose a decentralized protocol for managing regulated Liquid assets.
+Unlike a cosigning service, ordinary transfers require no online issuer signature.
+A holder signs the transaction and spends the verifier output in the same transaction.
+The holder also supplies proofs for the policy snapshot enforced by the Simplicity program.
+If the issuer's service goes offline, holders who retained that snapshot can continue transacting under it.
+The design preserves holder custody and confines the asset to compliant covenants.
+It supports mutable deny lists, allowlists, and transfer limits.
+\end{abstract}
+
+
+\section{Introduction}
+
+Liquid assets are native ledger assets with optional reissuance authority \cite{liquid,liquid-assets}.
+An issuer may still need to restrict their use.
+Common controls include sanctions, freezes ordered by courts, account approval, and transaction limits.
+The public USDC contracts include pause and blacklist roles \cite{usdc-contracts}.
+Tether also states that it may freeze or burn tokens in specified circumstances \cite{tether-rid}.
+
+Blockstream AMP2 applies issuer rules through a 2-of-2 wallet.
+The user and the platform each hold one key.
+Each transfer requires a second signature from the platform \cite{liquid-assets}.
+This gives the issuer a simple enforcement point.
+It also makes transfer availability depend on the cosigning service.
+
+We replace that online decision with policy evaluation enforced by consensus.
+An issuer posts a policy snapshot and commits to it in a Simplicity verifier covenant \cite{simplicity}.
+Any holder with the snapshot can construct the required proofs.
+The issuer need not participate in an ordinary transfer.
+In this paper, \emph{decentralized} describes transfer execution and policy data distribution.
+It does not describe policy governance.
+The issuer still chooses and updates the rules.
+
+The protocol combines three ideas.
+A programmable signature authorizes the holder \cite{programmable-signatures}.
+A verifier output identifies the applicable rules.
+A confinement covenant returns every regulated output to the same ownership form.
+Sections~\ref{sec:model} and~\ref{sec:construction} introduce these ideas before giving their Taproot construction.
+Section~\ref{sec:policies} presents example policies.
+Section~\ref{sec:security} states the resulting guarantees and limits.
+
+
+\section{Protocol Model}
+\label{sec:model}
+
+\subsection{Assets and roles}
+
+The \emph{issuer} creates a regulated Liquid asset $A$ and controls an issuer key $I$.
+Liquid can also create reissuance tokens whose holders may mint more units of $A$ \cite{liquid-assets}.
+This authority is separate from the protocol.
+The issuer may destroy it for a fixed supply or retain it under its governance.
+Any later issuance must enter the regulated covenant.
+Otherwise, the issuer has created unregulated units of $A$.
+
+The issuer also creates a distinct \emph{verifier asset} $V$.
+A valid verifier output carries a fixed amount $q$.
+The issuer may destroy $V$'s reissuance authority for a deployment with one verifier output.
+It may instead retain this authority and create more verifier outputs as demand grows.
+This reduces contention and increases throughput.
+Each unspent verifier output identifies the policy enforced on its transfer path.
+Coordination among several such outputs is outside this paper's scope.
+
+A \emph{holder} controls an x-only public key $X$ and receives $A$ in a user covenant $C_U(X)$.
+A \emph{recipient} is simply the holder selected for a new output.
+The two covenants have different roles.
+
+\begin{itemize}
+    \item $C_U(X)$ proves authorization by $X$ and requires the verifier output at transaction input zero.
+    \item $C_V(\pi)$ enforces the current policy $\pi$ on its normal path and confines every new $A$ output to some $C_U(Y)$.
+\end{itemize}
+
+Thus neither program must trust the other as data.
+The same transaction joins them.
+The user covenant requires $q$ units of $V$.
+The verifier output can move on its normal path only by executing the verifier covenant.
+
+
+\subsection{Setup}
+
+The issuer performs four setup steps.
+
+\begin{enumerate}
+    \item Issue $A$ and place its circulating supply in user covenants.
+    \item Issue $q$ units of $V$ and choose whether to retain $V$'s reissuance authority.
+    \item Choose an initial policy snapshot $D_{\pi_0}$ and publish enough data to reproduce its proofs.
+    \item Lock these $q$ units of $V$ in the verifier covenant $C_V(\pi_0)$.
+\end{enumerate}
+
+The commitment $\pi_0$ authenticates $D_{\pi_0}$ but does not make the data available.
+Holders or independent mirrors must retain the snapshot if they are to spend without the issuer's service.
+
+
+\subsection{Holder transfer}
+
+Suppose $X$ pays $Y$.
+The transaction spends $C_V(\pi)$ at input zero and one or more $C_U(X)$ UTXOs after it.
+Each user input requires its owner to provide a BIP-340 signature over Simplicity's \texttt{sig\_all\_hash} \cite{bip340,simplicity-sighash}.
+This hash commits to the transaction.
+The design follows the programmable signature pattern described in the companion work \cite{programmable-signatures}.
+
+The verifier input then performs two tasks.
+First, it requires every output carrying $A$ to use another user covenant.
+The intended recipient key becomes a parameter of that covenant.
+Second, the verifier evaluates the issuer's policy using transaction data and proofs supplied by the holder.
+The transaction is valid only if both the owner authorization and the verifier checks succeed.
+
+Figure~\ref{fig:transfer} shows the normal flow.
+Output zero recreates the same verifier covenant.
+Payments and change return to user covenants.
+
+\begin{figure}[ht]
+    \centering
+    \begin{tikzpicture}[
+        node distance=0.65cm and 1.15cm,
+        box/.style={draw, rounded corners, align=center, font=\small, inner sep=6pt, minimum width=3.1cm},
+        check/.style={draw, rounded corners, align=left, font=\small, inner sep=7pt, fill=black!4},
+        arrow/.style={-{Latex[length=2mm]}, thick}
+    ]
+        \node[box] (vin) {input 0\\$q$ units of $V$\\in $C_V(\pi)$};
+        \node[box, below=of vin] (ain) {later inputs\\$A$ in $C_U(X)$};
+        \node[check, right=of vin, yshift=-0.45cm] (checks) {owner signature\\policy proofs\\output confinement};
+        \node[box, right=of checks, yshift=0.45cm] (vout) {output 0\\$q$ units of $V$\\in $C_V(\pi)$};
+        \node[box, below=of vout] (aout) {payment in $C_U(Y)$\\change in $C_U(X)$};
+
+        \draw[arrow] (vin) -- (checks);
+        \draw[arrow] (ain) -- (checks);
+        \draw[arrow] (checks) -- (vout);
+        \draw[arrow] (checks) -- (aout);
+    \end{tikzpicture}
+    \caption{An ordinary transfer. No issuer signature is required.}
+    \label{fig:transfer}
+\end{figure}
+
+
+\subsection{Issuer update}
+
+The verifier output uses a NUMS internal key and has two spendable Taproot leaves.
+The normal leaf enforces holder transfers.
+A separate issuer leaf verifies a signature under $I$ over the complete transaction.
+It allows $V$ to move to any successor script.
+The issuer can use the secret key behind $I$ to move $V$ to $C_V(\pi')$.
+This changes the policy commitments or the verifier logic.
+It may also halt normal transfers by moving $V$ elsewhere.
+No hidden Taproot leaf stores separate policy state.
+Instead, $\pi$ is a parameter of the normal path verifier program.
+The resulting TapLeaf hash $P(\pi)$ commits to that policy.
+The locking script $C_V(\pi)$ also commits to it.
+An update does not modify the existing Taproot tree.
+The issuer spends the old verifier output through the issuer leaf.
+It then creates a successor locked to $C_V(\pi')$.
+The normal path program of the successor uses $\pi'$.
+
+This authority does not reveal a holder key.
+It also does not satisfy a user covenant.
+The issuer alone therefore cannot spend a holder's balance.
+It can still change the rules for future transfers authorized by holders.
+
+
+\section{Covenant Construction}
+\label{sec:construction}
+
+\subsection{User covenant state}
+
+We use the Taproot state construction from the Simplicity documentation \cite{simplicity-state,bip341}.
+Let $U$ be the Elements TapLeaf hash of the fixed user program.
+Let $K$ be a NUMS internal key.
+For a tag $t$, define the tagged hash as
+\begin{equation}
+    H_t(m)=\sha\bigl(\sha(t)\concat\sha(t)\concat m\bigr).
+\end{equation}
+For an owner key $X$, define
+\begin{align}
+    D(X) &= H_{\mathtt{TapData}}(X), \\
+    B(a,b) &= H_{\mathtt{TapBranch/elements}}
+        \bigl(\min(a,b)\concat\max(a,b)\bigr), \\
+    R_U(X) &= B\bigl(U,D(X)\bigr), \\
+    C_U(X) &= \pTwoTR\bigl(K,R_U(X)\bigr).
+\end{align}
+Here $\pTwoTR(K,r)$ is the Elements Taproot locking script obtained by tweaking internal key $K$ with script root $r$.
+Elements uses its own tagged hash domains for Taproot \cite{elements-taproot}.
+
+Figure~\ref{fig:user-tree} contains one executable leaf and one unspendable \texttt{TapData} leaf.
+Changing $X$ changes the output without changing the program $U$.
+This lets the verifier embed $U$ and derive a recipient covenant from a supplied public key.
+
+\begin{figure}[ht]
+    \centering
+    \begin{tikzpicture}[
+        node distance=0.75cm and 1.2cm,
+        root/.style={font=\small},
+        box/.style={draw, rounded corners, align=center, font=\small, inner sep=6pt, text width=0.27\linewidth},
+        arrow/.style={-{Latex[length=2mm]}, thick}
+    ]
+        \node[root] (root) {$R_U(X)=B(U,D(X))$};
+        \node[box, below left=of root] (exec) {executable leaf\\fixed user program $U$};
+        \node[box, below right=of root] (state) {hidden data leaf\\$D(X)=H_{\mathtt{TapData}}(X)$};
+        \draw[arrow] (root) -- (exec);
+        \draw[arrow] (root) -- (state);
+    \end{tikzpicture}
+    \caption{Only the user covenant carries hidden Taproot state.}
+    \label{fig:user-tree}
+\end{figure}
+
+
+\subsection{User authorization}
+
+To spend $C_U(X)$ through $U$, the witness reveals $X$ and a signature $\sigma_X$.
+The program recomputes $C_U(X)$ and compares it with its current locking script.
+A witness therefore cannot substitute another key.
+It then checks
+\begin{equation}
+    \operatorname{BIP340Verify}\bigl(X,\operatorname{sigAllHash}(T),\sigma_X\bigr)=1,
+\end{equation}
+where $T$ is the spending transaction.
+The program also checks three facts.
+Its current input must contain explicit asset $A$.
+This input cannot be input zero.
+Input zero must contain explicit verifier asset $V$ in amount $q$.
+
+These checks establish custody.
+They do not duplicate policy logic.
+Policy is enforced when the same transaction spends a verifier output.
+
+
+\subsection{Verifier covenant}
+
+Let $P(\pi)$ be the Elements TapLeaf hash of the verifier program instantiated with policy commitment $\pi$.
+Let $G(I)$ be the TapLeaf hash of a separate issuer program.
+This program accepts a BIP-340 signature under $I$ over \texttt{sig\_all\_hash}.
+It allows any successor script for $V$.
+Using the NUMS internal key $K$, define
+\begin{align}
+    R_V(\pi) &= B\bigl(P(\pi),G(I)\bigr), \\
+    C_V(\pi) &= \pTwoTR\bigl(K,R_V(\pi)\bigr).
+\end{align}
+The leaf $P(\pi)$ is the normal transfer path.
+The leaf $G(I)$ is the issuer update path.
+There is no verifier \texttt{TapData} leaf.
+The NUMS key provides no key path spend.
+
+On the normal path, $P(\pi)$ performs the following checks.
+
+\begin{enumerate}
+    \item Its input is transaction input zero and contains $q$ units of $V$.
+    \item Output zero returns $q$ units of $V$ to the same $C_V(\pi)$.
+    \item At least one regulated input is a genuine $C_U(X)$ input. This input independently requires its owner signature. Only holders can therefore advance the verifier output.
+    \item Every output exposes its asset identifier. Every output of $A$ has locking script $C_U(Y)$ for its supplied recipient key $Y$.
+    \item All enabled policy predicates hold.
+\end{enumerate}
+
+The output scan advances until the transaction reports no output at the next index.
+Its logic does not need to fix the transaction's output count.
+A confidential asset commitment would hide which outputs need confinement.
+Asset identifiers must therefore be explicit.
+Value commitments may remain confidential unless a policy needs their amounts.
+
+
+\subsection{State transitions}
+
+An ordinary transfer has the abstract form
+\begin{align}
+    T_{\mathrm{in}} &=[(V,q,C_V(\pi)),(A,a_1,C_U(X_1)),\ldots], \\
+    T_{\mathrm{out}}&=[(V,q,C_V(\pi)),(A,b_1,C_U(Y_1)),\ldots,\mathrm{fees}].
+\end{align}
+Every user input supplies its owner signature.
+The verifier input supplies the policy proofs.
+Liquid's asset conservation and the two covenant checks preserve both the verifier output and confinement of $A$.
+
+An issuer update is instead
+\begin{equation}
+    (V,q,C_V(\pi))\longrightarrow(V,q,C_V(\pi')).
+\end{equation}
+The issuer authorizes this transition through $G(I)$ with a signature under $I$.
+The spent outpoint orders policy versions.
+After an update confirms, the former verifier output no longer exists.
+
+
+\section{Example Policy Checks}
+\label{sec:policies}
+
+The verifier can implement any predicate expressible from committed policy data, transaction data, and witness proofs.
+The following examples are common rather than exhaustive.
+Sparse Merkle trees provide compact membership and non-membership proofs.
+We use that standard abstraction instead of specifying one tree encoding here \cite{compact-smt,smt-implementation}.
+
+
+\subsection{Deny list}
+
+For an input outpoint $(t,v)$, define a policy key
+\begin{equation}
+    k_{\mathrm{out}}(t,v)=\sha\bigl(t\concat\operatorname{BE}_{32}(v)\bigr).
+\end{equation}
+The issuer commits to a sparse Merkle tree containing denied outpoints.
+Each regulated input supplies a non-membership proof for its key against the committed root.
+A listed UTXO cannot satisfy the verifier.
+An unlisted UTXO can be spent without contacting the issuer if the holder has the current tree data.
+
+
+\subsection{Allowlist}
+
+An allowlist uses membership proofs.
+Keying it by stable owner public keys permits repeated transfers among already approved holders.
+The verifier checks the owners of regulated inputs and the recipients of regulated outputs.
+An issuer may instead key the list by outpoint when every individual UTXO requires approval.
+That stronger model requires a policy update after creating a new outpoint and therefore restores issuer availability as a prerequisite for its next spend.
+
+
+\subsection{Transfer limit}
+
+Let $X$ be the authenticated sender and $\ell$ the current limit.
+The verifier checks three conditions.
+All regulated inputs in the limited transfer must belong to $X$.
+Payments to other owners must use explicit values.
+Their sum must satisfy
+\begin{equation}
+    \sum_{o:\,\operatorname{asset}(o)=A,\ \operatorname{owner}(o)\ne X}
+        \operatorname{value}(o)\leq\ell.
+\end{equation}
+Outputs back to $X$ are change and need not count toward $\ell$.
+Their values may remain confidential.
+The requirement for one sender prevents a recipient from adding a small input and mislabeling a large payment as change.
+This limits the payment amount in one transaction.
+It does not limit the size of a spendable UTXO.
+
+
+\subsection{Extensions}
+
+The same mechanism can combine several roots.
+It can also enforce other rules.
+Examples include jurisdiction sets, credential expiry bounds, and transaction type restrictions.
+New logic is activated by moving $V$ to a new verifier program.
+Its data requirements and privacy cost must be stated for each policy.
+
+
+\section{Security Considerations}
+\label{sec:security}
+
+\subsection{Custody and confinement}
+
+We assume that BIP-340 is unforgeable and that Taproot and policy hashes are binding.
+We assume that no one knows the discrete logarithm of $K$.
+We also assume that Liquid conserves assets.
+The issuer alone controls any retained reissuance authority for $V$.
+Every accepted verifier output carries $q$ units of $V$.
+Assume also that the issuer places every newly issued unit of $A$ in a user covenant.
+If $V$ cannot be reissued, one verifier output exists.
+If the issuer retains its reissuance authority, the following claims apply to each verifier output separately.
+The following claims hold after setup and every normal verifier spend.
+
+\begin{enumerate}
+    \item The spent $q$ units of $V$ are recreated in a successor verifier output under the same policy.
+    \item Every new $A$ output has form $C_U(X)$ for some owner $X$.
+    \item Spending such an output requires $X$'s signature and either the current verifier program or deliberate issuer participation through $G(I)$.
+\end{enumerate}
+
+Setup establishes the claims.
+Verifier recreation and conservation preserve the first claim.
+The complete output scan preserves the second claim.
+The user signature and verifier asset checks preserve the third claim.
+The issuer can freeze or replace future rules.
+It cannot sign for a holder.
+
+
+\subsection{Availability}
+
+Ordinary transfers require no issuer signature and no designated API.
+If the issuer service goes offline, existing verifier outputs remain usable.
+This guarantee depends on the availability of policy data.
+A Merkle root authenticates a proof but cannot generate one.
+Holders should therefore keep or mirror every active snapshot.
+They may also store each snapshot by its content hash.
+They should verify that each snapshot matches $P(\pi)$.
+Loss of that data can halt the normal path until it is recovered or the issuer publishes an update.
+
+The issuer remains a governance authority.
+Possession of the secret key behind $I$ permits arbitrary verifier replacement or a global halt through $G(I)$.
+The protocol therefore decentralizes enforcement but not policy selection.
+
+
+\subsection{Confidentiality}
+
+The verifier must distinguish $A$ from other assets.
+Asset identifiers are therefore explicit.
+Policy commitments and spend proofs are public.
+A proof may also reveal the queried key and path.
+If no policy depends on values, confidential value commitments and range proofs remain available.
+With the transfer limit above, recipient amounts are explicit while sender change may remain confidential.
+Policies keyed by public identity reveal more links than policies keyed by outpoints.
+
+
+\subsection{Contention}
+
+A single verifier output creates a serial state dependency.
+Competing transactions may race for the same outpoint.
+Descendant transfers may still confirm in one block.
+Mempool policy and coordination still limit practical throughput.
+If the issuer retains $V$'s reissuance authority, it can create parallel verifier outputs with $q$ units each.
+These outputs can serve more demand and increase throughput.
+Keeping policy versions consistent across those outputs is outside this paper's scope.
+An optional coordinator can order transactions without becoming an authorization service.
+Users can bypass it and spend the verifier directly on Liquid.
+
+
+\subsection{Issuer key and redemption}
+
+Compromise of $I$ permits policy replacement or denial of service.
+Threshold Schnorr, MuSig, or a native multisig governance covenant can distribute that authority without changing the user covenant \cite{programmable-signatures}.
+
+The normal transfer path has no redemption exit.
+The issuer leaf $G(I)$ still permits an informal exit.
+Spending $V$ at input zero through that leaf satisfies the user covenants spent in the same transaction without running $P(\pi)$.
+A consenting holder and the issuer can therefore move $A$ outside confinement.
+A holder who does not consent is unaffected.
+Every user input still requires its owner's signature.
+A dedicated redemption branch could impose fixed rules.
+It would retain the holder signature requirement and add an issuer signature over the complete transaction.
+It would permit explicit $A$ outputs only to a fixed redemption covenant or a provably unspendable burn script.
+Both forms of redemption require consent from the holder and the issuer.
+The issuer therefore cannot confiscate.
+
+
+\section{Future Work}
+
+Future work should specify a policy publication format that uses content hashes.
+Update races need a formal treatment, and sharded verifier outputs need evaluation.
+A redemption path authorized by both parties remains to be developed.
+Private policy proofs deserve further study.
+Mechanical verification of the confinement invariant is also open.
+
+
+\section{Conclusion}
+
+Simplicity can move regulatory enforcement from an issuer's online cosigner into a Liquid covenant.
+The issuer keeps the authority to set rules.
+Holders keep their keys.
+They can transfer under the published policy whenever its authenticated data remains available.
+
+\section*{AI Disclosure}
+
+Parts of this work were prepared with an AI assistant, Claude by Anthropic.
+The assistant helped draft and revise the manuscript under the author's direction.
+It also helped build and test the experimental SimplicityHL prototype that validated the covenant flow on Elements regtest.
+It cross-checked the stated tagged hash constructions against the Elements implementation.
+It verified that every cited reference resolves and supports the claim it accompanies.
+The protocol design, the paper's structure, and all final decisions are the author's.
+The author reviewed the generated content and takes full responsibility for it.
+
+{\small\sloppy
+\bibliographystyle{unsrt}
+\bibliography{references}
+}
+
+\end{document}
