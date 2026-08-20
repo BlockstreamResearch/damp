@@ -30,8 +30,9 @@ export async function putDeployment(deployment: Deployment) {
   if (!active) await setActiveDeploymentId(deployment.deploymentId);
 }
 
-export async function getActiveDeploymentId(): Promise<string | undefined> {
-  return (await database).get("settings", "activeDeploymentId");
+export async function getActiveDeploymentId(): Promise<string | null> {
+  const deploymentId = await (await database).get("settings", "activeDeploymentId");
+  return deploymentId ?? null;
 }
 
 export async function setActiveDeploymentId(deploymentId: string) {
@@ -39,9 +40,9 @@ export async function setActiveDeploymentId(deploymentId: string) {
   await (await database).put("settings", deploymentId, "activeDeploymentId");
 }
 
-export async function getActiveDeployment(): Promise<Deployment | undefined> {
+export async function getActiveDeployment(): Promise<Deployment | null> {
   const deploymentId = await getActiveDeploymentId();
-  return deploymentId ? getDeployment(deploymentId) : undefined;
+  return deploymentId ? (await getDeployment(deploymentId)) ?? null : null;
 }
 
 export function snapshotKey(deploymentId: string, verifierScriptHash: string) {

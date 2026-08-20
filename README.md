@@ -37,15 +37,26 @@ The web app persists public deployments locally and scopes anchor, policy, UTXO,
 draft, and receive-record data by the selected deployment ID. A standalone Rust
 AMP Signer SDK owns bootstrap, receive, transfer, policy-update, and reissuance
 validation. It uses LWK for mnemonic derivation, SLIP77, and ordinary wallet
-signing, compiles to WebAssembly, and keeps the recovery phrase in memory only.
-The browser supplies chain data through Esplora but never executable Simplicity
-source.
+signing and compiles to WebAssembly. Manually entered recovery phrases remain
+in memory; the explicit `NEW` debug flow stores its generated phrase unencrypted
+in versioned browser local storage. The browser supplies chain data through
+Esplora but never executable Simplicity source.
+
+New Liquid testnet deployments derive two signer funding addresses and link
+them directly to the public L-BTC faucet. The native fee asset is selected by
+the network, while the regulated and verifier asset IDs are derived by the
+bootstrap issuance transaction. GitHub Pages builds read the public
+`VITE_GITHUB_REGISTRY_REPO` setting for read-only registry verification. Registry
+publication is intentionally manual: the app downloads canonical JSON, shows its
+exact repository path, and enables the next operation only after the byte-identical
+file is available from the repository's default branch. No GitHub client ID or
+browser authorization is required.
 
 ## Reproducible build
 
 Simplex 0.0.9 and `simplicityhl-std` revision
 `53b06722830fd85150389976e6b28ea26cc037f7` are pinned. Prepare the standard
-library, generate ignored artifacts, then run the checks:
+library, deterministically regenerate the committed artifacts, then run the checks:
 
 ```bash
 ./scripts/prepare-simplex-std.sh

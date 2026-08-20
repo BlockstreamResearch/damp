@@ -1,11 +1,11 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { QRCodeSVG } from "qrcode.react";
 import { z } from "zod";
-import { ArrowRight, Check, Copy, EyeOff, Fuel, Info, Radio, Send, ShieldCheck, WalletCards } from "lucide-react";
+import { ArrowRight, Check, Copy, ExternalLink, EyeOff, Fuel, Info, Radio, RefreshCw, Send, ShieldCheck, WalletCards } from "lucide-react";
 
 import {
   AppShell,
@@ -20,6 +20,7 @@ import {
 } from "../components/ui";
 import {
   createReceiveRecord,
+  deriveWalletAddress,
   signTransfer,
   signerSnapshot,
   subscribeSigner,
@@ -46,10 +47,11 @@ import {
   type ReceiveRecord,
 } from "../lib/domain";
 import { esploraUrlForDeployment, requireFreshAnchor, traverseLiveAnchor } from "../lib/esplora";
+import { liquidTestnetFaucetUrl } from "../lib/faucet";
 import { resolvePolicySnapshot } from "../lib/policy-registry";
 import { listReceiveRecords, putReceiveRecord } from "../lib/store";
 
-function usePortfolio(deployment: Deployment | undefined, signerConnected: boolean) {
+function usePortfolio(deployment: Deployment | null | undefined, signerConnected: boolean) {
   return useQuery({
     queryKey: ["portfolio", deployment?.deploymentId, signerConnected],
     enabled: Boolean(deployment && signerConnected),
@@ -67,7 +69,7 @@ function usePortfolio(deployment: Deployment | undefined, signerConnected: boole
       return {
         balance: regulated.inspected.reduce((sum, utxo) => sum + BigInt(utxo.amount), 0n),
         utxos: regulated.utxos.length,
-        feeReady: fees.inspected.some((utxo) => !utxo.assetConfidential),
+        feeReady: fees.inspected.length > 0,
       };
     },
   });
@@ -77,7 +79,18 @@ export function WalletDashboard() {
   const deployment = useActiveDeployment();
   const signer = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
   const portfolio = usePortfolio(deployment.data, signer.connected);
+  const queryClient = useQueryClient();
   const [feeMessage, setFeeMessage] = useState<string>();
+  const fundingAddress = useQuery({
+    queryKey: ["fee-funding-address", signer.fingerprint, deployment.data?.network],
+    enabled: Boolean(signer.connected && deployment.data?.network === "liquid-testnet"),
+    queryFn: () => deriveWalletAddress(0, 0, requireDeployment(deployment.data).network),
+  });
+
+  async function refreshPortfolio() {
+    await queryClient.invalidateQueries({ queryKey: ["portfolio", deployment.data?.deploymentId] });
+    setFeeMessage("Wallet funding scan refreshed. Faucet outputs become spendable after confirmation.");
+  }
 
   return (
     <AppShell role="holder" eyebrow="Holder wallet" title="Your regulated assets">
@@ -109,8 +122,19 @@ export function WalletDashboard() {
             <Panel className="activity-card"><SectionHeading label="Deployment state" title="Live data only" /><p>Balances and actions are scoped by deployment ID. The signer SDK validates every selected chain output locally.</p></Panel>
           </div>
           <Panel className="fee-panel">
-            <div><span className="round-icon"><Fuel size={18} /></span><div><strong>Explicit policy-asset fee inputs</strong><p>AMP keeps asset IDs explicit; the SDK blinds holder values locally.</p></div></div>
-            {portfolio.data?.feeReady ? <VerifiedLabel>Fee input ready</VerifiedLabel> : <button className="button secondary" type="button" onClick={() => setFeeMessage("Connect the signer, derive its funding address, send policy asset, then refresh.")}>How to prepare</button>}
+            <div><span className="round-icon"><Fuel size={18} /></span><div><strong>L-BTC transaction fees</strong><p>Fund the local signer on Liquid testnet, then refresh after confirmation.</p></div></div>
+            {portfolio.data?.feeReady ? (
+              <VerifiedLabel>Fee input ready</VerifiedLabel>
+            ) : fundingAddress.data ? (
+              <div className="fee-actions">
+                <a className="button secondary" href={liquidTestnetFaucetUrl(fundingAddress.data.confidentialAddress)} target="_blank" rel="noreferrer" onClick={() => setFeeMessage("Faucet opened for the signer funding address. Wait for confirmation, then refresh.")}>
+                  Get testnet L-BTC <ExternalLink size={14} />
+                </a>
+                <button className="icon-button" type="button" aria-label="Refresh fee funding" onClick={() => void refreshPortfolio()}><RefreshCw size={15} /></button>
+              </div>
+            ) : (
+              <button className="button secondary" type="button" onClick={() => setFeeMessage("Connect the signer to derive its Liquid testnet funding address.")}>Connect to fund</button>
+            )}
           </Panel>
           {feeMessage && <p className="inline-message" role="status">{feeMessage}</p>}
           <TechnicalDetails label="Deployment details"><dl className="detail-grid"><div><dt>Asset ID</dt><dd>{deployment.data.regulatedAsset}</dd></div><div><dt>Genesis anchor</dt><dd>{deployment.data.genesisAnchor}</dd></div><div><dt>User program</dt><dd>{deployment.data.userProgramHash}</dd></div><div><dt>Governance program</dt><dd>{deployment.data.governanceProgramHash}</dd></div></dl></TechnicalDetails>

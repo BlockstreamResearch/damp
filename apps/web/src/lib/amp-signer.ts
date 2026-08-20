@@ -96,6 +96,34 @@ let modulePromise: Promise<SignerModule> | undefined;
 let signer: WasmAmpSigner | undefined;
 let state: SignerState = { connected: false };
 const listeners = new Set<() => void>();
+const debugMnemonicKey = "simplicity-amp:debug-mnemonic:v1";
+
+function normalizeMnemonic(mnemonic: string) {
+  return mnemonic.trim().replace(/\s+/g, " ");
+}
+
+export function saveDebugMnemonic(mnemonic: string) {
+  const normalized = normalizeMnemonic(mnemonic);
+  if (!normalized) throw new Error("Cannot save an empty recovery phrase.");
+  try {
+    localStorage.setItem(debugMnemonicKey, JSON.stringify({ version: 1, mnemonic: normalized }));
+  } catch {
+    throw new Error("The generated recovery phrase could not be saved in local storage.");
+  }
+}
+
+export function loadDebugMnemonic(): string | undefined {
+  try {
+    const stored = localStorage.getItem(debugMnemonicKey);
+    if (!stored) return undefined;
+    const parsed = JSON.parse(stored) as { version?: unknown; mnemonic?: unknown };
+    if (parsed.version !== 1 || typeof parsed.mnemonic !== "string") return undefined;
+    const normalized = normalizeMnemonic(parsed.mnemonic);
+    return normalized || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 async function loadModule() {
   modulePromise ??= import("../generated/amp-signer/simplicity_amp_signer").then(async (module) => {
@@ -120,7 +148,7 @@ export function subscribeSigner(listener: () => void) {
 }
 
 export async function connectSigner(mnemonic: string, network: SignerNetwork) {
-  const words = mnemonic.trim().replace(/\s+/g, " ");
+  const words = normalizeMnemonic(mnemonic);
   if (!words) throw new Error("Enter a BIP39 recovery phrase.");
   const module = await loadModule();
   signer?.free();

@@ -62,12 +62,12 @@ export const localDeploymentSchema = deploymentManifestSchema.extend({
 
 export type Deployment = z.infer<typeof localDeploymentSchema>;
 
-export function requireDeployment(deployment: Deployment | undefined): Deployment {
+export function requireDeployment(deployment: Deployment | null | undefined): Deployment {
   if (!deployment) throw new Error("Import or create a deployment first.");
   return deployment;
 }
 
-export function requirePublishedDeployment(deployment: Deployment | undefined): Deployment {
+export function requirePublishedDeployment(deployment: Deployment | null | undefined): Deployment {
   const selected = requireDeployment(deployment);
   if (selected.publication !== "published") {
     throw new Error("The deployment manifest and initial policy must be published before asset operations.");

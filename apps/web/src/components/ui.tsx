@@ -20,6 +20,8 @@ import {
   connectSigner,
   disconnectSigner,
   generateMnemonic,
+  loadDebugMnemonic,
+  saveDebugMnemonic,
   signerSnapshot,
   subscribeSigner,
 } from "../lib/amp-signer";
@@ -94,7 +96,7 @@ export function AppShell({
         <div className="rail-bottom">
           <DeploymentSelector />
           <span className="network-dot" /> Liquid testnet
-          <a href="https://github.com/BlockstreamResearch/simplicity-amp" target="_blank" rel="noreferrer">
+          <a href="https://github.com/BlockstreamResearch/damp" target="_blank" rel="noreferrer">
             <BookOpen size={15} /> Protocol source
           </a>
           <Link to={role === "holder" ? "/admin" : "/wallet"} className="switch-role">
@@ -150,14 +152,17 @@ export function WalletStatus() {
       return;
     }
     const network = deployment.data?.network ?? "liquid-testnet";
+    const savedMnemonic = loadDebugMnemonic();
     const input = window.prompt(
-      "Enter your BIP39 recovery phrase. Type NEW to create a fresh 12-word signer. The phrase stays only in this browser tab.",
+      "Enter your BIP39 recovery phrase. Type NEW to create a fresh 12-word debug signer. NEW phrases are saved unencrypted in this browser's local storage.",
+      savedMnemonic ?? "",
     );
     if (!input) return;
     let mnemonic = input;
     if (input.trim().toUpperCase() === "NEW") {
       mnemonic = await generateMnemonic();
-      window.alert(`Write down this recovery phrase before continuing:\n\n${mnemonic}`);
+      saveDebugMnemonic(mnemonic);
+      window.alert(`Debug recovery phrase (saved unencrypted in local storage):\n\n${mnemonic}`);
     }
     await connectSigner(mnemonic, network);
   }

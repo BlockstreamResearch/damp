@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { AlertTriangle, ArrowRight, Check, Download, GitPullRequest, ListFilter, Minus, Plus, RefreshCw, Rocket, ShieldCheck, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Download, ExternalLink, Fuel, GitPullRequest, ListFilter, Minus, Plus, RefreshCw, Rocket, ShieldCheck, Trash2, Upload } from "lucide-react";
 
 import { AppShell, BackLink, Panel, Pill, SafetyNote, SectionHeading, TechnicalDetails, WalletStatus } from "../components/ui";
 import {
@@ -18,6 +18,7 @@ import {
   validatePolicySnapshot,
   validateReceiveRecord,
   validateReceiveRecordShape,
+  type DerivedWalletAddress,
 } from "../lib/amp-signer";
 import {
   broadcastTransaction,
@@ -48,13 +49,14 @@ import {
   type PolicySnapshot,
 } from "../lib/domain";
 import { AnchorConflictError, esploraUrlForDeployment, requireFreshAnchor, traverseLiveAnchor } from "../lib/esplora";
+import { liquidTestnetFaucetUrl, nativeFeeAssetId } from "../lib/faucet";
 import {
   canonicalRegistryContent,
-  finishGitHubDeviceFlow,
-  publishRegistryFile,
+  deploymentRegistryPath,
+  downloadCanonicalRegistryFile,
   registryPathForVerifierScript,
-  startGitHubDeviceFlow,
-  waitForCanonicalRegistryFile,
+  registryRepositoryUrl,
+  verifyCanonicalRegistryFile,
 } from "../lib/github";
 import { buildSuccessorPolicy, resolvePolicySnapshot, sha256Hex } from "../lib/policy-registry";
 import {
@@ -67,15 +69,13 @@ import {
   setActiveDeploymentId,
 } from "../lib/store";
 
-type DeviceAuthorization = Awaited<ReturnType<typeof startGitHubDeviceFlow>>;
-
 const entryFormSchema = z.object({
   outpoint: z.string().regex(/^[0-9a-f]{64}:[0-9]+$/, "Use exact lowercase txid:vout format"),
   note: z.string().trim().max(280).optional(),
 });
 type EntryForm = z.infer<typeof entryFormSchema>;
 
-function useLivePolicy(deployment: Deployment | undefined) {
+function useLivePolicy(deployment: Deployment | null | undefined) {
   const anchor = useQuery({
     queryKey: ["anchor", deployment?.deploymentId],
     enabled: Boolean(deployment),
@@ -96,7 +96,7 @@ export function AdminDashboard() {
   const [draft, setDraft] = useState<BlacklistEntry[]>([]);
   const [loadedPolicy, setLoadedPolicy] = useState<string>();
   const [pending, setPending] = useState<PolicySnapshot>();
-  const [device, setDevice] = useState<DeviceAuthorization>();
+  const [pendingPath, setPendingPath] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
   const form = useForm<EntryForm>({ resolver: zodResolver(entryFormSchema) });
@@ -111,7 +111,13 @@ export function AdminDashboard() {
       getDraft<PolicySnapshot>(selected.deploymentId, "pending-policy"),
     ]).then(([stored, storedPending]) => {
       setDraft(stored ?? current.entries);
-      if (storedPending?.parentPolicyRoot === current.policyRoot) setPending(storedPending);
+      if (storedPending?.parentPolicyRoot === current.policyRoot) {
+        setPending(storedPending);
+        void registryPathForVerifierScript(selected.deploymentId, storedPending.verifierScriptPubkey).then(setPendingPath);
+      } else {
+        setPending(undefined);
+        setPendingPath(undefined);
+      }
     });
   }, [deployment.data, loadedPolicy, policy.data]);
 
@@ -143,19 +149,7 @@ export function AdminDashboard() {
     form.reset();
   }
 
-  async function authorizeGitHub() {
-    try {
-      const authorization = await startGitHubDeviceFlow();
-      setDevice(authorization);
-      window.open(authorization.verification_uri, "_blank", "noopener,noreferrer");
-      await finishGitHubDeviceFlow(authorization);
-      setMessage("GitHub authorized for this page session.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function publish() {
+  async function downloadPolicySnapshot() {
     setBusy(true);
     try {
       const selected = requirePublishedDeployment(deployment.data);
@@ -163,15 +157,11 @@ export function AdminDashboard() {
       if (!current) throw new Error("Resolve the canonical live policy first.");
       const successor = await buildSuccessorPolicy(selected, current, draft);
       const path = await registryPathForVerifierScript(selected.deploymentId, successor.verifierScriptPubkey);
-      const pullRequest = await publishRegistryFile({
-        path,
-        content: successor,
-        title: `registry: ${selected.asset.ticker} policy ${successor.sequence}`,
-        body: `Blacklist-only depth ${successor.treeDepth} snapshot. Governance activation is gated on exact default-branch bytes.`,
-      });
+      const downloaded = downloadCanonicalRegistryFile(path, successor);
       setPending(successor);
+      setPendingPath(path);
       await putDraft(selected.deploymentId, "pending-policy", successor);
-      setMessage(`Pull request opened: ${pullRequest.html_url}. Merge it before activation.`);
+      setMessage(`Downloaded ${downloaded.filename}. Add it at ${path}, merge it into the default branch, then activate.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -186,9 +176,9 @@ export function AdminDashboard() {
       const current = policy.data;
       const originalAnchor = anchor.data;
       const successor = pending ?? await getDraft<PolicySnapshot>(selected.deploymentId, "pending-policy");
-      if (!current || !originalAnchor || !successor) throw new Error("Publish a successor snapshot first.");
+      if (!current || !originalAnchor || !successor) throw new Error("Download a successor snapshot first.");
       const path = await registryPathForVerifierScript(selected.deploymentId, successor.verifierScriptPubkey);
-      await waitForCanonicalRegistryFile({ path, content: successor });
+      await verifyCanonicalRegistryFile(path, successor);
       const esplora = esploraUrlForDeployment(selected);
       await requireFreshAnchor(selected, originalAnchor.live, esplora);
       const [verifierUtxo, walletUtxos] = await Promise.all([
@@ -215,12 +205,14 @@ export function AdminDashboard() {
       await putDeployment({ ...selected, activeAnchor: `${winning.live.txid}:0`, confirmations: winning.live.confirmations });
       await putPolicySnapshot(successor, await sha256Hex(successor.verifierScriptPubkey));
       setPending(undefined);
+      setPendingPath(undefined);
       setLoadedPolicy(undefined);
       await Promise.all([queryClient.invalidateQueries({ queryKey: ["anchor", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: ["policy", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.active })]);
       setMessage(`Policy ${successor.sequence} active at ${winning.live.txid}:0.`);
     } catch (error) {
       if (error instanceof AnchorConflictError && deployment.data) {
         setPending(undefined);
+        setPendingPath(undefined);
         await putDraft(deployment.data.deploymentId, "pending-policy", null);
       }
       setMessage(error instanceof Error ? error.message : String(error));
@@ -241,7 +233,15 @@ export function AdminDashboard() {
           </Panel>
           <aside className="policy-sidebar"><Panel><SectionHeading label="Iterative capacity" title={`Depth ${depth} · ${2 ** depth} entries`} /><div className="diff-counts"><div><Plus size={15} /><span><strong>{changes.added}</strong> added</span></div><div><Minus size={15} /><span><strong>{changes.removed}</strong> removed</span></div></div><div className="root-preview"><small>Next policy digest</small><code>{preview.data ? shortHash(preview.data.policyRoot, 12, 10) : "Calculating…"}</code></div><button className="button secondary wide" type="button" onClick={() => setDraft(policy.data?.entries ?? [])}>Discard draft</button></Panel><SafetyNote title="Two-phase activation">The exact immutable snapshot must be retrievable from the canonical default branch before the local signer authorizes governance.</SafetyNote></aside>
         </div>
-        <Panel className="publish-flow"><SectionHeading label="Publish and authorize" title="Move this draft on chain" /><div className="publish-steps"><div><span>1</span><div><strong>Authorize GitHub</strong><small>Token stays in memory</small></div><button className="button secondary" type="button" onClick={authorizeGitHub}>Connect</button></div><div><span>2</span><div><strong>Open snapshot PR</strong><small>D{depth}, exact canonical bytes</small></div><button className="button secondary" disabled={busy || !(changes.added || changes.removed)} type="button" onClick={publish}><GitPullRequest size={15} /> Open PR</button></div><div><span>3</span><div><strong>Activate governance leaf</strong><small>Waits for merge and rechecks anchor</small></div><button className="button issuer-primary" disabled={busy || !pending} type="button" onClick={activate}>Review update <ArrowRight size={15} /></button></div></div>{device && <div className="device-code"><span>GitHub code</span><strong>{device.user_code}</strong><a href={device.verification_uri} target="_blank" rel="noreferrer">Open GitHub</a></div>}{message && <p className="inline-message" role="status">{message}</p>}</Panel>
+        <Panel className="publish-flow">
+          <SectionHeading label="Manual publication" title="Move this draft on chain" />
+          <div className="publish-steps">
+            <div><span>1</span><div><strong>Download snapshot</strong><small>D{depth}, exact canonical bytes</small></div><button className="button secondary" disabled={busy || !(changes.added || changes.removed)} type="button" onClick={downloadPolicySnapshot}><Download size={15} /> Download JSON</button></div>
+            <div><span>2</span><div><strong>Add and merge the file</strong><small title={pendingPath}>{pendingPath ?? "Download to calculate its exact path"}</small></div><a className="button secondary" href={registryRepositoryUrl} target="_blank" rel="noreferrer"><GitPullRequest size={15} /> Open repository</a></div>
+            <div><span>3</span><div><strong>Verify and activate</strong><small>Checks exact merged bytes and the live anchor</small></div><button className="button issuer-primary" disabled={busy || !pending} type="button" onClick={activate}>Review update <ArrowRight size={15} /></button></div>
+          </div>
+          {message && <p className="inline-message" role="status">{message}</p>}
+        </Panel>
         <TechnicalDetails label="Policy commitment details"><dl className="detail-grid"><div><dt>Policy profile</dt><dd>Blacklist non-membership only</dd></div><div><dt>Key</dt><dd>SHA256(consensus_txid || big_endian(vout))</dd></div><div><dt>Supported depths</dt><dd>4, 5, 6</dd></div><div><dt>PoC transaction limit</dt><dd>10 regulated inputs and outputs</dd></div></dl></TechnicalDetails>
       </>}
     </AppShell>
@@ -265,30 +265,48 @@ const setupSchema = z.object({
   supply: z.string().regex(/^[1-9][0-9]*$/),
   supplyMode: z.enum(["fixed", "issuer-managed"]),
   network: z.enum(["liquid-testnet", "elements-regtest"]),
-  policyAsset: z.string().regex(/^[0-9a-f]{64}$/),
 });
 type SetupForm = z.infer<typeof setupSchema>;
+type BootstrapConfiguration = SetupForm & { policyAsset: string };
 
 type BootstrapState = { deployment: Deployment; snapshot: PolicySnapshot };
+type BootstrapRegistryFiles = { manifestPath: string; snapshotPath: string };
 
 export function AdminSetup() {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"choose" | "create" | "import">("choose");
-  const [configuration, setConfiguration] = useState<SetupForm>();
+  const [configuration, setConfiguration] = useState<BootstrapConfiguration>();
   const [salt, setSalt] = useState<string>();
   const [bootstrapped, setBootstrapped] = useState<BootstrapState>();
-  const [fundingAddress, setFundingAddress] = useState<string>();
+  const [registryFiles, setRegistryFiles] = useState<BootstrapRegistryFiles>();
+  const [fundingAddresses, setFundingAddresses] = useState<DerivedWalletAddress[]>([]);
   const [importValue, setImportValue] = useState("");
   const [message, setMessage] = useState<string>();
-  const form = useForm<SetupForm>({ resolver: zodResolver(setupSchema), defaultValues: { name: "", ticker: "", precision: 8, supply: "", supplyMode: "fixed", network: "liquid-testnet", policyAsset: "" } });
+  const form = useForm<SetupForm>({ resolver: zodResolver(setupSchema), defaultValues: { name: "", ticker: "", precision: 8, supply: "", supplyMode: "fixed", network: "liquid-testnet" } });
 
   async function preview(value: SetupForm) {
-    const bytes = crypto.getRandomValues(new Uint8Array(32));
-    const deploymentSalt = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    setConfiguration(value);
-    setSalt(deploymentSalt);
-    setFundingAddress((await deriveWalletAddress(0, 0, value.network)).confidentialAddress);
-    await putDraft("setup", "recovery", { protocol: "simplicity-amp/v0.1", deploymentSalt, ...value });
+    try {
+      const bytes = crypto.getRandomValues(new Uint8Array(32));
+      const deploymentSalt = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      const policyAsset = nativeFeeAssetId(value.network);
+      const addresses = await Promise.all([
+        deriveWalletAddress(0, 0, value.network),
+        deriveWalletAddress(0, 1, value.network),
+      ]);
+      const prepared = { ...value, policyAsset };
+      setConfiguration(prepared);
+      setSalt(deploymentSalt);
+      setFundingAddresses(addresses);
+      await putDraft("setup", "recovery", {
+        protocol: "simplicity-amp/v0.1",
+        deploymentSalt,
+        ...prepared,
+        fundingAddresses: addresses.map(({ confidentialAddress }) => confidentialAddress),
+      });
+      setMessage("Asset issuance prepared. Fund both addresses, wait for confirmation, then issue the asset.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function downloadRecovery() {
@@ -309,7 +327,7 @@ export function AdminSetup() {
       const walletUtxos = await scanWalletAt(esplora, 10, configuration.network);
       const policy = await inspectAndFilter(walletUtxos, configuration.policyAsset);
       if (policy.utxos.length < 2) {
-        throw new Error("Bootstrap requires two confirmed policy-asset UTXOs in the signer wallet.");
+        throw new Error("Asset issuance requires two confirmed L-BTC UTXOs. Request one for each funding address, then retry.");
       }
       const result = await bootstrapDeployment({
         network: configuration.network,
@@ -340,23 +358,61 @@ export function AdminSetup() {
       await putPolicySnapshot(snapshot, await sha256Hex(snapshot.verifierScriptPubkey));
       await putReceiveRecord(initialReceiveRecord, result.holderDerivationIndex);
       setBootstrapped({ deployment: local, snapshot });
+      setRegistryFiles(undefined);
       await queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.all });
-      setMessage(`Bootstrap broadcast: ${result.txid}. Confirm it before publishing.`);
+      setMessage(`Asset ${manifest.regulatedAsset} issued in ${result.txid}. Confirm it before publishing.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
   }
 
-  async function publishBootstrap() {
+  async function prepareBootstrapRegistry() {
     try {
       if (!bootstrapped) throw new Error("Bootstrap a deployment first.");
       const anchor = await traverseLiveAnchor(bootstrapped.deployment, esploraUrlForDeployment(bootstrapped.deployment));
       if (anchor.live.confirmations < 1) throw new Error("Bootstrap is not confirmed yet.");
-      const manifest = publicManifest(bootstrapped.deployment);
       const snapshotPath = await registryPathForVerifierScript(bootstrapped.deployment.deploymentId, bootstrapped.snapshot.verifierScriptPubkey);
-      await publishRegistryFile({ path: `deployments/${bootstrapped.deployment.deploymentId}.json`, content: manifest, title: `registry: add ${bootstrapped.deployment.asset.ticker}`, body: "Immutable AMP v0.1 deployment manifest." });
-      await publishRegistryFile({ path: snapshotPath, content: bootstrapped.snapshot, title: `registry: add ${bootstrapped.deployment.asset.ticker} genesis policy`, body: "Empty depth-4 genesis blacklist snapshot." });
-      setMessage("Manifest and initial-policy pull requests opened. Merge both, then import or refresh the deployment.");
+      const manifestPath = deploymentRegistryPath(bootstrapped.deployment.deploymentId);
+      setRegistryFiles({ manifestPath, snapshotPath });
+      setMessage("Bootstrap confirmed. Download both files, add them at the exact paths shown, and merge them into the default branch.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function downloadBootstrapManifest() {
+    if (!bootstrapped || !registryFiles) return;
+    downloadCanonicalRegistryFile(registryFiles.manifestPath, publicManifest(bootstrapped.deployment));
+  }
+
+  function downloadBootstrapSnapshot() {
+    if (!bootstrapped || !registryFiles) return;
+    downloadCanonicalRegistryFile(registryFiles.snapshotPath, bootstrapped.snapshot);
+  }
+
+  async function verifyBootstrapRegistry() {
+    try {
+      if (!bootstrapped || !registryFiles) throw new Error("Prepare the manual registry files first.");
+      const manifest = publicManifest(bootstrapped.deployment);
+      const [anchor] = await Promise.all([
+        traverseLiveAnchor(bootstrapped.deployment, esploraUrlForDeployment(bootstrapped.deployment)),
+        verifyCanonicalRegistryFile(registryFiles.manifestPath, manifest),
+        verifyCanonicalRegistryFile(registryFiles.snapshotPath, bootstrapped.snapshot),
+      ]);
+      if (anchor.live.confirmations < 1) throw new Error("Bootstrap is not confirmed yet.");
+      const published = localDeploymentSchema.parse({
+        ...bootstrapped.deployment,
+        activeAnchor: `${anchor.live.txid}:0`,
+        confirmations: anchor.live.confirmations,
+        publication: "published",
+      });
+      await putDeployment(published);
+      setBootstrapped({ ...bootstrapped, deployment: published });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.all }),
+        queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.active }),
+      ]);
+      setMessage("The merged manifest and D4 snapshot match exactly. This deployment is ready for transfers and policy updates.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -390,7 +446,61 @@ export function AdminSetup() {
     <AppShell role="issuer" eyebrow="Issuer console / Setup" title="Create or import a deployment">
       <BackLink to="/admin">Back to policy workspace</BackLink>
       {mode === "choose" && <div className="setup-choice-grid"><button className="choice-card" type="button" onClick={() => setMode("create")}><span><Rocket size={22} /></span><div><small>New deployment</small><h2>Create</h2><p>Issue the regulated asset, optional token, and one verifier unit with the local AMP Signer SDK.</p></div><ArrowRight size={19} /></button><button className="choice-card" type="button" onClick={() => setMode("import")}><span><Upload size={22} /></span><div><small>Existing deployment</small><h2>Import</h2><p>Validate the manifest, canonical live policy, chain anchor, and issuer key.</p></div><ArrowRight size={19} /></button></div>}
-      {mode === "create" && <div className="setup-layout"><Panel className="setup-main"><form className="form-stack" onSubmit={form.handleSubmit(preview)}><SectionHeading label="Bootstrap configuration" title="Asset and supply" /><div className="form-grid-two"><label>Asset name<input {...form.register("name")} /></label><label>Ticker<input {...form.register("ticker")} /></label><label>Precision<input type="number" {...form.register("precision", { valueAsNumber: true })} /></label><label>Initial supply<input inputMode="numeric" {...form.register("supply")} /></label></div><label>Policy asset ID<input spellCheck={false} {...form.register("policyAsset")} /></label><label>Network<select {...form.register("network")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label><fieldset><legend>Supply model</legend><label className="radio-card"><input type="radio" value="fixed" {...form.register("supplyMode")} /><span><strong>Fixed</strong><small>Destroy the regulated-asset reissuance token.</small></span></label><label className="radio-card"><input type="radio" value="issuer-managed" {...form.register("supplyMode")} /><span><strong>Issuer managed</strong><small>The signer wallet retains the confidential reissuance token.</small></span></label></fieldset><button className="button issuer-primary wide" type="submit">Prepare recovery data</button></form>{configuration && salt && <div className="setup-step"><pre>{canonicalRegistryContent({ deploymentSalt: salt, ...configuration, fundingAddress })}</pre><p>Fund <strong>{fundingAddress}</strong> with at least two confirmed policy-asset UTXOs before continuing.</p><div className="review-buttons"><button className="button secondary" type="button" onClick={downloadRecovery}><Download size={16} /> Save recovery</button><button className="button issuer-primary" type="button" onClick={bootstrap}>Bootstrap locally</button></div></div>}{bootstrapped && <button className="button issuer-primary wide" type="button" onClick={publishBootstrap}><GitPullRequest size={16} /> Publish confirmed manifest and D4 policy</button>}{message && <p className="inline-message" role="status">{message}</p>}</Panel><aside className="setup-aside"><SafetyNote title="Small first tree">Every deployment starts with the D4 verifier. Governance upgrades to D5 or D6 only when the blacklist grows.</SafetyNote></aside></div>}
+      {mode === "create" && (
+        <div className="setup-layout">
+          <Panel className="setup-main">
+            <form className="form-stack" onSubmit={form.handleSubmit(preview)}>
+              <SectionHeading label="Bootstrap configuration" title="Issue an asset" />
+              <div className="form-grid-two">
+                <label>Asset name<input {...form.register("name")} /></label>
+                <label>Ticker<input {...form.register("ticker")} /></label>
+                <label>Precision<input type="number" {...form.register("precision", { valueAsNumber: true })} /></label>
+                <label>Initial supply<input inputMode="numeric" {...form.register("supply")} /></label>
+              </div>
+              <label>Network<select {...form.register("network")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label>
+              <fieldset>
+                <legend>Supply model</legend>
+                <label className="radio-card"><input type="radio" value="fixed" {...form.register("supplyMode")} /><span><strong>Fixed</strong><small>Destroy the regulated-asset reissuance token.</small></span></label>
+                <label className="radio-card"><input type="radio" value="issuer-managed" {...form.register("supplyMode")} /><span><strong>Issuer managed</strong><small>The signer wallet retains the confidential reissuance token.</small></span></label>
+              </fieldset>
+              <button className="button issuer-primary wide" type="submit">Prepare asset issuance</button>
+            </form>
+            {configuration && salt && (
+              <div className="setup-step">
+                <pre>{canonicalRegistryContent({ deploymentSalt: salt, ...configuration, fundingAddresses: fundingAddresses.map(({ confidentialAddress }) => confidentialAddress) })}</pre>
+                <p>The signer will derive the new regulated-asset ID from the issuance transaction. L-BTC is selected automatically as the network fee asset.</p>
+                <div className="funding-list">
+                  {fundingAddresses.map((address, index) => (
+                    <div key={address.confidentialAddress}>
+                      <span><Fuel size={15} /> Funding UTXO {index + 1}</span>
+                      <code>{address.confidentialAddress}</code>
+                      {configuration.network === "liquid-testnet" ? (
+                        <a className="button secondary" href={liquidTestnetFaucetUrl(address.confidentialAddress)} target="_blank" rel="noreferrer">
+                          Request testnet L-BTC <ExternalLink size={14} />
+                        </a>
+                      ) : <small>Fund this address from the local Elements node.</small>}
+                    </div>
+                  ))}
+                </div>
+                <div className="review-buttons">
+                  <button className="button secondary" type="button" onClick={downloadRecovery}><Download size={16} /> Save recovery</button>
+                  <button className="button issuer-primary" type="button" onClick={bootstrap}>Issue asset locally</button>
+                </div>
+              </div>
+            )}
+            {bootstrapped && !registryFiles && <button className="button issuer-primary wide" type="button" onClick={prepareBootstrapRegistry}><Download size={16} /> Prepare confirmed registry files</button>}
+            {bootstrapped && registryFiles && (
+              <div className="registry-files">
+                <div><span>Deployment manifest</span><code title={registryFiles.manifestPath}>{registryFiles.manifestPath}</code><button className="button secondary" type="button" onClick={downloadBootstrapManifest}><Download size={15} /> Download</button></div>
+                <div><span>Initial D4 policy</span><code title={registryFiles.snapshotPath}>{registryFiles.snapshotPath}</code><button className="button secondary" type="button" onClick={downloadBootstrapSnapshot}><Download size={15} /> Download</button></div>
+                <div className="registry-actions"><a className="button secondary" href={registryRepositoryUrl} target="_blank" rel="noreferrer"><GitPullRequest size={15} /> Open repository</a><button className="button issuer-primary" type="button" onClick={verifyBootstrapRegistry}><ShieldCheck size={15} /> Verify merged files</button></div>
+              </div>
+            )}
+            {message && <p className="inline-message" role="status">{message}</p>}
+          </Panel>
+          <aside className="setup-aside"><SafetyNote title="Small first tree">Every deployment starts with the D4 verifier. Governance upgrades to D5 or D6 only when the blacklist grows.</SafetyNote></aside>
+        </div>
+      )}
       {mode === "import" && <div className="setup-layout"><Panel className="setup-main"><SectionHeading label="Import deployment" title="Manifest JSON or URL" /><div className="form-stack"><label>Public source<textarea rows={12} value={importValue} onChange={(event) => setImportValue(event.target.value)} /></label><button className="button issuer-primary wide" type="button" onClick={importDeployment}><ShieldCheck size={16} /> Validate and prove issuer control</button></div>{message && <p className="inline-message" role="status">{message}</p>}</Panel></div>}
     </AppShell>
   );
