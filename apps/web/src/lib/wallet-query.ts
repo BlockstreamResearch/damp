@@ -31,7 +31,7 @@ export function useDeploymentWalletSync(deployment: Deployment | null | undefine
   return useQuery({
     queryKey: walletSyncQueryKeys.snapshot(fingerprint ?? "disconnected", network, scope),
     enabled: enabled && persisted.isFetched,
-    queryFn: () => refreshDeploymentWallet(deployment!, fingerprint!),
+    queryFn: ({ signal }) => refreshDeploymentWallet(deployment!, fingerprint!, signal),
     placeholderData: persisted.data ? { snapshot: persisted.data } : undefined,
     refetchInterval: refetchInterval,
     refetchOnWindowFocus: true,
@@ -41,10 +41,9 @@ export function useDeploymentWalletSync(deployment: Deployment | null | undefine
 export function useBaseWalletSync(input: {
   fingerprint?: string;
   network?: SignerNetwork;
-  esploraUrl?: string;
   enabled?: boolean;
 }) {
-  const enabled = Boolean(input.enabled !== false && input.fingerprint && input.network && input.esploraUrl);
+  const enabled = Boolean(input.enabled !== false && input.fingerprint && input.network);
   const fingerprint = input.fingerprint ?? "disconnected";
   const network = input.network ?? "liquid-testnet";
   const persisted = useQuery({
@@ -56,22 +55,27 @@ export function useBaseWalletSync(input: {
   return useQuery({
     queryKey: walletSyncQueryKeys.snapshot(fingerprint, network, "base"),
     enabled: enabled && persisted.isFetched,
-    queryFn: () => refreshBaseWallet({
+    queryFn: ({ signal }) => refreshBaseWallet({
       fingerprint,
       network,
-      esploraUrl: input.esploraUrl!,
-    }),
+    }, signal),
     placeholderData: persisted.data ? { snapshot: persisted.data } : undefined,
     refetchInterval: refetchInterval,
     refetchOnWindowFocus: true,
   });
 }
 
-export async function refreshDeploymentWallet(deployment: Deployment, fingerprint: string): Promise<WalletSyncResult> {
+export async function refreshDeploymentWallet(
+  deployment: Deployment,
+  fingerprint: string,
+  signal?: AbortSignal,
+): Promise<WalletSyncResult> {
   const previous = await loadWalletSyncSnapshot(fingerprint, deployment.network, deployment.deploymentId);
   try {
-    return { snapshot: await synchronizeDeploymentWallet(deployment, fingerprint) };
+    return { snapshot: await synchronizeDeploymentWallet(deployment, fingerprint, { signal }) };
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (error instanceof Error && error.name === "AbortError") throw error;
     if (!previous) throw error;
     return { snapshot: previous, syncError: error instanceof Error ? error.message : String(error) };
   }
@@ -80,12 +84,13 @@ export async function refreshDeploymentWallet(deployment: Deployment, fingerprin
 export async function refreshBaseWallet(input: {
   fingerprint: string;
   network: SignerNetwork;
-  esploraUrl: string;
-}): Promise<WalletSyncResult> {
+}, signal?: AbortSignal): Promise<WalletSyncResult> {
   const previous = await loadWalletSyncSnapshot(input.fingerprint, input.network, "base");
   try {
-    return { snapshot: await synchronizeBaseWallet(input) };
+    return { snapshot: await synchronizeBaseWallet({ ...input, signal }) };
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (error instanceof Error && error.name === "AbortError") throw error;
     if (!previous) throw error;
     return { snapshot: previous, syncError: error instanceof Error ? error.message : String(error) };
   }

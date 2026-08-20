@@ -289,18 +289,9 @@ export function AdminSetup() {
   const [importValue, setImportValue] = useState("");
   const [message, setMessage] = useState<string>();
   const form = useForm<SetupForm>({ resolver: zodResolver(setupSchema), defaultValues: { name: "", ticker: "", precision: 8, supply: "", supplyMode: "fixed", network: "liquid-testnet" } });
-  const fundingEsplora = useMemo(() => {
-    if (!configuration) return undefined;
-    try {
-      return esploraUrlForDeployment({ network: configuration.network });
-    } catch {
-      return undefined;
-    }
-  }, [configuration?.network]);
   const fundingWallet = useBaseWalletSync({
     fingerprint: signer.connected ? signer.fingerprint : undefined,
     network: configuration?.network,
-    esploraUrl: fundingEsplora,
     enabled: Boolean(configuration),
   });
   const fundingSnapshot = fundingWallet.data?.snapshot;
@@ -352,10 +343,9 @@ export function AdminSetup() {
   async function bootstrap() {
     try {
       if (!configuration || !salt) throw new Error("Prepare and save recovery data first.");
-      const esplora = esploraUrlForDeployment({ network: configuration.network });
       const signerState = signerSnapshot();
       if (!signerState.connected || !signerState.fingerprint) throw new Error("Connect the AMP signer first.");
-      const wallet = await synchronizeBaseWallet({ fingerprint: signerState.fingerprint, network: configuration.network, esploraUrl: esplora });
+      const wallet = await synchronizeBaseWallet({ fingerprint: signerState.fingerprint, network: configuration.network });
       const policyUtxos = selectSpendableUtxos(wallet, configuration.policyAsset, "wallet");
       const pending = wallet.utxos.filter((utxo) => utxo.source === "wallet" && utxo.assetId === configuration.policyAsset && utxo.status === "unconfirmed").length;
       if (policyUtxos.length < 2) {

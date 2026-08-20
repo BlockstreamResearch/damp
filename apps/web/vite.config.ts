@@ -5,7 +5,7 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 const repositoryName = process.env.GITHUB_REPOSITORY?.split("/").pop();
 
 export default defineConfig({
-  plugins: [react(), nodePolyfills({ include: ["buffer", "events", "stream"] })],
+  plugins: [react(), nodePolyfills({ include: ["buffer", "events", "stream", "util"] })],
   base: repositoryName ? `/${repositoryName}/` : "/",
   build: { target: "es2022" },
   test: {

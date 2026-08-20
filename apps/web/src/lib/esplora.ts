@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { Deployment } from "./domain";
 
-const TESTNET_ESPLORA = "https://blockstream.info/liquidtestnet/api";
+export const liquidTestnetEsploraUrl = "https://blockstream.info/liquidtestnet/api";
 const MAX_ANCHOR_HOPS = 2_048;
 
 const transactionStatusSchema = z.object({
@@ -58,7 +58,7 @@ export class AnchorConflictError extends Error {
 }
 
 export function esploraUrlForDeployment(deployment: Pick<Deployment, "network">): string {
-  if (deployment.network === "liquid-testnet") return TESTNET_ESPLORA;
+  if (deployment.network === "liquid-testnet") return liquidTestnetEsploraUrl;
   const configured = localStorage.getItem("simplicity-amp:regtest-esplora")?.trim();
   if (!configured) {
     throw new Error("Configure an Elements regtest Esplora URL before importing this deployment.");

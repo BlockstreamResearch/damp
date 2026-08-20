@@ -40,7 +40,30 @@ validation. It uses LWK for mnemonic derivation, SLIP77, and ordinary wallet
 signing and compiles to WebAssembly. Manually entered recovery phrases remain
 in memory; the explicit `NEW` debug flow stores its generated phrase unencrypted
 in versioned browser local storage. The browser supplies chain data through
-Esplora but never executable Simplicity source.
+Waterfalls and Esplora but never executable Simplicity source.
+
+Liquid testnet wallet discovery is pinned to the public Waterfalls v4 testing
+service at `waterfalls.liquidwebwallet.org`. The wallet sends only derived
+unconfidential addresses—never its descriptor, mnemonic, private keys, or
+SLIP77 secret—and obtains address history, UTXOs, confirmation/tip metadata,
+and raw parent transactions from Waterfalls. Esplora is an explicit narrow
+fallback because Waterfalls does not expose spent-by details and rejects
+UTXO-only queries for histories above its configured cap; anchor traversal and
+broadcast also remain Esplora operations. Elements regtest uses the locally
+configured Esplora because there is no shared regtest Waterfalls service. The
+public Waterfalls instance is intended for testing/development and has no
+production uptime guarantee. One synchronization has a shared browser-safety
+budget across both derivation branches and holder scripts: at most 256 examined
+addresses, 512 provider requests, 64 fallback requests, 32 MB of response data,
+10,000 history entries, 256 distinct parent transactions, and 45 seconds. A
+limit or provider failure aborts all in-flight discovery work and preserves the
+last good snapshot. For a paginated history, the
+Esplora UTXO fallback is accepted only when its tip is unchanged before and
+after the query, exactly equals the Waterfalls tip, and its complete outpoint
+set equals the Waterfalls outputs that are not consumed by a verified spending
+input. Each returned output's confirmation must also match Waterfalls history
+evidence. Waterfalls raw transactions for every recorded spending input are
+checked so the fallback cannot resurrect or omit a Waterfalls-proven output.
 
 New Liquid testnet deployments derive two signer funding addresses and link
 them directly to the public L-BTC faucet. The native fee asset is selected by

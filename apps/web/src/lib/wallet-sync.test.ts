@@ -36,6 +36,7 @@ import {
   selectSpendableUtxos,
   signerReceiveRecord,
   synchronizeBaseWallet,
+  WalletDiscoverySafetyError,
   walletSyncStorageKey,
   type AddressScanResult,
   type WalletDiscoveryDependencies,
@@ -109,7 +110,7 @@ async function discover(input: {
     fingerprint,
     network: "elements-regtest",
     scope: "base",
-    esploraUrl: "http://esplora.test/api",
+    source: { provider: "esplora", baseUrl: "http://esplora.test/api" },
     previous: input.previous,
     gapLimit: input.gapLimit ?? 2,
     dependencies: input.dependencies ?? dependencies(),
@@ -121,6 +122,7 @@ describe("wallet discovery", () => {
     storedWallets.clear();
     currentSigner.fingerprint = fingerprint;
     currentSigner.revision = 1;
+    localStorage.setItem("simplicity-amp:regtest-esplora", "http://esplora.test/api");
   });
 
   it("extends both branches through a full unused gap after the last used address", async () => {
@@ -180,6 +182,97 @@ describe("wallet discovery", () => {
       }),
     })).rejects.toThrow("exceeded 1000 current outputs");
   });
+
+  it("deduplicates repeated parent transactions before budgeted fetching", async () => {
+    const parent = txid("7");
+    const fetchTransaction = vi.fn(() => Promise.resolve("00"));
+    const outputs = Array.from({ length: 20 }, (_, vout) => ({
+      txid: parent,
+      vout,
+      status: { confirmed: true, block_height: 90, block_hash: txid("c") },
+    }));
+
+    const snapshot = await discover({
+      gapLimit: 1,
+      dependencies: {
+        ...dependencies({
+          scans: (value) => value.source === "wallet" && value.branch === 0 && value.index === 0
+            ? { hasActivity: true, utxos: outputs }
+            : { hasActivity: false, utxos: [] },
+        }),
+        fetchTransaction,
+      },
+    });
+
+    expect(snapshot.utxos).toHaveLength(20);
+    expect(fetchTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects too many unique parent transactions before starting fetches", async () => {
+    const fetchTransaction = vi.fn(() => Promise.resolve("00"));
+    const outputs = Array.from({ length: 257 }, (_, index) => ({
+      txid: index.toString(16).padStart(64, "0"),
+      vout: 0,
+      status: { confirmed: true, block_height: 90, block_hash: txid("c") },
+    }));
+
+    await expect(discover({
+      gapLimit: 1,
+      dependencies: {
+        ...dependencies({
+          scans: (value) => value.source === "wallet" && value.branch === 0 && value.index === 0
+            ? { hasActivity: true, utxos: outputs }
+            : { hasActivity: false, utxos: [] },
+        }),
+        fetchTransaction,
+      },
+    })).rejects.toMatchObject({
+      code: "WALLET_DISCOVERY_SAFETY_LIMIT",
+      limit: "parent-transactions",
+    } satisfies Partial<WalletDiscoverySafetyError>);
+    expect(fetchTransaction).not.toHaveBeenCalled();
+  });
+
+  it("enforces the aggregate response-byte budget across concurrent parent fetches", async () => {
+    const parentTxids = Array.from({ length: 33 }, (_, index) => (index + 1).toString(16).padStart(64, "0"));
+    const outputs = parentTxids.map((parentTxid) => ({
+      txid: parentTxid,
+      vout: 0,
+      status: { confirmed: true, block_height: 90, block_hash: txid("c") },
+    }));
+    const request = vi.fn<typeof fetch>(() => Promise.resolve(new Response(new Uint8Array(1_000_000))));
+
+    await expect(discoverWalletSnapshot({
+      fingerprint,
+      network: "liquid-testnet",
+      scope: "base",
+      source: {
+        provider: "waterfalls-v4",
+        baseUrl: "https://waterfalls.test/api",
+        utxoFallbackUrl: "https://esplora.test/api",
+        outspendFallbackUrl: "https://esplora.test/api",
+      },
+      gapLimit: 1,
+      request,
+      dependencies: {
+        deriveAddress: (branch, index) => Promise.resolve(address(branch, index)),
+        scanAddress: (_source, value) => Promise.resolve({
+          hasActivity: value.source === "wallet" && value.branch === 0 && value.index === 0,
+          utxos: value.source === "wallet" && value.branch === 0 && value.index === 0 ? outputs : [],
+          historyTxids: value.source === "wallet" && value.branch === 0 && value.index === 0 ? parentTxids : [],
+          historyComplete: true,
+          tipHash: txid("f"),
+          tipHeight: 100,
+        }),
+        inspect: () => Promise.resolve([]),
+        now: () => "2026-08-20T12:00:00.000Z",
+      },
+    })).rejects.toMatchObject({
+      code: "WALLET_DISCOVERY_SAFETY_LIMIT",
+      limit: "response-bytes",
+    } satisfies Partial<WalletDiscoverySafetyError>);
+    expect(request.mock.calls.length).toBeLessThanOrEqual(33);
+  });
 });
 
 describe("wallet state and persistence", () => {
@@ -187,6 +280,7 @@ describe("wallet state and persistence", () => {
     storedWallets.clear();
     currentSigner.fingerprint = fingerprint;
     currentSigner.revision = 1;
+    localStorage.setItem("simplicity-amp:regtest-esplora", "http://esplora.test/api");
   });
 
   it("aggregates assets without counting spent outputs and selects only confirmed sources", async () => {
@@ -251,9 +345,22 @@ describe("wallet state and persistence", () => {
     await expect(synchronizeBaseWallet({
       fingerprint,
       network: "elements-regtest",
-      esploraUrl: "http://esplora.test/api",
       dependencies: dependencies({ scans: () => { throw new Error("network failed"); } }),
     })).rejects.toThrow("network failed");
+    await expect(loadWalletSyncSnapshot(fingerprint, "elements-regtest", "base")).resolves.toEqual(snapshot);
+  });
+
+  it("keeps the last good snapshot when adversarial activity exhausts the global address budget", async () => {
+    const snapshot = await discover();
+    await saveWalletSyncSnapshot(snapshot);
+    await expect(synchronizeBaseWallet({
+      fingerprint,
+      network: "elements-regtest",
+      dependencies: dependencies({ scans: () => ({ hasActivity: true, utxos: [] }) }),
+    })).rejects.toMatchObject({
+      code: "WALLET_DISCOVERY_SAFETY_LIMIT",
+      limit: "addresses",
+    } satisfies Partial<WalletDiscoverySafetyError>);
     await expect(loadWalletSyncSnapshot(fingerprint, "elements-regtest", "base")).resolves.toEqual(snapshot);
   });
 
@@ -263,7 +370,6 @@ describe("wallet state and persistence", () => {
     await expect(synchronizeBaseWallet({
       fingerprint,
       network: "elements-regtest",
-      esploraUrl: "http://esplora.test/api",
       dependencies: {
         ...dependencies(),
         fetchTipHeight: () => {
