@@ -1,5 +1,6 @@
 import {
   Outlet,
+  createHashHistory,
   createRootRoute,
   createRoute,
   createRouter,
@@ -29,7 +30,11 @@ const routes = [
 
 const routeTree = rootRoute.addChildren([indexRoute, ...routes]);
 
-export const router = createRouter({ routeTree, defaultPreload: "intent" });
+export const router = createRouter({
+  routeTree,
+  history: createHashHistory(),
+  defaultPreload: "intent",
+});
 
 declare module "@tanstack/react-router" {
   interface Register {
