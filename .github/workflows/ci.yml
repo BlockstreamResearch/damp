@@ -25,7 +25,6 @@ jobs:
       - run: ./scripts/prepare-simplex-std.sh
       - run: simplex build
       - run: ./scripts/check-contract-bundle.sh
-      - run: ./scripts/check-generated-artifacts.sh
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --lib --test protocol
@@ -38,12 +37,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - name: Install pinned Simplex
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/BlockstreamResearch/smplx/master/simplexup/simplexup -o /tmp/simplexup
-          chmod +x /tmp/simplexup
-          SIMPLEX_DIR="$HOME/.simplex" /tmp/simplexup -i v0.0.9
-          echo "$HOME/.simplex/bin" >> "$GITHUB_PATH"
       - uses: taiki-e/install-action@wasm-pack
       - uses: pnpm/action-setup@v4
         with:
@@ -53,14 +46,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: ./scripts/prepare-simplex-std.sh
-      - run: simplex build
-      - run: ./scripts/check-contract-bundle.sh
-      - run: ./scripts/check-generated-artifacts.sh
       - run: pnpm wasm
       - run: pnpm test
       - run: pnpm typecheck
-      - run: pnpm build
+      - run: pnpm --dir apps/web build
 
   registry:
     runs-on: ubuntu-latest

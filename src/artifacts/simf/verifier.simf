@@ -1,0 +1,538 @@
+mod unit_2 {
+    pub fn not(bit: bool) -> bool {
+    <u1>::into(jet::complement_1(<bool>::into(bit)))}
+    pub fn or(a: bool, b: bool) -> bool {
+    <u1>::into(jet::or_1(<bool>::into(a), <bool>::into(b)))}
+    pub fn and(a: bool, b: bool) -> bool {
+    <u1>::into(jet::and_1(<bool>::into(a), <bool>::into(b)))}
+    pub fn xor(a: bool, b: bool) -> bool {
+    and(or(a, b), not(and(a, b)))}
+}
+mod unit_7 {
+    use crate::unit_2::{not, or, and};
+    pub fn and_128(a: u128, b: u128) -> u128 {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        <(u64, u64)>::into((jet::and_64(a_high, b_high), jet::and_64(a_low, b_low)))}
+    pub fn or_128(a: u128, b: u128) -> u128 {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        <(u64, u64)>::into((jet::or_64(a_high, b_high), jet::or_64(a_low, b_low)))}
+    pub fn eq_128(a: u128, b: u128) -> bool {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        and(jet::eq_64(a_high, b_high), jet::eq_64(a_low, b_low))}
+    pub fn left_shift_128(shift: u8, a: u128) -> u128 {
+    match jet::is_zero_8(shift){
+    false => {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        match jet::lt_8(shift, 64){
+    false => {
+    let (_, shift): (bool, u8) = jet::subtract_8(shift, 64);
+        <(u64, u64)>::into((jet::left_shift_64(shift, a_low), 0))}
+    ,
+    true => {
+    let (_, low_to_high_amount): (bool, u8) = jet::subtract_8(64, shift);
+        let shifted_bits: u64 = jet::right_shift_64(low_to_high_amount, a_low);
+        let res_high: u64 = jet::or_64(jet::left_shift_64(shift, a_high), shifted_bits);
+        <(u64, u64)>::into((res_high, jet::left_shift_64(shift, a_low)))}
+    ,
+    }}
+    ,
+    true => a,
+    }}
+    pub fn right_shift_128(shift: u8, a: u128) -> u128 {
+    match jet::is_zero_8(shift){
+    false => {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        match jet::lt_8(shift, 64){
+    false => {
+    let (_, shift): (bool, u8) = jet::subtract_8(shift, 64);
+        <(u64, u64)>::into((0, jet::right_shift_64(shift, a_high)))}
+    ,
+    true => {
+    let (_, high_to_low_amount): (bool, u8) = jet::subtract_8(64, shift);
+        let shifted_bits: u64 = jet::left_shift_64(high_to_low_amount, a_high);
+        let res_low: u64 = jet::or_64(jet::right_shift_64(shift, a_low), shifted_bits);
+        <(u64, u64)>::into((jet::right_shift_64(shift, a_high), res_low))}
+    ,
+    }}
+    ,
+    true => a,
+    }}
+    pub fn is_zero_128(a: u128) -> bool {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        and(jet::is_zero_64(a_high), jet::is_zero_64(a_low))}
+    pub fn lt_128(a: u128, b: u128) -> bool {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        match jet::lt_64(a_high, b_high){
+    false => {
+    match jet::eq_64(a_high, b_high){
+    false => false,
+    true => jet::lt_64(a_low, b_low),
+    }}
+    ,
+    true => true,
+    }}
+    pub fn le_128(a: u128, b: u128) -> bool {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        match jet::lt_64(a_high, b_high){
+    false => {
+    match jet::eq_64(a_high, b_high){
+    false => false,
+    true => jet::le_64(a_low, b_low),
+    }}
+    ,
+    true => true,
+    }}
+    pub fn gt_128(a: u128, b: u128) -> bool {
+    lt_128(b, a)}
+    pub fn ge_128(a: u128, b: u128) -> bool {
+    le_128(b, a)}
+    pub fn add_128(a: u128, b: u128) -> (bool, u128) {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        let (carry_low, sum_low): (bool, u64) = jet::add_64(a_low, b_low);
+        let (carry_high, sum_high): (bool, u64) = jet::full_add_64(carry_low, a_high, b_high);
+        let res: u128 = <(u64, u64)>::into((sum_high, sum_low));
+        (carry_high, res)}
+    pub fn add_128_64(a: u128, b: u64) -> (bool, u128) {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (carry_low, res_low): (bool, u64) = jet::add_64(a_low, b);
+        let (carry_high, res_high): (bool, u64) = jet::full_add_64(carry_low, a_high, 0);
+        (carry_high, <(u64, u64)>::into((res_high, res_low)))}
+    pub fn checked_add_128(a: u128, b: u128) -> Option<u128> {
+    let (carry, sum): (bool, u128) = add_128(a, b);
+        match carry{
+    false => Some(sum),
+    true => None,
+    }}
+    pub fn safe_add_128(a: u128, b: u128) -> u128 {
+    unwrap(checked_add_128(a, b))}
+    pub fn sub_128(a: u128, b: u128) -> (bool, u128) {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        let (borrow_low, diff_low): (bool, u64) = jet::subtract_64(a_low, b_low);
+        let (borrow_high, diff_high): (bool, u64) = jet::full_subtract_64(borrow_low, a_high, b_high);
+        let res: u128 = <(u64, u64)>::into((diff_high, diff_low));
+        (borrow_high, res)}
+    pub fn checked_sub_128(a: u128, b: u128) -> Option<u128> {
+    let (borrow, diff): (bool, u128) = sub_128(a, b);
+        match borrow{
+    false => Some(diff),
+    true => None,
+    }}
+    pub fn safe_sub_128(a: u128, b: u128) -> u128 {
+    unwrap(checked_sub_128(a, b))}
+    pub fn mul_128(a: u128, b: u128) -> u256 {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        let highest: u128 = jet::multiply_64(a_high, b_high);
+        let lowest: u128 = jet::multiply_64(a_low, b_low);
+        let (word_1, word_0): (u64, u64) = <u128>::into(lowest);
+        let (word_3, word_2): (u64, u64) = <u128>::into(highest);
+        let product_1: u128 = jet::multiply_64(a_high, b_low);
+        let product_2: u128 = jet::multiply_64(b_high, a_low);
+        let (carry_3a, middle): (bool, u128) = add_128(product_1, product_2);
+        let (middle_2, middle_1): (u64, u64) = <u128>::into(middle);
+        let (carry_2, res_1): (bool, u64) = jet::add_64(word_1, middle_1);
+        let (carry_3b, res_2): (bool, u64) = jet::full_add_64(carry_2, word_2, middle_2);
+        let (_, res_3a): (bool, u64) = jet::full_add_64(carry_3a, word_3, 0);
+        let (_, res_3): (bool, u64) = jet::full_add_64(carry_3b, res_3a, 0);
+        let res_1_0: u128 = <(u64, u64)>::into((res_1, word_0));
+        let res_3_2: u128 = <(u64, u64)>::into((res_3, res_2));
+        <(u128, u128)>::into((res_3_2, res_1_0))}
+    pub fn checked_mul_128(a: u128, b: u128) -> Option<u128> {
+    let result: u256 = mul_128(a, b);
+        let (high, low): (u128, u128) = <u256>::into(result);
+        match is_zero_128(high){
+    false => None,
+    true => Some(low),
+    }}
+    pub fn safe_mul_128(a: u128, b: u128) -> u128 {
+    unwrap(checked_mul_128(a, b))}
+    pub fn split_256_into_64(a: u256) -> ((u64, u64), (u64, u64)) {
+    let (high, low): (u128, u128) = <u256>::into(a);
+        (<u128>::into(high), <u128>::into(low))}
+    pub fn normalize_to_threshold(a: u128, b: u128, is_b_u128: bool) -> (u256, u128) {
+    let threshold: u64 = 0x8000000000000000;
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        let b_highest_word: u64 = match is_b_u128{
+    false => {
+    assert!(jet::is_zero_64(b_high));
+        b_low}
+    ,
+    true => b_high,
+    };
+        assert!(not(jet::is_zero_64(b_highest_word)));
+        let (norm, remainder): (u64, u64) = jet::div_mod_64(threshold, b_highest_word);
+        let norm: u64 = match jet::is_zero_64(remainder){
+    false => {
+    let (_, norm): (bool, u64) = jet::add_64(norm, 1);
+        norm}
+    ,
+    true => norm,
+    };
+        let norm: u128 = <(u64, u64)>::into((0, norm));
+        match jet::lt_64(b_highest_word, threshold){
+    false => (<(u128, u128)>::into((0, a)), b),
+    true => (mul_128(a, norm), safe_mul_128(b, norm)),
+    }}
+    pub fn algorithm_d(dividend: u128, divisor: u128) -> (u64, u128) {
+    let (norm_dividend, norm_divisor): (u256, u128) = normalize_to_threshold(dividend, divisor, true);
+        let ((_, u2), (u1, u0)): ((u64, u64), (u64, u64)) = split_256_into_64(norm_dividend);
+        let (v1, v0): (u64, u64) = <u128>::into(norm_divisor);
+        let (q_hat, r_hat): (u64, u64) = jet::div_mod_128_64(<(u64, u64)>::into((u2, u1)), v1);
+        let r_hat_u0: u128 = <(u64, u64)>::into((r_hat, u0));
+        let q: u64 = match lt_128(r_hat_u0, jet::multiply_64(q_hat, v0)){
+    false => q_hat,
+    true => {
+    let (_, q_hat): (bool, u64) = jet::subtract_64(q_hat, 1);
+        let (carry, r_hat): (bool, u64) = jet::add_64(r_hat, v1);
+        match carry{
+    false => {
+    let r_hat_u0: u128 = <(u64, u64)>::into((r_hat, u0));
+        match lt_128(r_hat_u0, jet::multiply_64(q_hat, v0)){
+    false => q_hat,
+    true => {
+    let (_, q_hat): (bool, u64) = jet::subtract_64(q_hat, 1);
+        q_hat}
+    ,
+    }}
+    ,
+    true => q_hat,
+    }}
+    ,
+    };
+        let remainder: u128 = safe_sub_128(dividend, safe_mul_128(divisor, <(u64, u64)>::into((0, q))));
+        (q, remainder)}
+    pub fn div_mod_128_64(a: u128, b: u64) -> (u128, u64) {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (q_high, remainder): (u64, u64) = jet::div_mod_64(a_high, b);
+        let a_prime: u128 = <(u64, u64)>::into((remainder, a_low));
+        let (a_normalized, b_normalized): (u256, u128) = normalize_to_threshold(a_prime, <(u64, u64)>::into((0, b)), false);
+        let (_, a_normalized): (u128, u128) = <u256>::into(a_normalized);
+        let (_, b_normalized): (u64, u64) = <u128>::into(b_normalized);
+        let (q_low, _): (u64, u64) = jet::div_mod_128_64(a_normalized, b_normalized);
+        let (_, remainder): (u64, u64) = <u128>::into(safe_sub_128(a_prime, jet::multiply_64(q_low, b)));
+        (<(u64, u64)>::into((q_high, q_low)), remainder)}
+    pub fn div_mod_128(a: u128, b: u128) -> (u128, u128) {
+    let (a_high, a_low): (u64, u64) = <u128>::into(a);
+        let (b_high, b_low): (u64, u64) = <u128>::into(b);
+        match lt_128(a, b){
+    false => {
+    match and(jet::is_zero_64(a_high), jet::is_zero_64(b_high)){
+    false => {
+    match jet::eq_64(a_high, b_high){
+    false => {
+    match jet::is_zero_64(b_high){
+    false => {
+    let (q, r): (u64, u128) = algorithm_d(a, b);
+        (<(u64, u64)>::into((0, q)), r)}
+    ,
+    true => {
+    let (q, r): (u128, u64) = div_mod_128_64(a, b_low);
+        (q, <(u64, u64)>::into((0, r)))}
+    ,
+    }}
+    ,
+    true => {
+    let (_, diff): (bool, u64) = jet::subtract_64(a_low, b_low);
+        (1, <(u64, u64)>::into((0, diff)))}
+    ,
+    }}
+    ,
+    true => {
+    let (q, r): (u64, u64) = jet::div_mod_64(a_low, b_low);
+        (<(u64, u64)>::into((0, q)), <(u64, u64)>::into((0, r)))}
+    ,
+    }}
+    ,
+    true => (0, a),
+    }}
+    pub fn div_128(a: u128, b: u128) -> u128 {
+    let (q, _): (u128, u128) = div_mod_128(a, b);
+        q}
+    pub fn checked_div_128(a: u128, b: u128) -> Option<u128> {
+    match is_zero_128(b){
+    false => Some(div_128(a, b)),
+    true => None,
+    }}
+    pub fn safe_div_128(a: u128, b: u128) -> u128 {
+    unwrap(checked_div_128(a, b))}
+}
+mod unit_1 {
+    use crate::unit_7::eq_128;
+    pub fn assert_eq_1(a: u1, b: u1) {
+    assert!(jet::eq_1(a, b))}
+    pub fn assert_eq_8(a: u8, b: u8) {
+    assert!(jet::eq_8(a, b));
+    }
+    pub fn assert_eq_16(a: u16, b: u16) {
+    assert!(jet::eq_16(a, b));
+    }
+    pub fn assert_eq_32(a: u32, b: u32) {
+    assert!(jet::eq_32(a, b));
+    }
+    pub fn assert_eq_64(a: u64, b: u64) {
+    assert!(jet::eq_64(a, b));
+    }
+    pub fn assert_eq_128(a: u128, b: u128) {
+    assert!(eq_128(a, b));
+    }
+    pub fn assert_eq_256(a: u256, b: u256) {
+    assert!(jet::eq_256(a, b));
+    }
+    pub fn assert_none_1(val: Option<u1>) {
+    assert!(is_none::<u1>(val));
+    }
+    pub fn assert_none_8(val: Option<u8>) {
+    assert!(is_none::<u8>(val));
+    }
+    pub fn assert_none_16(val: Option<u16>) {
+    assert!(is_none::<u16>(val));
+    }
+    pub fn assert_none_32(val: Option<u32>) {
+    assert!(is_none::<u32>(val));
+    }
+    pub fn assert_none_64(val: Option<u64>) {
+    assert!(is_none::<u64>(val));
+    }
+    pub fn assert_none_128(val: Option<u128>) {
+    assert!(is_none::<u128>(val));
+    }
+    pub fn assert_none_256(val: Option<u256>) {
+    assert!(is_none::<u256>(val));
+    }
+}
+mod unit_3 {
+    pub fn checked_add_32(a: u32, b: u32) -> Option<u32> {
+    let (carry, sum): (bool, u32) = jet::add_32(a, b);
+        match carry{
+    false => Some(sum),
+    true => None,
+    }}
+    pub fn safe_add_32(a: u32, b: u32) -> u32 {
+    unwrap(checked_add_32(a, b))}
+    pub fn checked_sub_32(a: u32, b: u32) -> Option<u32> {
+    let (borrow, diff): (bool, u32) = jet::subtract_32(a, b);
+        match borrow{
+    false => Some(diff),
+    true => None,
+    }}
+    pub fn safe_sub_32(a: u32, b: u32) -> u32 {
+    unwrap(checked_sub_32(a, b))}
+    pub fn checked_mul_32(a: u32, b: u32) -> Option<u32> {
+    let result: u64 = jet::multiply_32(a, b);
+        let (high, low): (u32, u32) = <u64>::into(result);
+        match jet::is_zero_32(high){
+    false => None,
+    true => Some(low),
+    }}
+    pub fn safe_mul_32(a: u32, b: u32) -> u32 {
+    unwrap(checked_mul_32(a, b))}
+    pub fn checked_div_32(a: u32, b: u32) -> Option<u32> {
+    match jet::is_zero_32(b){
+    false => Some(jet::divide_32(a, b)),
+    true => None,
+    }}
+    pub fn safe_div_32(a: u32, b: u32) -> u32 {
+    unwrap(checked_div_32(a, b))}
+    pub fn gt_32(a: u32, b: u32) -> bool {
+    jet::lt_32(b, a)}
+    pub fn ge_32(a: u32, b: u32) -> bool {
+    jet::le_32(b, a)}
+}
+mod unit_4 {
+    pub fn explicit_current_asset() -> u256 {
+    let asset: Asset1 = jet::current_asset();
+        unwrap_right::<(u1, u256)>(asset)}
+    pub fn explicit_input_asset(index: u32) -> u256 {
+    let asset: Asset1 = unwrap(jet::input_asset(index));
+        unwrap_right::<(u1, u256)>(asset)}
+    pub fn explicit_input_asset_and_amount(index: u32) -> (u256, u64) {
+    let (asset, amount): (Asset1, Amount1) = unwrap(jet::input_amount(index));
+        (unwrap_right::<(u1, u256)>(asset), unwrap_right::<(u1, u256)>(amount))}
+    pub fn explicit_output_asset_and_amount(index: u32) -> (u256, u64) {
+    let (asset, amount): (Asset1, Amount1) = unwrap(jet::output_amount(index));
+        (unwrap_right::<(u1, u256)>(asset), unwrap_right::<(u1, u256)>(amount))}
+}
+mod unit_5 {
+    use crate::unit_1::{assert_eq_32, assert_eq_256};
+    use crate::unit_3::safe_add_32;
+    pub type NeighborProof = (u32, u256, [u256; 4]);
+    pub type NonMembershipProof = (u32, Option<NeighborProof>, Option<NeighborProof>);
+    fn hash_key_leaf(key: u256) -> u256 {
+    let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+        let ctx: Ctx8 = jet::sha_256_ctx_8_add_1(ctx, 0);
+        jet::sha_256_ctx_8_finalize(jet::sha_256_ctx_8_add_32(ctx, key))}
+    fn hash_node(left: u256, right: u256) -> u256 {
+    let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+        let ctx: Ctx8 = jet::sha_256_ctx_8_add_1(ctx, 2);
+        let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, left);
+        jet::sha_256_ctx_8_finalize(jet::sha_256_ctx_8_add_32(ctx, right))}
+    fn merkle_step(sibling: u256, state: (u256, u32)) -> (u256, u32) {
+    let (current, index): (u256, u32) = state;
+        let bit: u32 = jet::and_32(index, 1);
+        let parent: u256 = match jet::is_zero_32(bit){
+    false => hash_node(sibling, current),
+    true => hash_node(current, sibling),
+    };
+        (parent, jet::right_shift_32(1, index))}
+    fn verify_leaf(root: u256, key: u256, index: u32, path: [u256; 4]) {
+    let (computed, remaining_index): (u256, u32) = array_fold::<merkle_step, 4>(path, (hash_key_leaf(key), index));
+        assert_eq_256(computed, root);
+        assert_eq_32(remaining_index, 0);
+    }
+    fn lt_256(a: u256, b: u256) -> bool {
+    let (a_high, a_low): (u128, u128) = <u256>::into(a);
+        let (b_high, b_low): (u128, u128) = <u256>::into(b);
+        let (a_0, a_1): (u64, u64) = <u128>::into(a_high);
+        let (a_2, a_3): (u64, u64) = <u128>::into(a_low);
+        let (b_0, b_1): (u64, u64) = <u128>::into(b_high);
+        let (b_2, b_3): (u64, u64) = <u128>::into(b_low);
+        match jet::eq_64(a_0, b_0){
+    false => jet::lt_64(a_0, b_0),
+    true => match jet::eq_64(a_1, b_1){
+    false => jet::lt_64(a_1, b_1),
+    true => match jet::eq_64(a_2, b_2){
+    false => jet::lt_64(a_2, b_2),
+    true => jet::lt_64(a_3, b_3),
+    },
+    },
+    }}
+    pub fn outpoint_key(outpoint: Outpoint) -> u256 {
+    let (txid, vout): (u256, u32) = outpoint;
+        let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+        let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, txid);
+        jet::sha_256_ctx_8_finalize(jet::sha_256_ctx_8_add_4(ctx, vout))}
+    pub fn verify_non_membership(root: u256, count: u32, key: u256, proof: NonMembershipProof) {
+    assert!(jet::le_32(count, 16));
+        let (insertion_index, lower, upper): NonMembershipProof = proof;
+        assert!(jet::le_32(insertion_index, count));
+        match lower{
+    None => assert_eq_32(insertion_index, 0),
+    Some(neighbor: NeighborProof) => {
+    let (lower_index, lower_key, path): NeighborProof = neighbor;
+        verify_leaf(root, lower_key, lower_index, path);
+        assert!(lt_256(lower_key, key));
+        assert_eq_32(safe_add_32(lower_index, 1), insertion_index);
+    }
+    ,
+    };
+        match upper{
+    None => assert_eq_32(insertion_index, count),
+    Some(neighbor: NeighborProof) => {
+    let (upper_index, upper_key, path): NeighborProof = neighbor;
+        assert_eq_32(upper_index, insertion_index);
+        verify_leaf(root, upper_key, upper_index, path);
+        assert!(lt_256(key, upper_key));
+    }
+    ,
+    };
+        match jet::is_zero_32(count){
+    false => (),
+    true => assert_eq_256(root, 0x36c614d3fcffdbdfe4baf66656fb17c8373bd42eb8aca046ec5b50ae8395f0cf),
+    }}
+}
+mod unit_6 {
+    pub fn tapdata_hash(state: u256) -> u256 {
+    let ctx: Ctx8 = jet::tapdata_init();
+        let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, state);
+        jet::sha_256_ctx_8_finalize(ctx)}
+    pub fn state_script_hash(executable_leaf_hash: u256, state: u256) -> u256 {
+    let root: u256 = jet::build_tapbranch(executable_leaf_hash, tapdata_hash(state));
+        let internal_key: Pubkey = 0x50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0;
+        let output_key: u256 = jet::build_taptweak(internal_key, root);
+        let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+        let ctx: Ctx8 = jet::sha_256_ctx_8_add_2(ctx, 0x5120);
+        let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, output_key);
+        jet::sha_256_ctx_8_finalize(ctx)}
+}
+mod unit_0 {
+    use crate::unit_1::{assert_eq_32, assert_eq_64, assert_eq_256};
+    use crate::unit_2::not;
+    use crate::unit_3::safe_add_32;
+    use crate::unit_4::{explicit_input_asset, explicit_input_asset_and_amount, explicit_output_asset_and_amount};
+    use crate::unit_5::{NonMembershipProof, outpoint_key, verify_non_membership};
+    use crate::unit_6::state_script_hash;
+    type Recipients = [Option<Pubkey>; 10];
+    type ProofEntry = (u32, NonMembershipProof);
+    type ProofState = (u32, u32, Option<u32>, bool);
+    fn scan_input(regulated_input_count: u32, _context: (), index: u8) -> Either<u32, u32> {
+    let index: u32 = jet::left_pad_low_8_32(index);
+        match jet::input_asset(index){
+    None => Left(regulated_input_count),
+    Some(asset: Asset1) => {
+    let asset_id: u256 = unwrap_right::<(u1, u256)>(asset);
+        match jet::eq_256(asset_id, param::REGULATED_ASSET_ID){
+    false => Right(regulated_input_count),
+    true => Right(safe_add_32(regulated_input_count, 1)),
+    }}
+    ,
+    }}
+    fn verify_policy_proof(entry: Option<ProofEntry>, state: ProofState) -> ProofState {
+    let (regulated_count, verified_count, previous_index, finished): ProofState = state;
+        match entry{
+    None => (regulated_count, verified_count, previous_index, true),
+    Some(payload: ProofEntry) => {
+    assert!(not(finished));
+        let (input_index, proof): ProofEntry = payload;
+        match previous_index{
+    None => (),
+    Some(previous: u32) => assert!(jet::lt_32(previous, input_index)),
+    };
+        assert_eq_256(explicit_input_asset(input_index), param::REGULATED_ASSET_ID);
+        verify_non_membership(param::BLACKLIST_ROOT, param::BLACKLIST_COUNT, outpoint_key(unwrap(jet::input_prev_outpoint(input_index))), proof);
+        (regulated_count, safe_add_32(verified_count, 1), Some(input_index), false)}
+    ,
+    }}
+    fn validate_output(recipients: Recipients, _context: (), index: u8) -> Either<Recipients, Recipients> {
+    let index: u32 = jet::left_pad_low_8_32(index);
+        match jet::output_asset(index){
+    None => Left(recipients),
+    Some(asset: Asset1) => {
+    let asset_id: u256 = unwrap_right::<(u1, u256)>(asset);
+        match jet::eq_256(asset_id, param::REGULATED_ASSET_ID){
+    false => Right(recipients),
+    true => {
+    let [next, r2, r3, r4, r5, r6, r7, r8, r9, r10]: Recipients = recipients;
+        let owner: Pubkey = unwrap(next);
+        assert_eq_256(unwrap(jet::output_script_hash(index)), state_script_hash(param::USER_EXECUTABLE_LEAF_HASH, owner));
+        Right([r2, r3, r4, r5, r6, r7, r8, r9, r10, None])}
+    ,
+    }}
+    ,
+    }}
+    fn ensure_unused_recipient(recipient: Option<Pubkey>, _unused: ()) {
+    match recipient{
+    None => (),
+    Some(_recipient: Pubkey) => panic!(),
+    }}
+    fn consume_budget(word: u256, valid: bool) -> bool {
+    assert_eq_256(word, 0);
+        valid}
+    fn main() {
+    assert!(array_fold::<consume_budget, 278>(witness::BUDGET_PADDING, true));
+        assert_eq_32(jet::current_index(), 0);
+        assert!(not(jet::eq_256(param::REGULATED_ASSET_ID, param::VERIFIER_ASSET_ID)));
+        let (input_asset, input_amount): (u256, u64) = explicit_input_asset_and_amount(0);
+        assert_eq_256(input_asset, param::VERIFIER_ASSET_ID);
+        assert_eq_64(input_amount, param::VERIFIER_ASSET_AMOUNT);
+        let (output_asset, output_amount): (u256, u64) = explicit_output_asset_and_amount(0);
+        assert_eq_256(output_asset, param::VERIFIER_ASSET_ID);
+        assert_eq_64(output_amount, param::VERIFIER_ASSET_AMOUNT);
+        assert_eq_256(unwrap(jet::output_script_hash(0)), jet::current_script_hash());
+        assert_eq_256(explicit_input_asset(1), param::REGULATED_ASSET_ID);
+        assert_eq_256(unwrap(jet::input_script_hash(1)), state_script_hash(param::USER_EXECUTABLE_LEAF_HASH, witness::TRANSFER_OWNER));
+        let input_scan: Either<u32, u32> = for_while::<scan_input>(0, ());
+        let regulated_input_count: u32 = unwrap_left::<u32>(input_scan);
+        let proof_state: ProofState = array_fold::<verify_policy_proof, 10>(witness::INPUT_POLICY_PROOFS, (regulated_input_count, 0, None, false));
+        let (_inputs, verified_inputs, _last, _finished): ProofState = proof_state;
+        assert_eq_32(verified_inputs, regulated_input_count);
+        let output_scan: Either<Recipients, Recipients> = for_while::<validate_output>(witness::RECIPIENTS, ());
+        array_fold::<ensure_unused_recipient, 10>(unwrap_left::<Recipients>(output_scan), ());
+    }
+}
