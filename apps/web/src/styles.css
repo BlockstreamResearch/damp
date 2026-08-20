@@ -95,6 +95,7 @@ button { color: inherit; }
 .asset-glyph::first-line { transform: rotate(-45deg); }
 .balance-value { margin: 36px 0 28px; font-family: Georgia, "Times New Roman", serif; font-size: clamp(33px, 4.5vw, 54px); letter-spacing: -.045em; white-space: nowrap; }
 .balance-value span { margin-left: 8px; color: #a8bdcc; font-family: Inter, sans-serif; font-size: 12px; letter-spacing: .08em; }
+.pending-balance { margin: -20px 0 24px; color: #a8bdcc; font-size: 10px; }
 .balance-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .balance-actions .primary { color: var(--navy); background: #f7fbff; }
 .balance-actions .secondary { color: #e9f1f7; border-color: rgba(255,255,255,.3); background: transparent; }
@@ -104,6 +105,13 @@ button { color: inherit; }
 .stat-row small { color: #95abbc; font-size: 9px; }
 .stat-row strong { font-size: 11px; }
 .activity-card { padding: 24px; }
+.asset-list { margin-top: 12px; display: grid; }
+.asset-list > div { padding: 12px 0; display: flex; justify-content: space-between; gap: 16px; border-top: 1px solid #e9e6df; }
+.asset-list > div > span { min-width: 0; display: grid; gap: 3px; }
+.asset-list > div > span:last-child { text-align: right; }
+.asset-list strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.asset-list small, .sync-time { color: var(--muted); font-size: 8px; }
+.sync-time { display: block; margin-top: 12px; line-height: 1.5; }
 .activity-list { margin-top: 15px; }
 .activity-item { padding: 14px 0; display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 9px; border-top: 1px solid #e9e6df; }
 .activity-item > div { display: grid; gap: 3px; }
@@ -119,6 +127,10 @@ button { color: inherit; }
 .fee-panel strong { font-size: 12px; }
 .fee-panel p { max-width: 650px; margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .verified-label { display: inline-flex; align-items: center; gap: 5px; color: var(--green); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.utxo-list { display: grid; gap: 6px; }
+.utxo-list > div { padding: 9px 11px; display: grid; grid-template-columns: minmax(0, 1.2fr) 90px 120px auto; gap: 10px; align-items: center; border: 1px solid #e4e1da; border-radius: 7px; font-size: 9px; }
+.utxo-list code, .utxo-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.utxo-list span { color: var(--muted); }
 
 .technical-details { margin-top: 18px; border-top: 1px solid var(--line); }
 .technical-details summary { padding: 15px 3px; color: var(--muted); font-size: 11px; cursor: pointer; }
@@ -241,6 +253,8 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
 .funding-list span { display: flex; align-items: center; gap: 7px; color: var(--amber-dark); font-size: 10px; font-weight: 700; }
 .funding-list code { grid-column: 1; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; }
 .funding-list .button, .funding-list small { grid-column: 2; grid-row: 1 / 3; }
+.funding-status { margin: 16px 0; padding: 12px 13px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #dfdcd4; border-radius: 9px; background: #faf9f6; }
+.funding-status > span { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
 .registry-files { margin-top: 18px; display: grid; gap: 10px; }
 .registry-files > div:not(.registry-actions) { padding: 13px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; border: 1px solid #dfdcd4; border-radius: 9px; background: #faf9f6; }
 .registry-files span { font-size: 10px; font-weight: 700; }
@@ -299,6 +313,8 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
   .table-row { grid-template-columns: 1fr auto; gap: 6px; }
   .table-row > span { grid-column: 1; }
   .table-row .icon-button { grid-column: 2; grid-row: 1 / 3; }
+  .utxo-list > div { grid-template-columns: 1fr auto; }
+  .utxo-list > div > span:nth-child(3) { display: none; }
   .setup-progress span { font-size: 0; }
   .choice-card { min-height: 190px; padding: 21px; grid-template-columns: 39px 1fr; }
   .choice-card > svg { display: none; }

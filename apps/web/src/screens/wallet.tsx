@@ -19,8 +19,6 @@ import {
   WalletStatus,
 } from "../components/ui";
 import {
-  createReceiveRecord,
-  deriveWalletAddress,
   signTransfer,
   signerSnapshot,
   subscribeSigner,
@@ -29,10 +27,7 @@ import {
 } from "../lib/amp-signer";
 import {
   broadcastTransaction,
-  inspectAndFilter,
   liveAnchorUtxo,
-  scanHolderUtxos,
-  scanWalletUtxos,
 } from "../lib/chain-wallet";
 import { useActiveDeployment } from "../lib/deployments";
 import {
@@ -49,47 +44,47 @@ import {
 import { esploraUrlForDeployment, requireFreshAnchor, traverseLiveAnchor } from "../lib/esplora";
 import { liquidTestnetFaucetUrl } from "../lib/faucet";
 import { resolvePolicySnapshot } from "../lib/policy-registry";
-import { listReceiveRecords, putReceiveRecord } from "../lib/store";
-
-function usePortfolio(deployment: Deployment | null | undefined, signerConnected: boolean) {
-  return useQuery({
-    queryKey: ["portfolio", deployment?.deploymentId, signerConnected],
-    enabled: Boolean(deployment && signerConnected),
-    queryFn: async () => {
-      const selected = requireDeployment(deployment);
-      const records = await listReceiveRecords(selected.deploymentId);
-      const [holderUtxos, walletUtxos] = await Promise.all([
-        scanHolderUtxos(selected, records),
-        scanWalletUtxos(selected),
-      ]);
-      const [regulated, fees] = await Promise.all([
-        inspectAndFilter(holderUtxos, selected.regulatedAsset),
-        inspectAndFilter(walletUtxos, selected.policyAsset),
-      ]);
-      return {
-        balance: regulated.inspected.reduce((sum, utxo) => sum + BigInt(utxo.amount), 0n),
-        utxos: regulated.utxos.length,
-        feeReady: fees.inspected.length > 0,
-      };
-    },
-  });
-}
+import { useDeploymentWalletSync, walletSyncQueryKeys } from "../lib/wallet-query";
+import {
+  assetBalances,
+  ensureSignerReceiveRecord,
+  feeFundingState,
+  nextFundingAddress,
+  selectSpendableUtxos,
+  synchronizeDeploymentWallet,
+  type AssetBalance,
+} from "../lib/wallet-sync";
 
 export function WalletDashboard() {
   const deployment = useActiveDeployment();
   const signer = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
-  const portfolio = usePortfolio(deployment.data, signer.connected);
-  const queryClient = useQueryClient();
+  const wallet = useDeploymentWalletSync(deployment.data, signer.connected ? signer.fingerprint : undefined);
   const [feeMessage, setFeeMessage] = useState<string>();
-  const fundingAddress = useQuery({
-    queryKey: ["fee-funding-address", signer.fingerprint, deployment.data?.network],
-    enabled: Boolean(signer.connected && deployment.data?.network === "liquid-testnet"),
-    queryFn: () => deriveWalletAddress(0, 0, requireDeployment(deployment.data).network),
-  });
+  const snapshot = wallet.data?.snapshot;
+  const balances = useMemo(() => assetBalances(snapshot), [snapshot]);
+  const regulated = balances.find((balance) => balance.assetId === deployment.data?.regulatedAsset);
+  const syncError = wallet.data?.syncError ?? (wallet.error instanceof Error ? wallet.error.message : undefined);
+  const feeState = deployment.data ? feeFundingState({
+    snapshot,
+    assetId: deployment.data.policyAsset,
+    minimum: 1_500n,
+    syncing: wallet.isFetching,
+    syncError,
+  }) : "loading";
+  const fundingAddress = nextFundingAddress(snapshot);
+  const spendableRegulated = snapshot?.utxos.filter((utxo) =>
+    utxo.source === "holder" && utxo.assetId === deployment.data?.regulatedAsset && utxo.status === "confirmed"
+  ).length ?? 0;
 
   async function refreshPortfolio() {
-    await queryClient.invalidateQueries({ queryKey: ["portfolio", deployment.data?.deploymentId] });
-    setFeeMessage("Wallet funding scan refreshed. Faucet outputs become spendable after confirmation.");
+    if (!signer.connected) {
+      setFeeMessage("Connect the signer to synchronize its wallet.");
+      return;
+    }
+    const result = await wallet.refetch();
+    if (result.error) setFeeMessage(result.error instanceof Error ? result.error.message : String(result.error));
+    else if (result.data?.syncError) setFeeMessage(`Showing the last good wallet state: ${result.data.syncError}`);
+    else setFeeMessage("Wallet synchronized with Liquid testnet.");
   }
 
   return (
@@ -114,34 +109,45 @@ export function WalletDashboard() {
                 <div><span>{deployment.data.asset.name}</span><small>Simplicity AMP · blacklist only</small></div>
                 <Pill tone="blue"><EyeOff size={12} /> Confidential values</Pill>
               </div>
-              <div className="balance-value">{portfolio.isPending ? "—" : formatUnits(portfolio.data?.balance ?? 0n, deployment.data.asset.precision)}<span>{deployment.data.asset.ticker}</span></div>
+              <div className="balance-value">{!signer.connected || (!snapshot && wallet.isPending) ? "—" : formatUnits(regulated?.confirmed ?? 0n, deployment.data.asset.precision)}<span>{deployment.data.asset.ticker}</span></div>
+              {regulated?.pending ? <p className="pending-balance">+{formatUnits(regulated.pending, deployment.data.asset.precision)} pending confirmation</p> : null}
               <div className="balance-actions"><Link to="/wallet/send" className="button primary"><Send size={16} /> Send</Link><Link to="/wallet/receive" className="button secondary"><Radio size={16} /> Receive</Link></div>
               <div className="card-rule" />
-              <div className="stat-row"><span><small>Spendable outputs</small><strong>{portfolio.data?.utxos ?? 0}</strong></span><span><small>Supply model</small><strong>{deployment.data.supplyMode}</strong></span><span><small>Network</small><strong>{deployment.data.network}</strong></span></div>
+              <div className="stat-row"><span><small>Spendable outputs</small><strong>{spendableRegulated}</strong></span><span><small>Supply model</small><strong>{deployment.data.supplyMode}</strong></span><span><small>Network</small><strong>{deployment.data.network}</strong></span></div>
             </Panel>
-            <Panel className="activity-card"><SectionHeading label="Deployment state" title="Live data only" /><p>Balances and actions are scoped by deployment ID. The signer SDK validates every selected chain output locally.</p></Panel>
+            <Panel className="activity-card">
+              <SectionHeading label="Wallet inventory" title="Assets" aside={<Pill tone={syncError ? "warn" : wallet.isFetching ? "blue" : "good"}>{syncError ? "Last good state" : wallet.isFetching ? "Syncing" : "Synced"}</Pill>} />
+              {!signer.connected ? <p>Connect the signer to restore the wallet identified by its fingerprint.</p> : balances.length === 0 && !snapshot ? <p>Discovering wallet addresses and outputs…</p> : balances.length === 0 ? <p>No wallet assets found.</p> : <div className="asset-list">{balances.map((balance) => <AssetRow key={balance.assetId} balance={balance} deployment={deployment.data!} />)}</div>}
+              {snapshot && <small className="sync-time">Last successful sync {new Date(snapshot.syncedAt).toLocaleTimeString()} · through external #{snapshot.scannedThrough.external} and change #{snapshot.scannedThrough.change}</small>}
+            </Panel>
           </div>
           <Panel className="fee-panel">
-            <div><span className="round-icon"><Fuel size={18} /></span><div><strong>L-BTC transaction fees</strong><p>Fund the local signer on Liquid testnet, then refresh after confirmation.</p></div></div>
-            {portfolio.data?.feeReady ? (
-              <VerifiedLabel>Fee input ready</VerifiedLabel>
-            ) : fundingAddress.data ? (
-              <div className="fee-actions">
-                <a className="button secondary" href={liquidTestnetFaucetUrl(fundingAddress.data.confidentialAddress)} target="_blank" rel="noreferrer" onClick={() => setFeeMessage("Faucet opened for the signer funding address. Wait for confirmation, then refresh.")}>
-                  Get testnet L-BTC <ExternalLink size={14} />
-                </a>
-                <button className="icon-button" type="button" aria-label="Refresh fee funding" onClick={() => void refreshPortfolio()}><RefreshCw size={15} /></button>
-              </div>
-            ) : (
-              <button className="button secondary" type="button" onClick={() => setFeeMessage("Connect the signer to derive its Liquid testnet funding address.")}>Connect to fund</button>
-            )}
+            <div><span className="round-icon"><Fuel size={18} /></span><div><strong>L-BTC transaction fees</strong><p>{feeState === "ready" ? "A confirmed fee output is available." : feeState === "pending" ? "Funding was found and is waiting for confirmation." : feeState === "error" ? "Synchronization failed; faucet actions are paused to avoid duplicate funding." : feeState === "unfunded" ? "No usable L-BTC was found after a successful wallet scan." : signer.connected ? "Scanning derived wallet addresses…" : "Connect the signer to restore and synchronize its wallet."}</p></div></div>
+            <div className="fee-actions">
+              {feeState === "ready" ? <VerifiedLabel>Fee input ready</VerifiedLabel> : null}
+              {feeState === "pending" ? <Pill tone="warn">Confirmation pending</Pill> : null}
+              {feeState === "error" ? <Pill tone="warn">Sync error</Pill> : null}
+              {feeState === "unfunded" && fundingAddress && deployment.data.network === "liquid-testnet" ? <a className="button secondary" href={liquidTestnetFaucetUrl(fundingAddress.confidentialAddress)} target="_blank" rel="noreferrer" onClick={() => setFeeMessage("Faucet opened for the next unused signer address. Wallet sync will detect the output automatically.")}>Get testnet L-BTC <ExternalLink size={14} /></a> : null}
+              <button className="icon-button" disabled={!signer.connected || wallet.isFetching} type="button" aria-label="Refresh wallet funding" onClick={() => void refreshPortfolio()}><RefreshCw size={15} /></button>
+            </div>
           </Panel>
           {feeMessage && <p className="inline-message" role="status">{feeMessage}</p>}
+          {snapshot && <TechnicalDetails label="Wallet UTXOs"><div className="utxo-list">{snapshot.utxos.filter((utxo) => utxo.status !== "spent" && utxo.status !== "orphaned").map((utxo) => <div key={`${utxo.txid}:${utxo.vout}`}><code>{shortHash(utxo.txid)}:{utxo.vout}</code><span>{utxo.status}</span><span>{shortHash(utxo.assetId)}</span><strong>{utxo.amount}</strong></div>)}{snapshot.utxos.every((utxo) => utxo.status === "spent" || utxo.status === "orphaned") && <p>No current outputs.</p>}</div></TechnicalDetails>}
           <TechnicalDetails label="Deployment details"><dl className="detail-grid"><div><dt>Asset ID</dt><dd>{deployment.data.regulatedAsset}</dd></div><div><dt>Genesis anchor</dt><dd>{deployment.data.genesisAnchor}</dd></div><div><dt>User program</dt><dd>{deployment.data.userProgramHash}</dd></div><div><dt>Governance program</dt><dd>{deployment.data.governanceProgramHash}</dd></div></dl></TechnicalDetails>
         </>
       )}
     </AppShell>
   );
+}
+
+function AssetRow({ balance, deployment }: { balance: AssetBalance; deployment: Deployment }) {
+  const regulated = balance.assetId === deployment.regulatedAsset;
+  const policy = balance.assetId === deployment.policyAsset;
+  const token = balance.assetId === deployment.reissuanceToken;
+  const label = regulated ? deployment.asset.name : policy ? "Liquid Bitcoin" : token ? "Reissuance token" : shortHash(balance.assetId);
+  const ticker = regulated ? deployment.asset.ticker : policy ? "L-BTC" : token ? "TOKEN" : "units";
+  const precision = regulated ? deployment.asset.precision : policy ? 8 : 0;
+  return <div><span><strong>{label}</strong><small>{shortHash(balance.assetId)}</small></span><span><strong>{formatUnits(balance.confirmed, precision)} {ticker}</strong>{balance.pending > 0n ? <small>+{formatUnits(balance.pending, precision)} pending</small> : <small>{balance.confirmedUtxos} confirmed output{balance.confirmedUtxos === 1 ? "" : "s"}</small>}</span></div>;
 }
 
 const sendSchema = z.object({
@@ -166,6 +172,7 @@ async function resolveReceiveRecord(value: string, deployment: Deployment): Prom
 
 export function WalletSend() {
   const deployment = useActiveDeployment();
+  const queryClient = useQueryClient();
   const [review, setReview] = useState<SendForm>();
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -181,33 +188,32 @@ export function WalletSend() {
       if (amount <= 0n) throw new Error("Transfer amount must be positive.");
       const recipient = await resolveReceiveRecord(review.recipient, selected);
       const esplora = esploraUrlForDeployment(selected);
-      const anchor = await traverseLiveAnchor(selected, esplora);
+      const signer = signerSnapshot();
+      if (!signer.connected || !signer.fingerprint) throw new Error("Connect the AMP signer first.");
+      const [anchor, wallet] = await Promise.all([
+        traverseLiveAnchor(selected, esplora),
+        synchronizeDeploymentWallet(selected, signer.fingerprint),
+      ]);
       if (anchor.live.confirmations < 1) throw new Error("The live verifier anchor is not confirmed.");
       const policy = await resolvePolicySnapshot(selected, anchor.live.scriptPubkey);
-      const records = await listReceiveRecords(selected.deploymentId);
-      const [holderUtxos, walletUtxos, verifierUtxo] = await Promise.all([
-        scanHolderUtxos(selected, records),
-        scanWalletUtxos(selected),
-        liveAnchorUtxo(selected, anchor.live.txid),
-      ]);
-      const [regulated, fees] = await Promise.all([
-        inspectAndFilter(holderUtxos, selected.regulatedAsset),
-        inspectAndFilter(walletUtxos, selected.policyAsset),
-      ]);
-      const fee = BigInt(Math.ceil((650 + Math.min(regulated.utxos.length, 10) * 180 + 5 * 100) * 1.25));
+      const verifierUtxo = await liveAnchorUtxo(selected, anchor.live.txid);
+      const regulated = selectSpendableUtxos(wallet, selected.regulatedAsset, "holder");
+      const fees = selectSpendableUtxos(wallet, selected.policyAsset, "wallet");
+      const fee = BigInt(Math.ceil((650 + Math.min(regulated.length, 10) * 180 + 5 * 100) * 1.25));
       await requireFreshAnchor(selected, anchor.live, esplora);
       const result = await signTransfer({
         deployment: publicManifest(selected),
         currentPolicy: policy,
         verifierUtxo,
-        regulatedUtxos: regulated.utxos,
-        feeUtxos: fees.utxos,
+        regulatedUtxos: regulated,
+        feeUtxos: fees,
         recipient,
         amount: amount.toString(),
         fee: fee.toString(),
       });
       const broadcastTxid = await broadcastTransaction(selected, result.transaction);
       if (broadcastTxid !== result.txid) throw new Error("Esplora returned a different transaction ID.");
+      await queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.fingerprint, selected.network) });
       setMessage(`Transfer broadcast: ${result.txid}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -251,20 +257,24 @@ function ReviewRow({ label, value, good }: { label: string; value: string; good?
 
 export function WalletReceive() {
   const deployment = useActiveDeployment();
+  const signer = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
+  const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
-  const [record, setRecord] = useState<ReceiveRecord>();
   const [message, setMessage] = useState<string>();
+  const storedRecords = useQuery({
+    queryKey: ["receive-record", deployment.data?.deploymentId, signer.fingerprint],
+    enabled: Boolean(deployment.data && signer.connected && signer.fingerprint),
+    queryFn: () => ensureSignerReceiveRecord(requireDeployment(deployment.data), signer.fingerprint!),
+  });
+  const record = storedRecords.data?.record;
   const encoded = useMemo(() => record ? JSON.stringify(record) : "", [record]);
 
   async function generate() {
     try {
       const selected = requireDeployment(deployment.data);
-      const created = await createReceiveRecord(publicManifest(selected), selected.deploymentId, selected.asset.ticker.toLowerCase());
-      const parsed = receiveRecordSchema.parse(created.record);
-      await validateReceiveRecordShape(parsed);
-      await validateReceiveRecord(publicManifest(selected), parsed);
-      await putReceiveRecord(parsed, created.derivationIndex);
-      setRecord(parsed);
+      if (!signer.connected || !signer.fingerprint) throw new Error("Connect the AMP signer first.");
+      const created = await ensureSignerReceiveRecord(selected, signer.fingerprint);
+      queryClient.setQueryData(["receive-record", selected.deploymentId, signer.fingerprint], created);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -274,7 +284,7 @@ export function WalletReceive() {
     <AppShell role="holder" eyebrow="Holder wallet / Receive" title="Receive regulated assets">
       <BackLink to="/wallet">Back to wallet</BackLink>
       <div className="receive-layout">
-        <Panel className="receive-card"><SectionHeading label="Deployment-bound receive record" title="Share this with the sender" />{record ? <><div className="qr-wrap"><QRCodeSVG value={encoded} size={188} level="M" /></div><p className="receive-address">{record.confidentialAddress}</p><button className="button primary wide" type="button" onClick={() => navigator.clipboard.writeText(encoded).then(() => setCopied(true))}>{copied ? <Check size={16} /> : <Copy size={16} />} {copied ? "Copied" : "Copy receive record"}</button></> : <div className="generate-record"><Radio size={26} /><p>The AMP Signer SDK derives owner and blinding keys, constructs the exact user covenant, and signs the deployment-bound BIP322 record locally.</p><button className="button primary" type="button" onClick={generate}>Generate locally</button></div>}{message && <p className="inline-message" role="status">{message}</p>}</Panel>
+        <Panel className="receive-card"><SectionHeading label="Deployment-bound receive record" title="Share this with the sender" />{record ? <><div className="qr-wrap"><QRCodeSVG value={encoded} size={188} level="M" /></div><p className="receive-address">{record.confidentialAddress}</p><button className="button primary wide" type="button" onClick={() => navigator.clipboard.writeText(encoded).then(() => setCopied(true))}>{copied ? <Check size={16} /> : <Copy size={16} />} {copied ? "Copied" : "Copy receive record"}</button></> : <div className="generate-record"><Radio size={26} /><p>The AMP Signer SDK derives owner and blinding keys, constructs the exact user covenant, and signs the deployment-bound BIP322 record locally.</p><button className="button primary" disabled={!signer.connected || storedRecords.isFetching} type="button" onClick={generate}>{storedRecords.isFetching ? "Restoring…" : "Generate locally"}</button></div>}{storedRecords.error instanceof Error && <p className="field-error">{storedRecords.error.message}</p>}{message && <p className="inline-message" role="status">{message}</p>}</Panel>
         <div className="receive-notes"><SafetyNote title="Safe to publish">Only public keys, the covenant script, confidential address, and ownership proof are exported.</SafetyNote><Panel><h3>Sender verification</h3><ul className="check-list"><li><ShieldCheck size={15} /> Deployment binding</li><li><ShieldCheck size={15} /> Exact holder script</li><li><ShieldCheck size={15} /> BIP322 ownership proof</li><li><ShieldCheck size={15} /> Address and blinding key</li></ul></Panel><div className="info-line"><Info size={15} /> Direct JSON works without a registry account.</div></div>
       </div>
     </AppShell>

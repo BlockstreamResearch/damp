@@ -408,6 +408,21 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn pending_wallet_output_can_be_inspected_but_not_spent() -> anyhow::Result<()> {
+        let signer = SwSigner::new(MNEMONIC, false)?;
+        let network = SignerNetwork::ElementsRegtest;
+        let asset = AssetId::from_str(&"aa".repeat(32))?;
+        let mut pending = funding_utxo(&signer, network, asset, 5_000, 9, 0)?;
+        pending.spendable = false;
+
+        let inspected = transaction::inspect_utxos(&signer, &[pending.clone()])?;
+        assert_eq!(inspected[0].amount, "5000");
+        assert_eq!(inspected[0].asset_id, asset.to_string());
+        assert!(transaction::decode_utxo(&signer, &pending, asset).is_err());
+        Ok(())
+    }
+
     fn funding_utxo(
         signer: &SwSigner,
         network: SignerNetwork,

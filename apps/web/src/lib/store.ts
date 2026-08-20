@@ -4,15 +4,15 @@ import type { Deployment, PolicySnapshot, ReceiveRecord } from "./domain";
 
 export type StoredReceiveRecord = { record: ReceiveRecord; derivationIndex: number };
 
-const database = openDB("simplicity-amp-v1", 3, {
+const database = openDB("simplicity-amp-v1", 4, {
   upgrade(db) {
-    for (const name of [...db.objectStoreNames]) db.deleteObjectStore(name);
-    db.createObjectStore("deployments", { keyPath: "deploymentId" });
-    db.createObjectStore("settings");
-    db.createObjectStore("snapshots");
-    db.createObjectStore("receiveRecords");
-    db.createObjectStore("drafts");
-    db.createObjectStore("caches");
+    if (!db.objectStoreNames.contains("deployments")) db.createObjectStore("deployments", { keyPath: "deploymentId" });
+    if (!db.objectStoreNames.contains("settings")) db.createObjectStore("settings");
+    if (!db.objectStoreNames.contains("snapshots")) db.createObjectStore("snapshots");
+    if (!db.objectStoreNames.contains("receiveRecords")) db.createObjectStore("receiveRecords");
+    if (!db.objectStoreNames.contains("drafts")) db.createObjectStore("drafts");
+    if (!db.objectStoreNames.contains("caches")) db.createObjectStore("caches");
+    if (!db.objectStoreNames.contains("walletSync")) db.createObjectStore("walletSync");
   },
 });
 
@@ -91,4 +91,12 @@ export async function getCachedRecord<T>(key: string): Promise<T | undefined> {
 
 export async function putCachedRecord<T>(key: string, value: T) {
   return (await database).put("caches", value, key);
+}
+
+export async function getWalletSyncRecord<T>(key: string): Promise<T | undefined> {
+  return (await database).get("walletSync", key);
+}
+
+export async function putWalletSyncRecord<T>(key: string, value: T) {
+  return (await database).put("walletSync", value, key);
 }

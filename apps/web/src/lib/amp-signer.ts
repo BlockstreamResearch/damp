@@ -95,6 +95,7 @@ export type SignerState = {
 let modulePromise: Promise<SignerModule> | undefined;
 let signer: WasmAmpSigner | undefined;
 let state: SignerState = { connected: false };
+let signerRevision = 0;
 const listeners = new Set<() => void>();
 const debugMnemonicKey = "simplicity-amp:debug-mnemonic:v1";
 
@@ -134,12 +135,17 @@ async function loadModule() {
 }
 
 function publish(next: SignerState) {
+  signerRevision += 1;
   state = next;
   for (const listener of listeners) listener();
 }
 
 export function signerSnapshot() {
   return state;
+}
+
+export function signerSessionRevision() {
+  return signerRevision;
 }
 
 export function subscribeSigner(listener: () => void) {

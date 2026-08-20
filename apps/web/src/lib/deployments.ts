@@ -29,7 +29,7 @@ export function useSelectDeployment() {
         queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.activeId }),
         queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.active }),
         queryClient.invalidateQueries({ queryKey: ["anchor"] }),
-        queryClient.invalidateQueries({ queryKey: ["portfolio"] }),
+        queryClient.invalidateQueries({ queryKey: ["wallet-sync"] }),
         queryClient.invalidateQueries({ queryKey: ["policy"] }),
       ]);
     },

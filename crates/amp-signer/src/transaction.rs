@@ -56,7 +56,12 @@ pub fn inspect_utxos(
     values
         .iter()
         .map(|value| {
-            let validated = decode_utxo_inner(signer, value, None, true)?;
+            // Inspection is read-only and must classify pending outputs. Keep the
+            // spendability gate in every transaction-building decoder, but do not
+            // require a confirmation merely to unblind and display an output.
+            let mut inspectable = value.clone();
+            inspectable.spendable = true;
+            let validated = decode_utxo_inner(signer, &inspectable, None, true)?;
             Ok(InspectedUtxo {
                 txid: value.txid.clone(),
                 vout: value.vout,

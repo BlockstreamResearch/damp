@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -9,11 +9,12 @@ import { AppShell, BackLink, Panel, Pill, SafetyNote, SectionHeading, TechnicalD
 import {
   bootstrap as bootstrapDeployment,
   buildBlacklist,
-  createReceiveRecord,
   deriveAmpKey,
   deriveWalletAddress,
   reissue,
+  signerSnapshot,
   signPolicyUpdate,
+  subscribeSigner,
   validateDeployment,
   validatePolicySnapshot,
   validateReceiveRecord,
@@ -22,11 +23,7 @@ import {
 } from "../lib/amp-signer";
 import {
   broadcastTransaction,
-  findTokenUtxo,
-  inspectAndFilter,
   liveAnchorUtxo,
-  scanWalletAt,
-  scanWalletUtxos,
 } from "../lib/chain-wallet";
 import {
   deploymentQueryKeys,
@@ -59,9 +56,15 @@ import {
   verifyCanonicalRegistryFile,
 } from "../lib/github";
 import { buildSuccessorPolicy, resolvePolicySnapshot, sha256Hex } from "../lib/policy-registry";
+import { useBaseWalletSync, walletSyncQueryKeys } from "../lib/wallet-query";
+import {
+  ensureSignerReceiveRecord,
+  selectSpendableUtxos,
+  synchronizeBaseWallet,
+  synchronizeDeploymentWallet,
+} from "../lib/wallet-sync";
 import {
   getDraft,
-  listReceiveRecords,
   putDeployment,
   putDraft,
   putPolicySnapshot,
@@ -181,11 +184,13 @@ export function AdminDashboard() {
       await verifyCanonicalRegistryFile(path, successor);
       const esplora = esploraUrlForDeployment(selected);
       await requireFreshAnchor(selected, originalAnchor.live, esplora);
-      const [verifierUtxo, walletUtxos] = await Promise.all([
+      const signer = signerSnapshot();
+      if (!signer.connected || !signer.fingerprint) throw new Error("Connect the AMP signer first.");
+      const [verifierUtxo, wallet] = await Promise.all([
         liveAnchorUtxo(selected, originalAnchor.live.txid),
-        scanWalletUtxos(selected),
+        synchronizeDeploymentWallet(selected, signer.fingerprint),
       ]);
-      const fees = await inspectAndFilter(walletUtxos, selected.policyAsset);
+      const fees = selectSpendableUtxos(wallet, selected.policyAsset, "wallet");
       await requireFreshAnchor(selected, originalAnchor.live, esplora);
       if (selected.issuerDerivationIndex === undefined) {
         throw new Error("This deployment has no local issuer-key locator.");
@@ -195,7 +200,7 @@ export function AdminDashboard() {
         currentPolicy: current,
         successorPolicy: successor,
         verifierUtxo,
-        feeUtxos: fees.utxos,
+        feeUtxos: fees,
         fee: "1500",
         issuerDerivationIndex: selected.issuerDerivationIndex,
       });
@@ -207,7 +212,7 @@ export function AdminDashboard() {
       setPending(undefined);
       setPendingPath(undefined);
       setLoadedPolicy(undefined);
-      await Promise.all([queryClient.invalidateQueries({ queryKey: ["anchor", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: ["policy", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.active })]);
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ["anchor", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: ["policy", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.active }), queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.fingerprint, selected.network) })]);
       setMessage(`Policy ${successor.sequence} active at ${winning.live.txid}:0.`);
     } catch (error) {
       if (error instanceof AnchorConflictError && deployment.data) {
@@ -274,6 +279,7 @@ type BootstrapRegistryFiles = { manifestPath: string; snapshotPath: string };
 
 export function AdminSetup() {
   const queryClient = useQueryClient();
+  const signer = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
   const [mode, setMode] = useState<"choose" | "create" | "import">("choose");
   const [configuration, setConfiguration] = useState<BootstrapConfiguration>();
   const [salt, setSalt] = useState<string>();
@@ -283,6 +289,29 @@ export function AdminSetup() {
   const [importValue, setImportValue] = useState("");
   const [message, setMessage] = useState<string>();
   const form = useForm<SetupForm>({ resolver: zodResolver(setupSchema), defaultValues: { name: "", ticker: "", precision: 8, supply: "", supplyMode: "fixed", network: "liquid-testnet" } });
+  const fundingEsplora = useMemo(() => {
+    if (!configuration) return undefined;
+    try {
+      return esploraUrlForDeployment({ network: configuration.network });
+    } catch {
+      return undefined;
+    }
+  }, [configuration?.network]);
+  const fundingWallet = useBaseWalletSync({
+    fingerprint: signer.connected ? signer.fingerprint : undefined,
+    network: configuration?.network,
+    esploraUrl: fundingEsplora,
+    enabled: Boolean(configuration),
+  });
+  const fundingSnapshot = fundingWallet.data?.snapshot;
+  const confirmedFunding = configuration && fundingSnapshot ? selectSpendableUtxos(fundingSnapshot, configuration.policyAsset, "wallet") : [];
+  const pendingFunding = configuration ? fundingSnapshot?.utxos.filter((utxo) => utxo.source === "wallet" && utxo.assetId === configuration.policyAsset && utxo.status === "unconfirmed").length ?? 0 : 0;
+  const fundingDeficit = Math.max(0, 2 - confirmedFunding.length);
+  const faucetOutputCount = Math.max(0, fundingDeficit - pendingFunding);
+  const unusedFundingAddresses = fundingSnapshot?.addresses.filter((address) => address.source === "wallet" && address.branch === 0 && !address.hasActivity).slice(0, faucetOutputCount) ?? fundingAddresses.slice(0, faucetOutputCount);
+  const fundingSyncError = fundingWallet.data?.syncError ?? (fundingWallet.error instanceof Error ? fundingWallet.error.message : undefined);
+  const fundingPending = fundingDeficit > 0 && pendingFunding >= fundingDeficit;
+  const showFundingActions = Boolean(fundingSnapshot && !fundingSyncError && !fundingWallet.isFetching && faucetOutputCount > 0);
 
   async function preview(value: SetupForm) {
     try {
@@ -324,10 +353,13 @@ export function AdminSetup() {
     try {
       if (!configuration || !salt) throw new Error("Prepare and save recovery data first.");
       const esplora = esploraUrlForDeployment({ network: configuration.network });
-      const walletUtxos = await scanWalletAt(esplora, 10, configuration.network);
-      const policy = await inspectAndFilter(walletUtxos, configuration.policyAsset);
-      if (policy.utxos.length < 2) {
-        throw new Error("Asset issuance requires two confirmed L-BTC UTXOs. Request one for each funding address, then retry.");
+      const signerState = signerSnapshot();
+      if (!signerState.connected || !signerState.fingerprint) throw new Error("Connect the AMP signer first.");
+      const wallet = await synchronizeBaseWallet({ fingerprint: signerState.fingerprint, network: configuration.network, esploraUrl: esplora });
+      const policyUtxos = selectSpendableUtxos(wallet, configuration.policyAsset, "wallet");
+      const pending = wallet.utxos.filter((utxo) => utxo.source === "wallet" && utxo.assetId === configuration.policyAsset && utxo.status === "unconfirmed").length;
+      if (policyUtxos.length < 2) {
+        throw new Error(`Asset issuance needs two distinct confirmed L-BTC outputs; found ${policyUtxos.length} confirmed and ${pending} pending.`);
       }
       const result = await bootstrapDeployment({
         network: configuration.network,
@@ -336,13 +368,14 @@ export function AdminSetup() {
         asset: { name: configuration.name, ticker: configuration.ticker, precision: configuration.precision },
         issuedSupply: configuration.supply,
         supplyMode: configuration.supplyMode,
-        policyUtxos: policy.utxos,
+        policyUtxos,
         fee: "2000",
         requiredConfirmations: 1,
         receiveAlias: configuration.ticker.toLowerCase(),
       });
       const broadcastTxid = await broadcastTransaction(configuration, result.transaction);
       if (broadcastTxid !== result.txid) throw new Error("Esplora returned a different bootstrap transaction ID.");
+      await queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signerState.fingerprint, configuration.network) });
       const manifest = deploymentManifestSchema.parse(result.deployment);
       const deploymentId = await validateDeployment(manifest);
       if (deploymentId !== result.deploymentId) throw new Error("Signer returned a mismatched deployment ID.");
@@ -469,19 +502,20 @@ export function AdminSetup() {
               <div className="setup-step">
                 <pre>{canonicalRegistryContent({ deploymentSalt: salt, ...configuration, fundingAddresses: fundingAddresses.map(({ confidentialAddress }) => confidentialAddress) })}</pre>
                 <p>The signer will derive the new regulated-asset ID from the issuance transaction. L-BTC is selected automatically as the network fee asset.</p>
-                <div className="funding-list">
-                  {fundingAddresses.map((address, index) => (
+                <div className="funding-status">
+                  <span><Fuel size={15} /> {confirmedFunding.length >= 2 ? "Two confirmed funding outputs are ready." : fundingPending ? `${pendingFunding} funding output${pendingFunding === 1 ? " is" : "s are"} awaiting confirmation.` : fundingSyncError ? "Wallet sync failed; faucet actions are paused." : fundingWallet.isFetching ? "Scanning all derived wallet addresses…" : signer.connected ? `${confirmedFunding.length} of 2 confirmed funding outputs ready.` : "Connect the signer to restore its funding state."}</span>
+                  <button className="icon-button" disabled={!signer.connected || fundingWallet.isFetching} type="button" aria-label="Refresh issuance funding" onClick={() => void fundingWallet.refetch()}><RefreshCw size={15} /></button>
+                </div>
+                {showFundingActions && <div className="funding-list">
+                  {unusedFundingAddresses.map((address, index) => (
                     <div key={address.confidentialAddress}>
-                      <span><Fuel size={15} /> Funding UTXO {index + 1}</span>
+                      <span><Fuel size={15} /> Needed funding output {index + 1}</span>
                       <code>{address.confidentialAddress}</code>
-                      {configuration.network === "liquid-testnet" ? (
-                        <a className="button secondary" href={liquidTestnetFaucetUrl(address.confidentialAddress)} target="_blank" rel="noreferrer">
-                          Request testnet L-BTC <ExternalLink size={14} />
-                        </a>
-                      ) : <small>Fund this address from the local Elements node.</small>}
+                      {configuration.network === "liquid-testnet" ? <a className="button secondary" href={liquidTestnetFaucetUrl(address.confidentialAddress)} target="_blank" rel="noreferrer">Request testnet L-BTC <ExternalLink size={14} /></a> : <small>Fund this address from the local Elements node.</small>}
                     </div>
                   ))}
-                </div>
+                </div>}
+                {fundingSyncError && <p className="field-error">{fundingSyncError}</p>}
                 <div className="review-buttons">
                   <button className="button secondary" type="button" onClick={downloadRecovery}><Download size={16} /> Save recovery</button>
                   <button className="button issuer-primary" type="button" onClick={bootstrap}>Issue asset locally</button>
@@ -512,6 +546,7 @@ type ReissueForm = z.infer<typeof reissueSchema>;
 export function AdminReissue() {
   const deployment = useActiveDeployment();
   const { anchor, policy } = useLivePolicy(deployment.data);
+  const queryClient = useQueryClient();
   const [review, setReview] = useState<ReissueForm>();
   const [message, setMessage] = useState<string>();
   const form = useForm<ReissueForm>({ resolver: zodResolver(reissueSchema) });
@@ -524,40 +559,34 @@ export function AdminReissue() {
       if (!review) throw new Error("Review the reissuance first.");
       const esplora = esploraUrlForDeployment(selected);
       await requireFreshAnchor(selected, anchor.data.live, esplora);
-      let stored = (await listReceiveRecords(selected.deploymentId))[0];
-      if (!stored) {
-        const created = await createReceiveRecord(publicManifest(selected), selected.deploymentId, `${selected.asset.ticker.toLowerCase()}-issuer`);
-        const record = receiveRecordSchema.parse(created.record);
-        await validateReceiveRecordShape(record);
-        await validateReceiveRecord(publicManifest(selected), record);
-        await putReceiveRecord(record, created.derivationIndex);
-        stored = { record, derivationIndex: created.derivationIndex };
-      }
       if (selected.issuerDerivationIndex === undefined) {
         throw new Error("This deployment has no local issuer-key locator.");
       }
-      const [walletUtxos, verifierUtxo] = await Promise.all([
-        scanWalletUtxos(selected),
+      const signer = signerSnapshot();
+      if (!signer.connected || !signer.fingerprint) throw new Error("Connect the AMP signer first.");
+      const [wallet, verifierUtxo, recipient] = await Promise.all([
+        synchronizeDeploymentWallet(selected, signer.fingerprint),
         liveAnchorUtxo(selected, anchor.data.live.txid),
+        ensureSignerReceiveRecord(selected, signer.fingerprint),
       ]);
-      const [fees, tokenUtxo] = await Promise.all([
-        inspectAndFilter(walletUtxos, selected.policyAsset),
-        findTokenUtxo(selected, walletUtxos),
-      ]);
+      const fees = selectSpendableUtxos(wallet, selected.policyAsset, "wallet");
+      const tokenUtxo = selectSpendableUtxos(wallet, selected.reissuanceToken!, "wallet")[0];
+      if (!tokenUtxo) throw new Error("The signer wallet has no confirmed reissuance token.");
       await requireFreshAnchor(selected, anchor.data.live, esplora);
       const result = await reissue({
         deployment: publicManifest(selected),
         currentPolicy: policy.data,
         verifierUtxo,
         tokenUtxo,
-        feeUtxos: fees.utxos.filter((utxo) => utxo !== tokenUtxo),
-        recipient: stored.record,
+        feeUtxos: fees,
+        recipient: recipient.record,
         amount: review.amount,
         fee: "2000",
         issuerDerivationIndex: selected.issuerDerivationIndex,
       });
       const broadcastTxid = await broadcastTransaction(selected, result.transaction);
       if (broadcastTxid !== result.txid) throw new Error("Esplora returned a different transaction ID.");
+      await queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.fingerprint, selected.network) });
       setMessage(`Reissuance broadcast: ${result.txid}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
