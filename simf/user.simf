@@ -1,0 +1,30 @@
+// A regulated balance is locked to this executable leaf and a hidden
+// TapData(owner_pubkey) leaf. Spending requires the owner and verifier input 0.
+
+use std::lib::asserts::{assert_eq_64, assert_eq_256};
+
+use crate::lib::assets::{
+    explicit_current_asset,
+    explicit_input_asset_and_amount,
+};
+use crate::lib::taproot::state_script_hash;
+
+fn main() {
+    // The public verifier anchor always occupies input 0; user inputs follow it.
+    assert!(jet::lt_32(0, jet::current_index()));
+    assert_eq_256(explicit_current_asset(), param::REGULATED_ASSET_ID);
+
+    let (verifier_asset, verifier_amount): (u256, u64) =
+        explicit_input_asset_and_amount(0);
+    assert_eq_256(verifier_asset, param::VERIFIER_ASSET_ID);
+    assert_eq_64(verifier_amount, param::VERIFIER_ASSET_AMOUNT);
+
+    let owner: Pubkey = witness::OWNER_PUBKEY;
+    let expected_script: u256 = state_script_hash(jet::tapleaf_hash(), owner);
+    assert_eq_256(jet::current_script_hash(), expected_script);
+
+    jet::bip_0340_verify(
+        (owner, jet::sig_all_hash()),
+        witness::OWNER_SIGNATURE,
+    );
+}

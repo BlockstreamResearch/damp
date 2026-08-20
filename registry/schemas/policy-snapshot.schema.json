@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockstreamresearch.github.io/simplicity-amp/schemas/policy-snapshot.schema.json",
+  "title": "Simplicity AMP v0.1 policy snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "protocol", "deploymentId", "sequence", "parentPolicyRoot", "parentVerifierScriptHash", "treeDepth", "setRoot", "entryCount", "policyRoot", "verifierProgramHash", "verifierScriptPubkey", "entries"],
+  "properties": {
+    "schema": { "const": "simplicity-amp-registry-v1" },
+    "protocol": { "const": "simplicity-amp/v0.1" },
+    "deploymentId": { "$ref": "#/$defs/hash" },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "parentPolicyRoot": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "parentVerifierScriptHash": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "treeDepth": { "enum": [4, 5, 6] },
+    "setRoot": { "$ref": "#/$defs/hash" },
+    "entryCount": { "type": "integer", "minimum": 0, "maximum": 64 },
+    "policyRoot": { "$ref": "#/$defs/hash" },
+    "verifierProgramHash": { "$ref": "#/$defs/hash" },
+    "verifierScriptPubkey": { "type": "string", "pattern": "^(?:[0-9a-f]{2})+$" },
+    "entries": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["txid", "vout"],
+        "properties": {
+          "txid": { "$ref": "#/$defs/hash" },
+          "vout": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+          "note": { "type": "string", "maxLength": 280 }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "treeDepth": { "const": 4 } } },
+      "then": { "properties": { "entryCount": { "type": "integer", "maximum": 16 }, "entries": { "type": "array", "maxItems": 16 } } }
+    },
+    {
+      "if": { "properties": { "treeDepth": { "const": 5 } } },
+      "then": { "properties": { "entryCount": { "type": "integer", "maximum": 32 }, "entries": { "type": "array", "maxItems": 32 } } }
+    },
+    {
+      "if": { "properties": { "sequence": { "const": 0 } } },
+      "then": { "properties": { "parentPolicyRoot": { "type": "null" }, "parentVerifierScriptHash": { "type": "null" } } },
+      "else": { "properties": { "parentPolicyRoot": { "$ref": "#/$defs/hash" }, "parentVerifierScriptHash": { "$ref": "#/$defs/hash" } } }
+    }
+  ],
+  "$defs": { "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+}

@@ -1,0 +1,91 @@
+// Blacklist-only depth-6 Merkle proofs.
+
+use std::lib::asserts::{assert_eq_32, assert_eq_256};
+use std::lib::u32::safe_add_32;
+
+pub type NeighborProof = (u32, u256, [u256; 6]);
+pub type NonMembershipProof = (u32, Option<NeighborProof>, Option<NeighborProof>);
+
+fn hash_key_leaf(key: u256) -> u256 {
+    let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_1(ctx, 0);
+    jet::sha_256_ctx_8_finalize(jet::sha_256_ctx_8_add_32(ctx, key))
+}
+
+fn hash_node(left: u256, right: u256) -> u256 {
+    let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_1(ctx, 2);
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, left);
+    jet::sha_256_ctx_8_finalize(jet::sha_256_ctx_8_add_32(ctx, right))
+}
+
+fn merkle_step(sibling: u256, state: (u256, u32)) -> (u256, u32) {
+    let (current, index): (u256, u32) = state;
+    let bit: u32 = jet::and_32(index, 1);
+    let parent: u256 = match jet::is_zero_32(bit) {
+        true => hash_node(current, sibling),
+        false => hash_node(sibling, current),
+    };
+    (parent, jet::right_shift_32(1, index))
+}
+
+fn verify_leaf(root: u256, key: u256, index: u32, path: [u256; 6]) {
+    let (computed, remaining_index): (u256, u32) =
+        array_fold::<merkle_step, 6>(path, (hash_key_leaf(key), index));
+    assert_eq_256(computed, root);
+    assert_eq_32(remaining_index, 0);
+}
+
+fn lt_256(a: u256, b: u256) -> bool {
+    let (a_high, a_low): (u128, u128) = <u256>::into(a);
+    let (b_high, b_low): (u128, u128) = <u256>::into(b);
+    let (a_0, a_1): (u64, u64) = <u128>::into(a_high);
+    let (a_2, a_3): (u64, u64) = <u128>::into(a_low);
+    let (b_0, b_1): (u64, u64) = <u128>::into(b_high);
+    let (b_2, b_3): (u64, u64) = <u128>::into(b_low);
+    match jet::eq_64(a_0, b_0) {
+        false => jet::lt_64(a_0, b_0),
+        true => match jet::eq_64(a_1, b_1) {
+            false => jet::lt_64(a_1, b_1),
+            true => match jet::eq_64(a_2, b_2) {
+                false => jet::lt_64(a_2, b_2),
+                true => jet::lt_64(a_3, b_3),
+            },
+        },
+    }
+}
+
+pub fn outpoint_key(outpoint: Outpoint) -> u256 {
+    let (txid, vout): (u256, u32) = outpoint;
+    let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, txid);
+    jet::sha_256_ctx_8_finalize(jet::sha_256_ctx_8_add_4(ctx, vout))
+}
+
+pub fn verify_non_membership(root: u256, count: u32, key: u256, proof: NonMembershipProof) {
+    assert!(jet::le_32(count, 64));
+    let (insertion_index, lower, upper): NonMembershipProof = proof;
+    assert!(jet::le_32(insertion_index, count));
+    match lower {
+        None => assert_eq_32(insertion_index, 0),
+        Some(neighbor: NeighborProof) => {
+            let (lower_index, lower_key, path): NeighborProof = neighbor;
+            verify_leaf(root, lower_key, lower_index, path);
+            assert!(lt_256(lower_key, key));
+            assert_eq_32(safe_add_32(lower_index, 1), insertion_index);
+        },
+    };
+    match upper {
+        None => assert_eq_32(insertion_index, count),
+        Some(neighbor: NeighborProof) => {
+            let (upper_index, upper_key, path): NeighborProof = neighbor;
+            assert_eq_32(upper_index, insertion_index);
+            verify_leaf(root, upper_key, upper_index, path);
+            assert!(lt_256(key, upper_key));
+        },
+    };
+    match jet::is_zero_32(count) {
+        false => (),
+        true => assert_eq_256(root, 0x7ccebc8f78646b5eece300cb6cfc0dce0fb94f4ddb1f7c0edc4d9eb30851aa0a),
+    }
+}

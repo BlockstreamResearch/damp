@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockstreamresearch.github.io/simplicity-amp/schemas/deployment.schema.json",
+  "title": "Simplicity AMP v0.1 deployment manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "protocol", "network", "policyAsset", "regulatedAsset", "verifierAsset", "verifierAssetAmount", "issuerPublicKey", "deploymentSalt", "genesisAnchor", "asset", "issuedSupply", "supplyMode", "reissuanceToken", "reissuanceEntropy", "userProgramHash", "governanceProgramHash", "contractBundleHash"],
+  "properties": {
+    "schema": { "const": "simplicity-amp-registry-v1" },
+    "protocol": { "const": "simplicity-amp/v0.1" },
+    "network": { "enum": ["liquid-testnet", "elements-regtest"] },
+    "policyAsset": { "$ref": "#/$defs/hash" },
+    "regulatedAsset": { "$ref": "#/$defs/hash" },
+    "verifierAsset": { "$ref": "#/$defs/hash" },
+    "verifierAssetAmount": { "const": 1 },
+    "issuerPublicKey": { "$ref": "#/$defs/hash" },
+    "deploymentSalt": { "$ref": "#/$defs/hash" },
+    "genesisAnchor": { "$ref": "#/$defs/outpoint" },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ticker", "precision"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "ticker": { "type": "string", "minLength": 1, "maxLength": 12 },
+        "precision": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+    "issuedSupply": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+    "supplyMode": { "enum": ["fixed", "issuer-managed"] },
+    "reissuanceToken": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "reissuanceEntropy": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "userProgramHash": { "$ref": "#/$defs/hash" },
+    "governanceProgramHash": { "$ref": "#/$defs/hash" },
+    "contractBundleHash": { "$ref": "#/$defs/hash" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "supplyMode": { "const": "fixed" } } },
+      "then": { "properties": { "reissuanceToken": { "type": "null" }, "reissuanceEntropy": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "supplyMode": { "const": "issuer-managed" } } },
+      "then": { "properties": { "reissuanceToken": { "$ref": "#/$defs/hash" }, "reissuanceEntropy": { "$ref": "#/$defs/hash" } } }
+    }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "outpoint": { "type": "string", "pattern": "^[0-9a-f]{64}:[0-9]+$" }
+  }
+}

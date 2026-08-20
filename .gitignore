@@ -1,4 +1,11 @@
 /src/artifacts/
 /target/
 /paper/out/
+/node_modules/
+/.pnpm-store/
+/apps/web/dist/
+*.tsbuildinfo
+/apps/web/src/generated/amp-wasm/
+/apps/web/src/generated/amp-signer/
+/deps/
 .idea/

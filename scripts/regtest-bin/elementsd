@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Simplex's pinned Elements regtest binary rejects TapSimplicity spends at the
+# standardness layer. Regtest enables non-standard relay explicitly so the same
+# node still performs full consensus validation and Simplicity execution.
+exec "${SIMPLEX_REAL_ELEMENTSD:-${HOME}/.simplex/bin/elementsd}" \
+  -acceptnonstdtxn=1 \
+  "$@"

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockstreamresearch.github.io/simplicity-amp/schemas/receive-record.schema.json",
+  "title": "Simplicity AMP v0.1 holder receive record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "protocol", "deploymentId", "alias", "ownerPublicKey", "scriptPubkey", "confidentialAddress", "blindingPublicKey", "proofAddress", "bip322Signature"],
+  "properties": {
+    "schema": { "const": "simplicity-amp-registry-v1" },
+    "protocol": { "const": "simplicity-amp/v0.1" },
+    "deploymentId": { "$ref": "#/$defs/hash" },
+    "alias": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "ownerPublicKey": { "$ref": "#/$defs/hash" },
+    "scriptPubkey": { "type": "string", "pattern": "^(?:[0-9a-f]{2})+$" },
+    "confidentialAddress": { "type": "string", "minLength": 20 },
+    "blindingPublicKey": { "type": "string", "pattern": "^(02|03)[0-9a-f]{64}$" },
+    "proofAddress": { "type": "string", "minLength": 20 },
+    "bip322Signature": { "type": "string", "minLength": 1 }
+  },
+  "$defs": { "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+}

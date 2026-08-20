@@ -1,0 +1,12 @@
+{
+  "schema": "simplicity-amp-registry-v1",
+  "protocol": "simplicity-amp/v0.1",
+  "deploymentId": "1111111111111111111111111111111111111111111111111111111111111111",
+  "alias": "holder",
+  "ownerPublicKey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  "scriptPubkey": "51201515151515151515151515151515151515151515151515151515151515151515",
+  "confidentialAddress": "el1qqfixtureconfidentialaddress000000000000000000000000000000000000",
+  "blindingPublicKey": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  "proofAddress": "ert1qfixtureproofaddress000000000000000000000000000000000000000",
+  "bip322Signature": "fixture-signature"
+}

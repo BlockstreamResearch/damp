@@ -1,0 +1,21 @@
+// Taproot state commitment shared by the user and verifier covenants.
+
+pub fn tapdata_hash(state: u256) -> u256 {
+    let ctx: Ctx8 = jet::tapdata_init();
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, state);
+    jet::sha_256_ctx_8_finalize(ctx)
+}
+
+// SHA256(scriptPubKey) for P2TR(NUMS, { executable leaf, TapData(state) }).
+pub fn state_script_hash(executable_leaf_hash: u256, state: u256) -> u256 {
+    let root: u256 = jet::build_tapbranch(executable_leaf_hash, tapdata_hash(state));
+
+    // Standard BIP-341 NUMS key; the Elements jets domain-separate branch/tweak hashes.
+    let internal_key: Pubkey = 0x50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0;
+    let output_key: u256 = jet::build_taptweak(internal_key, root);
+
+    let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_2(ctx, 0x5120);
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, output_key);
+    jet::sha_256_ctx_8_finalize(ctx)
+}
