@@ -228,7 +228,7 @@ export function AdminDashboard() {
 
   const selected = deployment.data;
   return (
-    <AppShell role="issuer" eyebrow="Issuer console" title="Exact-outpoint blacklist" action={<WalletStatus />}>
+    <AppShell eyebrow="Issuer console" title="Exact-outpoint blacklist" action={<WalletStatus />}>
       {!selected ? <div className="empty-state"><ListFilter size={24} /><h2>No active deployment</h2><p>Create or import one before editing policy.</p></div> : <>
         <div className="admin-status-strip"><div><span className="status-light" /><span><small>Deployment</small><strong>{selected.asset.name}</strong></span></div><div><small>Live anchor</small><strong>{anchor.data ? shortHash(anchor.data.live.txid) : "Resolving…"}</strong></div><div><small>Depth / capacity</small><strong>D{policy.data?.treeDepth ?? "–"} / {policy.data ? 2 ** policy.data.treeDepth : "–"}</strong></div><Pill tone={anchor.data?.live.confirmations ? "good" : "warn"}>{anchor.data?.live.confirmations ?? 0} confirmations</Pill></div>
         <div className="admin-grid">
@@ -466,7 +466,7 @@ export function AdminSetup() {
   }
 
   return (
-    <AppShell role="issuer" eyebrow="Issuer console / Setup" title="Create or import a deployment">
+    <AppShell eyebrow="Issuer console / Setup" title="Create or import a deployment">
       <BackLink to="/admin">Back to policy workspace</BackLink>
       {mode === "choose" && <div className="setup-choice-grid"><button className="choice-card" type="button" onClick={() => setMode("create")}><span><Rocket size={22} /></span><div><small>New deployment</small><h2>Create</h2><p>Issue the regulated asset, optional token, and one verifier unit with the local AMP Signer SDK.</p></div><ArrowRight size={19} /></button><button className="choice-card" type="button" onClick={() => setMode("import")}><span><Upload size={22} /></span><div><small>Existing deployment</small><h2>Import</h2><p>Validate the manifest, canonical live policy, chain anchor, and issuer key.</p></div><ArrowRight size={19} /></button></div>}
       {mode === "create" && (
@@ -584,7 +584,7 @@ export function AdminReissue() {
   }
 
   return (
-    <AppShell role="issuer" eyebrow="Issuer console / Reissue" title="Mint governed supply">
+    <AppShell eyebrow="Issuer console / Reissue" title="Mint governed supply">
       <BackLink to="/admin">Back to policy workspace</BackLink>
       <div className="setup-layout"><Panel className="setup-main"><SectionHeading label="Managed supply" title={review ? "Review the mint" : "Define the reissuance"} aside={<Pill tone="warn">Issuer governed</Pill>} />{deployment.data?.supplyMode !== "issuer-managed" ? <p>This deployment is fixed-supply; reissuance is disabled.</p> : !review ? <form className="form-stack" onSubmit={form.handleSubmit(setReview)}><label>New base units<input inputMode="numeric" {...form.register("amount")} /></label><label>Public reason<textarea rows={4} {...form.register("reason")} /></label><button className="button issuer-primary wide" type="submit">Review reissuance <ArrowRight size={16} /></button></form> : <div className="review-stack"><div className="review-row"><span>New units</span><strong>{review.amount}</strong></div><div className="review-row"><span>Verifier</span><strong>Same script, governance spend</strong></div><div className="review-row"><span>Destination</span><strong>Validated holder covenant</strong></div><div className="review-buttons"><button className="button secondary" type="button" onClick={() => setReview(undefined)}>Edit</button><button className="button issuer-primary" type="button" onClick={authorize}>Sign locally <ArrowRight size={16} /></button></div></div>}{message && <p className="inline-message" role="status">{message}</p>}</Panel><aside className="setup-aside"><div className="risk-note"><AlertTriangle size={18} /><p><strong>Issuer authority</strong>The AMP Signer SDK verifies the current anchor, token, holder destination, recreated script, explicit assets, and exact fee before using issuer secrets.</p></div><Panel><h3>Required checks</h3><ul className="check-list"><li><RefreshCw size={15} /> Fresh winning anchor</li><li><Check size={15} /> Token returned</li><li><Check size={15} /> Same verifier script</li><li><Check size={15} /> Holder-only new supply</li></ul></Panel></aside></div>
     </AppShell>

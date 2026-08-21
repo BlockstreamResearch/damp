@@ -86,6 +86,9 @@ export class WalletDiscoveryCancelledError extends Error {
 const OUTPOINT = /^[0-9a-f]{64}:[0-9]+$/;
 const AMOUNT = /^(0|[1-9][0-9]*)$/;
 const TRANSACTION_HEX = /^(?:[0-9a-f]{2})+$/;
+const SIGNED_I32_MIN = -0x8000_0000;
+const SIGNED_I32_MAX = 0x7fff_ffff;
+const UNSIGNED_I32_MAX = 0xffff_ffff;
 
 const walletAddressSchema = z.object({
   source: z.literal("wallet"),
@@ -187,10 +190,13 @@ const outspendSchema = z.object({
 
 const waterfallsTxSeenSchema = z.object({
   txid: z.string().regex(HASH),
-  height: z.number().int().nonnegative(),
-  block_hash: z.string().regex(HASH).nullable().optional(),
-  timestamp: z.number().int().nonnegative().nullable().optional(),
-  v: z.number().int().refine((value) => value !== 0, "Waterfalls transaction position cannot be zero."),
+  height: z.number().int().min(0).max(UNSIGNED_I32_MAX),
+  block_hash: z.string().regex(HASH).optional(),
+  block_timestamp: z.number().int().min(0).max(UNSIGNED_I32_MAX).optional(),
+  // Waterfalls serializes its V enum as a signed i32: positive values are
+  // vout + 1, negative values are -(vin + 1), and zero/omitted is undefined.
+  // Confirmed full-history scans intentionally omit undefined positions.
+  v: z.number().int().min(SIGNED_I32_MIN).max(SIGNED_I32_MAX).optional(),
 }).strict();
 
 const waterfallsResponseSchema = z.object({
@@ -850,8 +856,11 @@ async function scanWaterfallsAddressWithBudget(
 
   const base = source.baseUrl.replace(/\/$/, "");
   const history = new Set<string>();
+  const historyEvidence = new Map<string, z.infer<typeof waterfallsTxSeenSchema>>();
+  const historyRecords: Array<z.infer<typeof waterfallsTxSeenSchema>> = [];
   const historyOutputs = new Map<string, z.infer<typeof listedUtxoSchema>>();
   const historyInputs: Array<{ txid: string; vin: number }> = [];
+  let hasUndefinedPositions = false;
   let page = 0;
   let hadMore = false;
   let tip: { hash: string; height: number } | undefined;
@@ -864,10 +873,19 @@ async function scanWaterfallsAddressWithBudget(
     for (const item of response.txs_seen.addresses[0]) {
       requireWaterfallsHistoryHeight(item, tip);
       history.add(item.txid);
+      historyRecords.push(item);
+      const existingEvidence = historyEvidence.get(item.txid);
+      if (existingEvidence && !sameWaterfallsTransactionEvidence(existingEvidence, item)) {
+        throw new Error(`Waterfalls returned conflicting confirmation evidence for transaction ${item.txid}.`);
+      }
+      if (!existingEvidence || (existingEvidence.block_timestamp === undefined && item.block_timestamp !== undefined)) {
+        historyEvidence.set(item.txid, item);
+      }
       if (history.size > maxHistoryTransactions) {
         throw new Error(`Waterfalls history exceeded ${maxHistoryTransactions} transactions.`);
       }
-      if (item.v > 0) {
+      const position = item.v ?? 0;
+      if (position > 0) {
         const output = listedWaterfallsOutput(item, tip);
         const key = `${output.txid}:${output.vout}`;
         const existing = historyOutputs.get(key);
@@ -875,8 +893,10 @@ async function scanWaterfallsAddressWithBudget(
           throw new Error(`Waterfalls returned conflicting history for output ${key}.`);
         }
         historyOutputs.set(key, output);
+      } else if (position < 0) {
+        historyInputs.push({ txid: item.txid, vin: -position - 1 });
       } else {
-        historyInputs.push({ txid: item.txid, vin: -item.v - 1 });
+        hasUndefinedPositions = true;
       }
     }
     if (response.has_more?.some((value) => value !== decoded.unconfidentialAddress)) {
@@ -896,12 +916,25 @@ async function scanWaterfallsAddressWithBudget(
       // This explicit fallback is used only for that server limitation. It is
       // accepted only when both providers report the exact same tip and every
       // fallback output matches Waterfalls' output and confirmation evidence.
-      const spentOutpoints = await fetchWaterfallsSpentOutpoints(source, historyInputs, request, budget);
+      const reconstructed = hasUndefinedPositions
+        ? await reconstructWaterfallsHistory(
+            source,
+            address.scriptPubkey,
+            tip,
+            historyEvidence,
+            historyRecords,
+            request,
+            budget,
+          )
+        : undefined;
+      const provenOutputs = reconstructed?.outputs ?? historyOutputs;
+      const spentOutpoints = reconstructed?.spentOutpoints
+        ?? await fetchWaterfallsSpentOutpoints(source, historyInputs, request, budget);
       utxos = await fetchCoherentEsploraUtxos(
         source.utxoFallbackUrl,
         address.scriptPubkey,
         tip,
-        historyOutputs,
+        provenOutputs,
         spentOutpoints,
         request,
         budget,
@@ -912,7 +945,13 @@ async function scanWaterfallsAddressWithBudget(
       if (response.has_more?.length) throw new Error("Waterfalls unexpectedly truncated a UTXO-only response.");
       const seen = new Set<string>();
       utxos = response.txs_seen.addresses[0].map((item) => {
-        if (item.v <= 0) throw new Error("Waterfalls UTXO response contained an input record.");
+        if (item.v === undefined || item.v <= 0) {
+          throw new Error("Waterfalls UTXO response omitted a positive output position.");
+        }
+        const historyItem = historyEvidence.get(item.txid);
+        if (!historyItem || !sameWaterfallsTransactionEvidence(historyItem, item)) {
+          throw new Error(`Waterfalls history and UTXO views disagreed about transaction ${item.txid}.`);
+        }
         const output = listedWaterfallsOutput(item, tip);
         const key = `${output.txid}:${output.vout}`;
         if (seen.has(key)) throw new Error(`Waterfalls returned duplicate output ${key}.`);
@@ -976,15 +1015,34 @@ function listedWaterfallsOutput(
   item: z.infer<typeof waterfallsTxSeenSchema>,
   tip: { hash: string; height: number },
 ) {
-  if (item.v <= 0) throw new Error("Waterfalls output evidence contained an input record.");
+  if (item.v === undefined || item.v <= 0) throw new Error("Waterfalls output evidence omitted a positive position.");
+  return listedWaterfallsOutputAt(item, item.v - 1, tip);
+}
+
+function listedWaterfallsOutputAt(
+  item: z.infer<typeof waterfallsTxSeenSchema>,
+  vout: number,
+  tip: { hash: string; height: number },
+) {
   if (item.height > tip.height) throw new Error("Waterfalls returned an output confirmed above its chain tip.");
   return listedUtxoSchema.parse({
     txid: item.txid,
-    vout: item.v - 1,
+    vout,
     status: item.height === 0
       ? { confirmed: false }
       : { confirmed: true, block_height: item.height, block_hash: requireWaterfallsBlockHash(item) },
   });
+}
+
+function sameWaterfallsTransactionEvidence(
+  left: z.infer<typeof waterfallsTxSeenSchema>,
+  right: z.infer<typeof waterfallsTxSeenSchema>,
+) {
+  return left.height === right.height
+    && left.block_hash === right.block_hash
+    && (left.block_timestamp === undefined
+      || right.block_timestamp === undefined
+      || left.block_timestamp === right.block_timestamp);
 }
 
 function requireWaterfallsHistoryHeight(
@@ -1081,6 +1139,77 @@ async function fetchWaterfallsSpentOutpoints(
     spent.add(`${fundingTxid}:${input.index}`);
   }
   return spent;
+}
+
+async function reconstructWaterfallsHistory(
+  source: Extract<WalletDiscoverySource, { provider: "waterfalls-v4" }>,
+  addressScriptPubkey: string,
+  tip: { hash: string; height: number },
+  evidence: Map<string, z.infer<typeof waterfallsTxSeenSchema>>,
+  records: Array<z.infer<typeof waterfallsTxSeenSchema>>,
+  request: typeof fetch,
+  budget: WalletDiscoveryWorkBudget,
+) {
+  const txids = [...evidence.keys()].sort();
+  budget.fetchParentTransactions(txids);
+  const transactions = new Map(await mapConcurrent(txids, transactionFetchConcurrency, async (txid) => {
+    const transactionHex = await fetchTransactionFromSource(source, txid, request, budget);
+    let transaction: Transaction;
+    try {
+      transaction = Transaction.fromHex(transactionHex);
+    } catch {
+      throw new Error(`Waterfalls returned an invalid history transaction ${txid}.`);
+    }
+    if (transaction.getId() !== txid) throw new Error(`Waterfalls returned another history transaction for ${txid}.`);
+    return [txid, transaction] as const;
+  }, budget));
+
+  const outputs = new Map<string, z.infer<typeof listedUtxoSchema>>();
+  const involved = new Set<string>();
+  for (const [txid, transaction] of transactions) {
+    const item = evidence.get(txid);
+    if (!item) throw new Error(`Waterfalls omitted confirmation evidence for history transaction ${txid}.`);
+    transaction.outs.forEach((output, vout) => {
+      if (output.script.toString("hex") !== addressScriptPubkey) return;
+      const listed = listedWaterfallsOutputAt(item, vout, tip);
+      outputs.set(`${txid}:${vout}`, listed);
+      involved.add(txid);
+    });
+  }
+
+  const spentOutpoints = new Set<string>();
+  for (const [txid, transaction] of transactions) {
+    for (const input of transaction.ins) {
+      const fundingTxid = Buffer.from(input.hash).reverse().toString("hex");
+      const key = `${fundingTxid}:${input.index}`;
+      if (!outputs.has(key)) continue;
+      spentOutpoints.add(key);
+      involved.add(txid);
+    }
+  }
+
+  for (const record of records) {
+    const position = record.v ?? 0;
+    if (position === 0) continue;
+    const transaction = transactions.get(record.txid);
+    if (!transaction) throw new Error(`Waterfalls omitted history transaction ${record.txid}.`);
+    if (position > 0) {
+      const vout = position - 1;
+      if (transaction.outs[vout]?.script.toString("hex") !== addressScriptPubkey || !outputs.has(`${record.txid}:${vout}`)) {
+        throw new Error(`Waterfalls output position disagreed with transaction ${record.txid}:${vout}.`);
+      }
+    } else {
+      const vin = -position - 1;
+      const input = transaction.ins[vin];
+      if (!input) throw new Error(`Waterfalls history referenced missing input ${record.txid}:${vin}.`);
+      const key = `${Buffer.from(input.hash).reverse().toString("hex")}:${input.index}`;
+      if (!outputs.has(key)) throw new Error(`Waterfalls input position disagreed with transaction ${record.txid}:${vin}.`);
+    }
+  }
+
+  const unrelated = txids.find((txid) => !involved.has(txid));
+  if (unrelated) throw new Error(`Waterfalls history transaction ${unrelated} did not involve the requested address.`);
+  return { outputs, spentOutpoints };
 }
 
 async function fetchEsploraTip(

@@ -33,7 +33,7 @@ import {
   useDeployments,
   useSelectDeployment,
 } from "../lib/deployments";
-import { activeNavigationTarget, type AppRole } from "../lib/navigation";
+import { activeNavigationTarget, appRoleForPath } from "../lib/navigation";
 import { formatUnits, shortHash } from "../lib/domain";
 import { useDeploymentWalletSync } from "../lib/wallet-query";
 import { assetBalances, nextFundingAddress } from "../lib/wallet-sync";
@@ -46,7 +46,7 @@ export function Brand({ tone }: { tone: "holder" | "issuer" }) {
         <span />
         <span />
       </span>
-      <span>
+      <span className="brand-copy">
         <strong>Simplicity AMP</strong>
         <small>Liquid testnet</small>
       </span>
@@ -69,19 +69,19 @@ const issuerNav: NavItem[] = [
 ];
 
 export function AppShell({
-  role,
   children,
   title,
   eyebrow,
   action,
 }: {
-  role: AppRole;
   children: ReactNode;
   title: string;
   eyebrow: string;
   action?: ReactNode;
 }) {
   const path = useRouterState({ select: (state) => state.location.pathname });
+  const role = appRoleForPath(path);
+  if (!role) throw new Error(`Route ${path} does not belong to an application shell.`);
   const nav = role === "holder" ? holderNav : issuerNav;
   const activeTarget = activeNavigationTarget(path, nav);
   return (
@@ -99,6 +99,7 @@ export function AppShell({
                 activeOptions={{ exact: true }}
                 className={active ? "active" : undefined}
                 aria-current={active ? "page" : undefined}
+                title={item.label}
               >
                 <Icon size={17} strokeWidth={1.8} />
                 {item.label}
@@ -108,7 +109,10 @@ export function AppShell({
         </nav>
         <div className="rail-bottom">
           <DeploymentSelector />
-          <span className="network-dot" /> Liquid testnet
+          <span className="network-status" aria-label="Liquid testnet network">
+            <span className="network-dot" aria-hidden="true" />
+            <span className="network-label">Liquid testnet</span>
+          </span>
           <a href="https://github.com/BlockstreamResearch/damp" target="_blank" rel="noreferrer">
             <BookOpen size={15} /> Protocol source
           </a>

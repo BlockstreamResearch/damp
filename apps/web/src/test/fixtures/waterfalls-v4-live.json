@@ -1,0 +1,36 @@
+{
+  "address": "tex1pt40tlydpclzcvfwqqqd96kzg5j2sra0l92atxt4aamwv6yxwe6ts9xv6h8",
+  "history": {
+    "txs_seen": {
+      "addresses": [[{
+        "txid": "9293d166002425eb99303c8db3b6f773113b3af86b83dc81d5e0d402f7179359",
+        "height": 2582330,
+        "block_hash": "8a2dc5c0f1cc5f285fbc7f21458f1422c89427994c05e8b3a99776e05c1f071b",
+        "block_timestamp": 1787296087
+      }]]
+    },
+    "page": 0,
+    "tip_meta": {
+      "b": "db41c06a66c52d305d9e3888f2d90055aee1cf10fed9236508e7f323b9a8ce4b",
+      "t": 1787297406,
+      "h": 2582352
+    }
+  },
+  "utxoOnly": {
+    "txs_seen": {
+      "addresses": [[{
+        "txid": "9293d166002425eb99303c8db3b6f773113b3af86b83dc81d5e0d402f7179359",
+        "height": 2582330,
+        "block_hash": "8a2dc5c0f1cc5f285fbc7f21458f1422c89427994c05e8b3a99776e05c1f071b",
+        "block_timestamp": 1787296087,
+        "v": 1
+      }]]
+    },
+    "page": 0,
+    "tip_meta": {
+      "b": "db41c06a66c52d305d9e3888f2d90055aee1cf10fed9236508e7f323b9a8ce4b",
+      "t": 1787297406,
+      "h": 2582352
+    }
+  }
+}

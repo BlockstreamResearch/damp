@@ -1,6 +1,7 @@
 import { Buffer } from "buffer";
 import { address as liquidAddress, networks, Transaction } from "liquidjs-lib";
 import { describe, expect, it, vi } from "vitest";
+import liveWaterfallsFixture from "../test/fixtures/waterfalls-v4-live.json";
 
 vi.mock("./store", () => ({
   getWalletSyncRecord: () => Promise.resolve(undefined),
@@ -52,6 +53,16 @@ function derivedAddress(branch: 0 | 1, index: number) {
   };
 }
 
+function fundingTransaction(scriptPubkey: string) {
+  const scriptLength = scriptPubkey.length / 2;
+  if (!Number.isInteger(scriptLength) || scriptLength > 0xfc) throw new Error("Test script is too long.");
+  return Transaction.fromHex(
+    `010000000001${"00".repeat(32)}ffffffff00ffffffff01`
+    + `01${"00".repeat(32)}01000000000000000100`
+    + `${scriptLength.toString(16).padStart(2, "0")}${scriptPubkey}00000000`,
+  );
+}
+
 function waterfallsBody(
   entries: unknown[],
   options: { page?: number; hash?: string; hasMore?: string[] } = {},
@@ -65,6 +76,42 @@ function waterfallsBody(
 }
 
 describe("Waterfalls Liquid testnet wallet discovery", () => {
+  it("accepts the strict live v4 shape where full history omits v and uses block_timestamp", async () => {
+    const unconfidential = liveWaterfallsFixture.address;
+    const confidentialAddress = liquidAddress.toConfidential(
+      unconfidential,
+      Buffer.from(`02${"11".repeat(32)}`, "hex"),
+    );
+    const address: WalletSyncAddress = {
+      source: "wallet",
+      branch: 0,
+      index: 0,
+      confidentialAddress,
+      scriptPubkey: liquidAddress.toOutputScript(unconfidential, networks.testnet).toString("hex"),
+      hasActivity: false,
+    };
+    const request = vi.fn<typeof fetch>(async (input) => Response.json(
+      new URL(String(input)).searchParams.has("utxo_only")
+        ? liveWaterfallsFixture.utxoOnly
+        : liveWaterfallsFixture.history,
+    ));
+
+    await expect(scanWaterfallsAddress(
+      walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>,
+      address,
+      request,
+    )).resolves.toMatchObject({
+      hasActivity: true,
+      tipHash: liveWaterfallsFixture.history.tip_meta.b,
+      tipHeight: liveWaterfallsFixture.history.tip_meta.h,
+      utxos: [{
+        txid: liveWaterfallsFixture.history.txs_seen.addresses[0][0].txid,
+        vout: 0,
+        status: { confirmed: true, block_height: 2_582_330 },
+      }],
+    });
+  });
+
   it("maps positional v4 history and UTXOs, including confirmation metadata", async () => {
     const { address, unconfidential } = fixtureAddress();
     const request = vi.fn<typeof fetch>(async (input) => {
@@ -72,10 +119,10 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       expect(url.searchParams.get("addresses")).toBe(unconfidential);
       const utxoOnly = url.searchParams.get("utxo_only") === "true";
       return Response.json(waterfallsBody(utxoOnly
-        ? [{ txid, height: 2_581_100, block_hash: blockHash, timestamp: 1_787_222_000, v: 3 }]
+        ? [{ txid, height: 2_581_100, block_hash: blockHash, block_timestamp: 1_787_222_000, v: 3 }]
         : [
-            { txid, height: 2_581_100, block_hash: blockHash, timestamp: 1_787_222_000, v: 3 },
-            { txid: "ef".repeat(32), height: 2_581_101, block_hash: blockHash, timestamp: 1_787_222_100, v: -1 },
+            { txid, height: 2_581_100, block_hash: blockHash, block_timestamp: 1_787_222_000, v: 3 },
+            { txid: "ef".repeat(32), height: 2_581_101, block_hash: blockHash, block_timestamp: 1_787_222_100, v: -1 },
           ]));
     });
 
@@ -97,7 +144,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
     const request = vi.fn<typeof fetch>(async (input) => {
       const url = new URL(String(input));
       return Response.json(waterfallsBody(
-        [{ txid, height: 0, block_hash: null, timestamp: null, v: 1 }],
+        [{ txid, height: 0, v: 1 }],
         { hash: url.searchParams.has("utxo_only") ? "12".repeat(32) : blockHash },
       ));
     });
@@ -107,6 +154,26 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       address,
       request,
     )).rejects.toThrow("chain tip changed");
+  });
+
+  it("fails closed when Waterfalls history and UTXO confirmations disagree at one tip", async () => {
+    const { address } = fixtureAddress();
+    const request = vi.fn<typeof fetch>(async (input) => {
+      const utxoOnly = new URL(String(input)).searchParams.has("utxo_only");
+      return Response.json(waterfallsBody([{
+        txid,
+        height: utxoOnly ? 2_581_101 : 2_581_100,
+        block_hash: blockHash,
+        block_timestamp: 1_787_222_000,
+        ...(utxoOnly ? { v: 1 } : {}),
+      }]));
+    });
+
+    await expect(scanWaterfallsAddress(
+      walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>,
+      address,
+      request,
+    )).rejects.toThrow("history and UTXO views disagreed");
   });
 
   it("rejects a coherent-tip fallback that omits a Waterfalls-proven output", async () => {
@@ -121,7 +188,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       }
       const page = Number(url.searchParams.get("page"));
       return Response.json(waterfallsBody(
-        [{ txid, height: 0, block_hash: null, timestamp: null, v: 1 }],
+        [{ txid, height: 0, v: 1 }],
         { page, hasMore: page === 0 ? [unconfidential] : undefined },
       ));
     });
@@ -150,8 +217,8 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       }
       const page = Number(url.searchParams.get("page"));
       return Response.json(waterfallsBody([
-        { txid, height: 2_581_100, block_hash: blockHash, timestamp: 1_787_222_000, v: 3 },
-        { txid: spendingTxid, height: 0, block_hash: null, timestamp: null, v: -1 },
+        { txid, height: 2_581_100, block_hash: blockHash, block_timestamp: 1_787_222_000, v: 3 },
+        { txid: spendingTxid, height: 0, v: -1 },
       ], { page, hasMore: page === 0 ? [unconfidential] : undefined }));
     });
 
@@ -174,7 +241,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       }
       const page = Number(url.searchParams.get("page"));
       return Response.json(waterfallsBody(
-        [{ txid, height: outputHeight, block_hash: blockHash, timestamp: 1_787_222_000, v: 3 }],
+        [{ txid, height: outputHeight, block_hash: blockHash, block_timestamp: 1_787_222_000, v: 3 }],
         { page, hasMore: page === 0 ? [unconfidential] : undefined },
       ));
     });
@@ -182,6 +249,44 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
     await expect(scanWaterfallsAddress(source, address, request)).resolves.toMatchObject({
       utxos: [{ txid, vout: 2, status: { confirmed: true, block_height: outputHeight, block_hash: blockHash } }],
     });
+  });
+
+  it("reconstructs omitted paginated positions from bounded Waterfalls raw transactions", async () => {
+    const { address, unconfidential } = fixtureAddress();
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const funding = fundingTransaction(address.scriptPubkey);
+    const fundingTxid = funding.getId();
+    const outputHeight = 2_581_100;
+    const request = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.origin === new URL(source.utxoFallbackUrl).origin) {
+        if (url.pathname.endsWith("/blocks/tip/hash")) return new Response(blockHash);
+        if (url.pathname.endsWith(`/block/${blockHash}`)) return Response.json({ id: blockHash, height: 2_581_109 });
+        return Response.json([{
+          txid: fundingTxid,
+          vout: 0,
+          status: { confirmed: true, block_height: outputHeight, block_hash: blockHash },
+        }]);
+      }
+      if (url.pathname.endsWith(`/tx/${fundingTxid}/raw`)) {
+        return new Response(Buffer.from(funding.toHex(), "hex"));
+      }
+      const page = Number(url.searchParams.get("page"));
+      return Response.json(waterfallsBody(
+        [{
+          txid: fundingTxid,
+          height: outputHeight,
+          block_hash: blockHash,
+          block_timestamp: 1_787_222_000,
+        }],
+        { page, hasMore: page === 0 ? [unconfidential] : undefined },
+      ));
+    });
+
+    await expect(scanWaterfallsAddress(source, address, request)).resolves.toMatchObject({
+      utxos: [{ txid: fundingTxid, vout: 0, status: { confirmed: true, block_height: outputHeight } }],
+    });
+    expect(request.mock.calls.some(([input]) => String(input).endsWith(`/tx/${fundingTxid}/raw`))).toBe(true);
   });
 
   it("rejects a fallback that omits one of several Waterfalls-proven outputs", async () => {
@@ -197,8 +302,8 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       }
       const page = Number(url.searchParams.get("page"));
       return Response.json(waterfallsBody([
-        { txid, height: 2_581_100, block_hash: blockHash, timestamp: 1_787_222_000, v: 1 },
-        { txid: secondTxid, height: 2_581_101, block_hash: blockHash, timestamp: 1_787_222_100, v: 2 },
+        { txid, height: 2_581_100, block_hash: blockHash, block_timestamp: 1_787_222_000, v: 1 },
+        { txid: secondTxid, height: 2_581_101, block_hash: blockHash, block_timestamp: 1_787_222_100, v: 2 },
       ], { page, hasMore: page === 0 ? [unconfidential] : undefined }));
     });
 
@@ -224,8 +329,8 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       }
       const page = Number(url.searchParams.get("page"));
       return Response.json(waterfallsBody([
-        { txid, height: 2_581_100, block_hash: blockHash, timestamp: 1_787_222_000, v: 3 },
-        { txid: spendingTxid, height: 0, block_hash: null, timestamp: null, v: -1 },
+        { txid, height: 2_581_100, block_hash: blockHash, block_timestamp: 1_787_222_000, v: 3 },
+        { txid: spendingTxid, height: 0, v: -1 },
       ], { page, hasMore: page === 0 ? [unconfidential] : undefined }));
     });
 
@@ -280,7 +385,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       }
       const page = Number(url.searchParams.get("page"));
       return Response.json(waterfallsBody(
-        [{ txid, height: 2_581_100, block_hash: blockHash, timestamp: 1_787_222_000, v: 3 }],
+        [{ txid, height: 2_581_100, block_hash: blockHash, block_timestamp: 1_787_222_000, v: 3 }],
         { page, hasMore: page === 0 ? [unconfidential] : undefined },
       ));
     });
@@ -300,7 +405,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       const requested = url.searchParams.get("addresses")!;
       const page = Number(url.searchParams.get("page"));
       return Response.json(waterfallsBody(
-        [{ txid, height: 0, block_hash: null, timestamp: null, v: 1 }],
+        [{ txid, height: 0, v: 1 }],
         { page, hasMore: page < 19 ? [requested] : undefined },
       ));
     });
@@ -320,7 +425,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
   it("counts repeated history entries globally instead of only unique txids", async () => {
     const { address, unconfidential } = fixtureAddress();
     const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
-    const repeated = Array.from({ length: 1_000 }, () => ({ txid, height: 0, block_hash: null, timestamp: null, v: 1 }));
+    const repeated = Array.from({ length: 1_000 }, () => ({ txid, height: 0, v: 1 }));
     const request = vi.fn<typeof fetch>(async (input) => {
       const url = new URL(String(input));
       return Response.json(waterfallsBody(repeated, {
@@ -406,7 +511,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
     const request = vi.fn<typeof fetch>(async (input) => {
       const utxoOnly = new URL(String(input)).searchParams.has("utxo_only");
       return Response.json(waterfallsBody([
-        { txid, height: 0, block_hash: null, timestamp: null, v: utxoOnly ? -1 : 1 },
+        { txid, height: 0, v: utxoOnly ? -1 : 1 },
       ]));
     });
 
@@ -414,6 +519,19 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>,
       address,
       request,
-    )).rejects.toThrow("contained an input record");
+    )).rejects.toThrow("omitted a positive output position");
+  });
+
+  it("rejects non-numeric Waterfalls positions instead of coercing them", async () => {
+    const { address } = fixtureAddress();
+    const request = vi.fn<typeof fetch>(async () => Response.json(waterfallsBody([
+      { txid, height: 0, v: "1" },
+    ])));
+
+    await expect(scanWaterfallsAddress(
+      walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>,
+      address,
+      request,
+    )).rejects.toThrow();
   });
 });

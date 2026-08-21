@@ -1,5 +1,12 @@
 export type AppRole = "holder" | "issuer";
 
+export function appRoleForPath(pathname: string): AppRole | undefined {
+  const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  if (normalizedPath === "/admin" || normalizedPath.startsWith("/admin/")) return "issuer";
+  if (normalizedPath === "/wallet" || normalizedPath.startsWith("/wallet/")) return "holder";
+  return undefined;
+}
+
 export function activeNavigationTarget(
   pathname: string,
   items: ReadonlyArray<{ to: string }>,

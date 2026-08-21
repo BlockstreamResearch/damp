@@ -64,6 +64,11 @@ set equals the Waterfalls outputs that are not consumed by a verified spending
 input. Each returned output's confirmation must also match Waterfalls history
 evidence. Waterfalls raw transactions for every recorded spending input are
 checked so the fallback cannot resurrect or omit a Waterfalls-proven output.
+Waterfalls v4 full-history entries may intentionally omit their signed `v`
+position (`vout + 1`, `-(vin + 1)`, or zero/omitted when undefined) and expose
+confirmation time as `block_timestamp`. When a paginated history omits those
+positions, the wallet reconstructs and verifies the address's exact outputs
+and spends from bounded raw Waterfalls transactions before consulting Esplora.
 
 New Liquid testnet deployments derive two signer funding addresses and link
 them directly to the public L-BTC faucet. The native fee asset is selected by

@@ -88,7 +88,7 @@ export function WalletDashboard() {
   }
 
   return (
-    <AppShell role="holder" eyebrow="Holder wallet" title="Your regulated assets">
+    <AppShell eyebrow="Holder wallet" title="Your regulated assets">
       {!deployment.data ? (
         <div className="empty-state">
           <span className="empty-icon"><WalletCards size={24} /></span>
@@ -223,7 +223,7 @@ export function WalletSend() {
   }
 
   return (
-    <AppShell role="holder" eyebrow="Holder wallet / Send" title="Build a confidential transfer" action={<WalletStatus />}>
+    <AppShell eyebrow="Holder wallet / Send" title="Build a confidential transfer" action={<WalletStatus />}>
       <BackLink to="/wallet">Back to wallet</BackLink>
       <div className="flow-layout">
         <Panel className="flow-main">
@@ -281,7 +281,7 @@ export function WalletReceive() {
   }
 
   return (
-    <AppShell role="holder" eyebrow="Holder wallet / Receive" title="Receive regulated assets">
+    <AppShell eyebrow="Holder wallet / Receive" title="Receive regulated assets">
       <BackLink to="/wallet">Back to wallet</BackLink>
       <div className="receive-layout">
         <Panel className="receive-card"><SectionHeading label="Deployment-bound receive record" title="Share this with the sender" />{record ? <><div className="qr-wrap"><QRCodeSVG value={encoded} size={188} level="M" /></div><p className="receive-address">{record.confidentialAddress}</p><button className="button primary wide" type="button" onClick={() => navigator.clipboard.writeText(encoded).then(() => setCopied(true))}>{copied ? <Check size={16} /> : <Copy size={16} />} {copied ? "Copied" : "Copy receive record"}</button></> : <div className="generate-record"><Radio size={26} /><p>The AMP Signer SDK derives owner and blinding keys, constructs the exact user covenant, and signs the deployment-bound BIP322 record locally.</p><button className="button primary" disabled={!signer.connected || storedRecords.isFetching} type="button" onClick={generate}>{storedRecords.isFetching ? "Restoring…" : "Generate locally"}</button></div>}{storedRecords.error instanceof Error && <p className="field-error">{storedRecords.error.message}</p>}{message && <p className="inline-message" role="status">{message}</p>}</Panel>

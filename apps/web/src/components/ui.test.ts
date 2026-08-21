@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { activeNavigationTarget } from "../lib/navigation";
+import { activeNavigationTarget, appRoleForPath } from "../lib/navigation";
 
 const nav = {
   issuer: [{ to: "/admin" }, { to: "/admin/setup" }, { to: "/admin/reissue" }],
@@ -41,5 +41,23 @@ describe("activeNavigationTarget", () => {
     expect(selected("issuer", "/wallet/send")).toBeUndefined();
     expect(selected("holder", "/admin/setup")).toBeUndefined();
     expect(selected("holder", "/wallets")).toBeUndefined();
+  });
+});
+
+describe("appRoleForPath", () => {
+  it.each([
+    ["/admin", "issuer"],
+    ["/admin/setup", "issuer"],
+    ["/admin/reissue/review", "issuer"],
+    ["/wallet", "holder"],
+    ["/wallet/send", "holder"],
+    ["/wallet/receive/share/", "holder"],
+  ] as const)("owns %s with the %s shell", (pathname, expected) => {
+    expect(appRoleForPath(pathname)).toBe(expected);
+  });
+
+  it("does not assign holder or issuer chrome to unrelated routes", () => {
+    expect(appRoleForPath("/wallets")).toBeUndefined();
+    expect(appRoleForPath("/administrator")).toBeUndefined();
   });
 });
