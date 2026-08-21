@@ -40,7 +40,7 @@ import {
   useDeployments,
   useSelectDeployment,
 } from "../lib/deployments";
-import { activeNavigationTarget, appRoleForPath, contextualDocumentTitle } from "../lib/navigation";
+import { activeNavigationTarget, appRoleForPath, contextualDocumentTitle, roleSwitchNavigation } from "../lib/navigation";
 import { formatUnits, networkLabel, shortHash } from "../lib/domain";
 import { useBaseWalletSync, useDeploymentWalletSync, walletSyncPresentation } from "../lib/wallet-query";
 import { assetBalances, feeFundingState, nextFundingAddress } from "../lib/wallet-sync";
@@ -97,6 +97,7 @@ export function AppShell({
   const currentNetwork = deployment.data?.network ?? signer.network;
   const currentNetworkLabel = currentNetwork ? networkLabel(currentNetwork) : "Network not selected";
   const nav = role === "holder" ? holderNav : issuerNav;
+  const roleSwitch = roleSwitchNavigation(role);
   const activeTarget = activeNavigationTarget(path, nav);
   useEffect(() => {
     document.title = contextualDocumentTitle(title);
@@ -123,6 +124,14 @@ export function AppShell({
               </Link>
             );
           })}
+          <Link
+            to={roleSwitch.to}
+            className="mobile-role-switch"
+            title={roleSwitch.label}
+          >
+            {role === "holder" ? <ShieldCheck size={17} strokeWidth={1.8} /> : <WalletCards size={17} strokeWidth={1.8} />}
+            {roleSwitch.mobileLabel}
+          </Link>
         </nav>
         <div className="rail-bottom">
           <DeploymentSelector />
@@ -133,9 +142,9 @@ export function AppShell({
           <a href="https://github.com/BlockstreamResearch/damp" target="_blank" rel="noreferrer">
             <BookOpen size={15} /> Protocol source
           </a>
-          <Link to={role === "holder" ? "/admin" : "/wallet"} className="switch-role">
+          <Link to={roleSwitch.to} className="switch-role">
             {role === "holder" ? <ShieldCheck size={15} /> : <WalletCards size={15} />}
-            {role === "holder" ? "Issuer console" : "Holder wallet"}
+            {roleSwitch.label}
           </Link>
         </div>
       </aside>
@@ -301,17 +310,40 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
       setOpen(false);
       triggerRef.current?.focus();
     };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setOpen(false);
-      triggerRef.current?.focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusable = [...panel.querySelectorAll<HTMLElement>(
+        "a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])",
+      )];
+      if (!focusable.length) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable.at(-1)!;
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !panel.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("pointerdown", dismiss);
-    document.addEventListener("keydown", escape);
+    document.addEventListener("keydown", keyboard);
     return () => {
       document.removeEventListener("pointerdown", dismiss);
-      document.removeEventListener("keydown", escape);
+      document.removeEventListener("keydown", keyboard);
     };
   }, [open]);
 

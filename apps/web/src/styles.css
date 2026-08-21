@@ -41,6 +41,7 @@ button { color: inherit; }
 .brand-mark span { width: 4px; height: 14px; border-radius: 2px; background: var(--navy); transform: rotate(30deg); }
 .brand-mark.issuer span { background: var(--amber-dark); }
 .side-rail nav { display: grid; gap: 6px; }
+.side-rail nav .mobile-role-switch { display: none; }
 .side-rail nav a, .rail-bottom a { display: flex; align-items: center; gap: 10px; padding: 10px 11px; border-radius: 8px; font-size: 13px; color: #9db0c1; transition: .15s ease; }
 .issuer .side-rail nav a, .issuer .rail-bottom a { color: #c0af94; }
 .side-rail nav a:hover, .side-rail nav a.active { color: #fff; background: rgba(255,255,255,.09); }
@@ -289,6 +290,7 @@ input:focus, textarea:focus, select:focus { border-color: #7e9bb3; box-shadow: 0
 
 .admin-status-strip { justify-content: flex-start; }
 .admin-status-strip > div { min-width: 145px; display: flex; align-items: center; gap: 8px; }
+.admin-status-strip > div:first-child > span:last-child { min-width: 0; display: grid; gap: 4px; }
 .admin-status-strip > div:not(:first-child) { display: grid; gap: 4px; }
 .admin-status-strip small { color: var(--muted); font-size: 9px; }
 .admin-status-strip strong { font-size: 11px; }
@@ -387,8 +389,8 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
   .app-shell { grid-template-columns: 72px minmax(0, 1fr); }
   .wallet-grid, .flow-layout, .setup-layout, .admin-grid, .receive-layout { grid-template-columns: minmax(0, 1fr); }
   .admin-status-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-  .admin-status-strip > div { min-width: 0; }
-  .admin-status-strip strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .admin-status-strip > div { min-width: 0; overflow: hidden; }
+  .admin-status-strip strong { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .admin-status-strip .pill { margin-left: 0; width: fit-content; }
   .policy-sidebar { grid-template-columns: 1fr 1fr; }
   .publish-steps { grid-template-columns: 1fr; }
@@ -425,14 +427,19 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
   .app-shell { display: block; padding-bottom: 67px; }
   .side-rail { position: fixed; z-index: 20; top: auto; bottom: 0; width: 100%; height: 67px; padding: 8px 14px; flex-direction: row; justify-content: center; border: 0; border-top: 1px solid rgba(255,255,255,.15); }
   .brand, .rail-bottom { display: none; }
-  .side-rail nav { width: min(390px, 100%); grid-template-columns: repeat(3, 1fr); }
+  .side-rail nav { width: min(390px, 100%); grid-template-columns: repeat(4, 1fr); }
   .side-rail nav a { width: auto; padding: 7px; flex-direction: column; gap: 4px; font-size: 9px; }
+  .side-rail nav .mobile-role-switch { display: flex; }
   .side-rail nav a.active { box-shadow: none; background: rgba(255,255,255,.1); }
-  .page-header { height: 90px; padding: 17px 18px; }
+  .page-header { height: 90px; padding: 17px 18px; -webkit-backdrop-filter: none; backdrop-filter: none; }
   .page-header h1 { font-size: 24px; }
-  .wallet-status { min-width: 42px; width: 42px; padding: 0; justify-content: center; }
+  .wallet-status { min-width: 42px; width: 42px; min-height: 42px; height: 42px; padding: 0; justify-content: center; }
   .wallet-status > span:last-child { display: none; }
   .wallet-popover { position: fixed; top: 78px; right: 16px; left: 16px; width: auto; max-height: calc(100vh - 160px); }
+  .wallet-profile-actions .text-button, .back-link, .setup-chooser-return { min-height: 44px; }
+  .wallet-popover-actions .button, .wallet-profile-editor .button, .wallet-profile-confirm .button { min-height: 44px; }
+  .publish-steps .button { min-height: 44px; }
+  .icon-button { width: 44px; height: 44px; }
   .page-body { padding: 22px 16px 50px; }
   .responsive-deployment-selector { margin-bottom: 14px; display: block; }
   .responsive-deployment-selector .deployment-selector { grid-template-columns: auto minmax(0, 1fr); align-items: center; }

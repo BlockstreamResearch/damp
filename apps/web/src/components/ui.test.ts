@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { activeNavigationTarget, appRoleForPath, contextualDocumentTitle } from "../lib/navigation";
+import { activeNavigationTarget, appRoleForPath, contextualDocumentTitle, roleSwitchNavigation } from "../lib/navigation";
 
 const nav = {
   issuer: [{ to: "/admin" }, { to: "/admin/setup" }, { to: "/admin/reissue" }],
@@ -66,5 +66,12 @@ describe("appRoleForPath", () => {
   it("does not assign holder or issuer chrome to unrelated routes", () => {
     expect(appRoleForPath("/wallets")).toBeUndefined();
     expect(appRoleForPath("/administrator")).toBeUndefined();
+  });
+});
+
+describe("roleSwitchNavigation", () => {
+  it("keeps a compact mobile route switch available in both application shells", () => {
+    expect(roleSwitchNavigation("holder")).toEqual({ to: "/admin", label: "Issuer console", mobileLabel: "Issuer" });
+    expect(roleSwitchNavigation("issuer")).toEqual({ to: "/wallet", label: "Holder wallet", mobileLabel: "Wallet" });
   });
 });

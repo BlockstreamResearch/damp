@@ -237,6 +237,19 @@ describe("AMP signer wallet popover interactions", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("cycles Tab and Shift+Tab within the open signer dialog", () => {
+    render(<WalletStatus />);
+    fireEvent.click(screen.getByRole("button", { name: "Open AMP Signer SDK connection" }));
+    const network = screen.getByLabelText("Signer network");
+    const connect = screen.getByRole("button", { name: "Connect signer" });
+    expect(network).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(connect).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(network).toHaveFocus();
+  });
+
   it("offers an explicit Elements regtest choice on a fresh wallet", () => {
     const onNetwork = vi.fn();
     render(<WalletPopoverContent connectionNetwork="liquid-testnet" onConnectionNetwork={onNetwork} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
