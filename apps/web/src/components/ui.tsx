@@ -47,6 +47,7 @@ import { assetBalances, feeFundingState, nextFundingAddress } from "../lib/walle
 import { liquidTestnetFaucetUrl, nativeFeeAssetId } from "../lib/faucet";
 import { hasPendingSignerOperation } from "../lib/signer-operation-state";
 import { DeploymentControl } from "./deployment-control";
+import { SignerProfilePicker } from "./signer-profile-picker";
 
 export function Brand({ tone, network }: { tone: "holder" | "issuer"; network: string }) {
   return (
@@ -676,6 +677,9 @@ export function WalletPopoverContent({
   onConnectSaved?: () => void;
   onFaucetOpened?: () => void;
 }) {
+  const [profileManagementOpen, setProfileManagementOpen] = useState(false);
+  const profileManagementTriggerRef = useRef<HTMLButtonElement>(null);
+
   if (!model) {
     return (
       <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="AMP signer wallet" tabIndex={-1} ref={panelRef}>
@@ -683,14 +687,13 @@ export function WalletPopoverContent({
         <h2>No signer connected</h2>
         <p>Choose the intended test network, then connect a recovery phrase to discover its wallet balances.</p>
         <form className="wallet-connect-form" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}>
-          {profiles.length > 0 && <div className="wallet-profile-remembered"><label>Remembered signer profile<select aria-label="Remembered signer profile" value={selectedProfileId ?? ""} onChange={(event) => onProfileSelect(event.target.value)}><option value="">Use a different signer phrase</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.fingerprint} · {networkLabel(profile.network)} · locked</option>)}</select></label><small>Only public labels, account identities, fingerprints, and networks survive reload. Recovery phrases are not stored here.</small></div>}
+          {profiles.length > 0 && <div className="wallet-profile-remembered"><SignerProfilePicker label="Remembered signer profile" profiles={profiles} selectedId={selectedProfileId} onSelect={onProfileSelect} onUseDifferentProfile={onUseDifferentProfile} /><small>Only public labels, account identities, fingerprints, and networks survive reload. Recovery phrases are not stored here.</small></div>}
           <label>Network<select aria-label="Signer network" disabled={connecting || connectionNetworkLocked} value={connectionNetwork} onChange={(event) => onConnectionNetwork(event.target.value as "liquid-testnet" | "elements-regtest")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label>
           {connectionNetworkLocked && <small>The selected deployment or remembered profile locks the signer network to {networkLabel(connectionNetwork)}.</small>}
           <label>Recovery phrase or NEW<input aria-describedby="wallet-connect-help" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label>
           <small id="wallet-connect-help">Existing phrases stay in signer memory only. NEW is saved unencrypted for explicit local debugging. Profiles represent different signer phrases, not BIP account indexes.</small>
           <button className="button primary wide" type="submit" disabled={connecting}>{connecting ? "Connecting…" : selectedProfileId ? "Unlock signer profile" : "Connect signer"}</button>
           {savedDebugSignerAvailable && <button className="button secondary wide" type="button" disabled={connecting} onClick={onConnectSaved}>Connect saved debug signer</button>}
-          {selectedProfileId && <button className="text-button" type="button" disabled={connecting} onClick={onUseDifferentProfile}>Use a different signer phrase</button>}
         </form>
         {connectionNotice && <p className={`wallet-popover-status ${connectionNotice.tone}`} role="status" aria-live="polite">{connectionNotice.message}</p>}
       </div>
@@ -705,22 +708,43 @@ export function WalletPopoverContent({
     stale: "Last good state",
     error: "Sync error",
   }[model.syncState];
+  const activeProfiles = profiles.length > 0 ? profiles : [{
+    id: activeProfileId ?? `connected:${model.fingerprint}`,
+    fingerprint: model.fingerprint,
+    label: model.profileLabel ?? `Signer ${model.fingerprint}`,
+    network: connectionNetwork,
+    unlocked: true,
+  }];
+  const displayedActiveProfileId = activeProfileId ?? activeProfiles[0]?.id;
+
+  function beginProfileManagementAction(action: () => void) {
+    setProfileManagementOpen(false);
+    action();
+  }
 
   return (
     <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="AMP signer wallet" tabIndex={-1} ref={panelRef}>
       <div className="wallet-popover-heading">
         <div>
           <span className="overline">AMP Signer SDK</span>
-          <h2>{model.profileLabel ?? `Signer ${model.fingerprint}`}</h2>
-          <small className="wallet-profile-fingerprint">{model.fingerprint} · derivation account 0</small>
+          <h2>Wallet status</h2>
         </div>
         <span className={`wallet-sync-state ${model.syncState}`}><i />{stateLabel}</span>
       </div>
-      <div className="wallet-profile-manager">
-        <label>Active signer profile<select aria-label="Active signer profile" value={activeProfileId ?? ""} onChange={(event) => onProfileSelect(event.target.value)}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.fingerprint} · {networkLabel(profile.network)}{profile.unlocked ? "" : " · locked"}</option>)}</select></label>
-        <small>Profiles are different signer phrases; they are not BIP account-index choices.</small>
-        <div className="wallet-profile-actions"><button className="text-button" type="button" onClick={onAddProfile}><Plus size={13} /> Add</button><button className="text-button" type="button" onClick={onRenameProfile}><Pencil size={13} /> Rename</button><button className="text-button danger" type="button" onClick={onRemoveProfile}><Trash2 size={13} /> Remove</button></div>
+      <div className="wallet-profile-overview">
+        <SignerProfilePicker label="Active signer profile" profiles={activeProfiles} selectedId={displayedActiveProfileId} onSelect={onProfileSelect} />
+        <button
+          className="text-button wallet-profile-manage-trigger"
+          type="button"
+          ref={profileManagementTriggerRef}
+          aria-controls="wallet-profile-management"
+          aria-expanded={profileManagementOpen}
+          onClick={() => setProfileManagementOpen((value) => !value)}
+        >
+          <Settings2 size={13} /> Manage profiles
+        </button>
       </div>
+      {profileManagementOpen && <div id="wallet-profile-management" className="wallet-profile-management" onKeyDown={(event) => { if (event.key !== "Escape") return; event.preventDefault(); event.stopPropagation(); setProfileManagementOpen(false); profileManagementTriggerRef.current?.focus(); }}><p>Each profile represents a different signer phrase, not a BIP derivation account.</p><div className="wallet-profile-actions"><button aria-label="Add signer profile" className="text-button" type="button" onClick={() => beginProfileManagementAction(onAddProfile)}><Plus size={13} /> Add</button><button aria-label="Rename signer profile" className="text-button" type="button" onClick={() => beginProfileManagementAction(onRenameProfile)}><Pencil size={13} /> Rename</button><button aria-label="Remove signer profile" className="text-button danger" type="button" onClick={() => beginProfileManagementAction(onRemoveProfile)}><Trash2 size={13} /> Remove</button></div></div>}
       {(profileAction === "add" || profileAction === "unlock") && <form className="wallet-profile-editor" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}><strong>{profileAction === "unlock" ? "Unlock remembered profile" : "Add signer profile"}</strong><label>Network<select aria-label="Profile network" disabled={connecting || connectionNetworkLocked} value={connectionNetwork} onChange={(event) => onConnectionNetwork(event.target.value as "liquid-testnet" | "elements-regtest")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label><label>Recovery phrase or NEW<input aria-label="Profile recovery phrase or NEW" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label><small>The phrase is kept in memory only, except the existing explicit NEW debug behavior.</small><div><button className="button secondary" type="button" disabled={connecting} onClick={onCancelProfileAction}>Cancel</button><button className="button primary" type="submit" disabled={connecting}>{connecting ? "Connecting…" : profileAction === "unlock" ? "Unlock and switch" : "Add and switch"}</button></div></form>}
       {profileAction === "rename" && <form className="wallet-profile-editor" onSubmit={(event) => { event.preventDefault(); onSaveProfileLabel(); }}><strong>Rename signer profile</strong><label>Profile label<input aria-label="Signer profile label" maxLength={32} value={profileLabelInput} onChange={(event) => onProfileLabelInput(event.target.value)} /></label><div><button className="button secondary" type="button" onClick={onCancelProfileAction}>Cancel</button><button className="button primary" type="submit">Save label</button></div></form>}
       {profileAction === "remove" && <div className="wallet-profile-confirm" role="alert"><strong>Remove this profile?</strong><p>Public profile metadata is removed and its in-memory signer is locked. Wallet records remain partitioned by a collision-resistant public account identity.</p><div><button className="button secondary" type="button" onClick={onCancelProfileAction}>Cancel</button><button className="button danger-button" type="button" onClick={onConfirmRemoveProfile}>Remove profile</button></div></div>}

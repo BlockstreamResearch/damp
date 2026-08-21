@@ -8,6 +8,7 @@ import { AlertTriangle, ArrowRight, Check, ClipboardCopy, Download, ExternalLink
 
 import { AppShell, BackLink, Panel, Pill, SafetyNote, SectionHeading, TechnicalDetails } from "../components/ui";
 import { BlacklistTable } from "../components/blacklist-table";
+import { AdminStatusStrip } from "../components/admin-status-strip";
 import { BootstrapRegistryState } from "../components/bootstrap-registry-state";
 import { OperationReceiptPanel } from "../components/operation-receipt";
 import {
@@ -371,7 +372,7 @@ export function AdminDashboard() {
   return (
     <AppShell eyebrow="Issuer console" title="Exact-outpoint blacklist">
       {!selected ? <div className="empty-state"><ListFilter size={24} /><h2>No active deployment</h2><p>Create or import one before editing policy.</p></div> : selected.publication !== "published" ? <div className="empty-state"><ShieldCheck size={24} /><h2>Registry publication pending</h2><p>The confirmed deployment is visible, but blacklist governance remains locked until its manifest and D4 snapshot match the canonical default branch.</p><Link className="button issuer-primary" to="/admin/setup">Finish registry publication</Link></div> : <>
-        <div className="admin-status-strip"><div><span className="status-light" /><span><small>Deployment</small><strong>{selected.asset.name}</strong></span></div><div><small>Live anchor</small><strong>{anchor.data ? shortHash(anchor.data.live.txid) : "Resolving…"}</strong></div><div><small>Depth / capacity</small><strong>D{policy.data?.treeDepth ?? "–"} / {policy.data ? 2 ** policy.data.treeDepth : "–"}</strong></div><Pill tone={anchor.data?.live.confirmations ? "good" : "warn"}>{anchor.data?.live.confirmations ?? 0} confirmations</Pill></div>
+        <AdminStatusStrip deploymentName={selected.asset.name} liveAnchorTxid={anchor.data?.live.txid} treeDepth={policy.data?.treeDepth} confirmations={anchor.data?.live.confirmations ?? 0} />
         <div className="admin-grid">
           <Panel className="policy-editor"><SectionHeading label="Policy entries" title={`${scopedDraft.length} exact outpoint${scopedDraft.length === 1 ? "" : "s"}`} aside={<Pill tone={changes.added || changes.removed ? "warn" : "neutral"}>{changes.added + changes.removed} changes</Pill>} />
             <form className="inline-add-form" onSubmit={form.handleSubmit(addEntry)}><label>Exact outpoint<input aria-invalid={Boolean(form.formState.errors.outpoint)} aria-describedby={form.formState.errors.outpoint ? "blacklist-outpoint-error" : undefined} placeholder="txid:vout" spellCheck={false} {...form.register("outpoint")} /></label><label>Internal note <span>(not consensus)</span><input aria-invalid={Boolean(form.formState.errors.note)} aria-describedby={form.formState.errors.note ? "blacklist-note-error" : undefined} {...form.register("note")} /></label><button className="button issuer-primary" disabled={busy || !workspaceForCurrentPolicy} type="submit"><Plus size={16} /> Add</button>{form.formState.errors.outpoint && <small id="blacklist-outpoint-error" className="field-error form-wide">{form.formState.errors.outpoint.message}</small>}{form.formState.errors.note && <small id="blacklist-note-error" className="field-error form-wide">{form.formState.errors.note.message}</small>}</form>

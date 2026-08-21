@@ -139,25 +139,43 @@ describe("AMP signer wallet popover content", () => {
   it("shows remembered public profiles while keeping them locked after reload", () => {
     const onProfileSelect = vi.fn();
     render(<WalletPopoverContent profiles={[{ ...profileA, unlocked: false, active: false }]} selectedProfileId={profileA.id} connectionNetworkLocked onProfileSelect={onProfileSelect} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
-    expect(screen.getByLabelText("Remembered signer profile")).toHaveValue(profileA.id);
+    expect(screen.getByLabelText("Remembered signer profile")).toHaveTextContent(/QA Alice.*aabbccdd.*Locked/);
     expect(screen.getByText(/Only public labels, account identities, fingerprints, and networks survive reload/)).toBeInTheDocument();
     expect(screen.getByLabelText("Recovery phrase or NEW")).toHaveValue("");
     expect(screen.getByRole("button", { name: "Unlock signer profile" })).toBeEnabled();
   });
 
-  it("offers minimal add, rename, and remove profile controls", () => {
+  it("keeps identity compact and profile management secondary", () => {
     const onAddProfile = vi.fn();
     const onRenameProfile = vi.fn();
     const onRemoveProfile = vi.fn();
     render(<WalletPopoverContent model={{ ...connectedModel, profileLabel: "QA Alice" }} profiles={[profileA]} activeProfileId={profileA.id} onAddProfile={onAddProfile} onRenameProfile={onRenameProfile} onRemoveProfile={onRemoveProfile} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
-    expect(screen.getByRole("heading", { name: "QA Alice" })).toBeInTheDocument();
-    expect(screen.getByText(/derivation account 0/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.getByRole("heading", { name: "Wallet status" })).toBeInTheDocument();
+    expect(screen.queryByText(/derivation account 0/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Active signer profile")).toHaveTextContent("QA Aliceaabbccdd");
+    expect(screen.getAllByText("aabbccdd")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Add signer profile" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage profiles" }));
+    expect(screen.getByText(/not a BIP derivation account/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add signer profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profiles" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rename signer profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profiles" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove signer profile" }));
     expect(onAddProfile).toHaveBeenCalledOnce();
     expect(onRenameProfile).toHaveBeenCalledOnce();
     expect(onRemoveProfile).toHaveBeenCalledOnce();
+  });
+
+  it("collapses profile management with Escape and returns focus", () => {
+    render(<WalletPopoverContent model={{ ...connectedModel, profileLabel: "QA Alice" }} profiles={[profileA]} activeProfileId={profileA.id} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    const manage = screen.getByRole("button", { name: "Manage profiles" });
+    fireEvent.click(manage);
+    const add = screen.getByRole("button", { name: "Add signer profile" });
+    add.focus();
+    fireEvent.keyDown(add, { key: "Escape" });
+    expect(screen.queryByRole("button", { name: "Add signer profile" })).not.toBeInTheDocument();
+    expect(manage).toHaveFocus();
   });
 
   it("shows synchronized balances, pending funds, assets, UTXOs, and a safe address indicator", () => {
@@ -289,11 +307,26 @@ describe("AMP signer wallet popover interactions", () => {
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
     fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
-    fireEvent.change(screen.getByLabelText("Active signer profile"), { target: { value: profileB.id } });
+    fireEvent.click(screen.getByRole("button", { name: "Active signer profile" }));
+    fireEvent.click(screen.getByRole("option", { name: /QA Bob.*11223344.*Liquid testnet/ }));
     expect(screen.getByRole("alertdialog", { name: "Confirm signer profile switch" })).toBeInTheDocument();
     expect(switchProfileMock).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Switch profile" }));
     expect(switchProfileMock).toHaveBeenCalledWith(profileB.id, "liquid-testnet");
+  });
+
+  it("requires an explicit confirmation before removing the active profile", () => {
+    state.signer = { connected: true, fingerprint: profileA.fingerprint, network: profileA.network, profileId: profileA.id, walletReady: true, profiles: [profileA, profileB] };
+    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
+    state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
+    render(<WalletStatus />);
+    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profiles" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove signer profile" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Remove this profile?");
+    expect(removeProfileMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove profile" }));
+    expect(removeProfileMock).toHaveBeenCalledWith(profileA.id);
   });
 
   it("unlocks a remembered profile without activating a mismatched phrase", async () => {
@@ -303,7 +336,8 @@ describe("AMP signer wallet popover interactions", () => {
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
     fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
-    fireEvent.change(screen.getByLabelText("Active signer profile"), { target: { value: lockedB.id } });
+    fireEvent.click(screen.getByRole("button", { name: "Active signer profile" }));
+    fireEvent.click(screen.getByRole("option", { name: /QA Bob.*11223344.*Liquid testnet.*Locked/ }));
     expect(screen.getByText("Unlock remembered profile")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Profile recovery phrase or NEW"), { target: { value: "profile b phrase" } });
     fireEvent.click(screen.getByRole("button", { name: "Unlock and switch" }));
@@ -318,7 +352,8 @@ describe("AMP signer wallet popover interactions", () => {
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
     fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
-    fireEvent.change(screen.getByLabelText("Active signer profile"), { target: { value: regtestProfile.id } });
+    fireEvent.click(screen.getByRole("button", { name: "Active signer profile" }));
+    fireEvent.click(screen.getByRole("option", { name: /QA Bob.*11223344.*Elements regtest/ }));
     expect(screen.getByRole("status")).toHaveTextContent("requires Liquid testnet");
     expect(switchProfileMock).not.toHaveBeenCalled();
   });
