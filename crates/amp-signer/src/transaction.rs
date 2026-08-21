@@ -6,8 +6,10 @@ use elements::bitcoin::PublicKey as BitcoinPublicKey;
 use elements::bitcoin::bip32::DerivationPath;
 use elements::confidential::{Asset, AssetBlindingFactor, Value, ValueBlindingFactor};
 use elements::pset::{Input, PartiallySignedTransaction};
-use elements::secp256k1_zkp::{Generator, SecretKey};
-use elements::{Address, AssetId, OutPoint, Script, TxOut, TxOutSecrets, Txid};
+use elements::secp256k1_zkp::{
+    Generator, PedersenCommitment, SecretKey, verify_commitments_sum_to_equal,
+};
+use elements::{Address, AssetId, OutPoint, Script, Transaction, TxOut, TxOutSecrets, Txid};
 use lwk_common::Signer as _;
 use lwk_signer::SwSigner;
 
@@ -31,6 +33,179 @@ pub fn parse_amount(value: &str, name: &str) -> anyhow::Result<u64> {
         .with_context(|| format!("{name} must fit u64"))?;
     anyhow::ensure!(amount > 0, "{name} must be positive");
     Ok(amount)
+}
+
+/// Verify all confidential proofs and the transaction-wide value balance before returning a
+/// signer artifact. Explicit zero-valued issuance fields are invalid in Elements consensus, so
+/// reject them explicitly instead of allowing the upstream convenience verifier to panic while
+/// constructing their Pedersen commitments.
+pub fn verify_transaction_amounts(
+    transaction: &Transaction,
+    spent_utxos: &[TxOut],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        transaction.input.len() == spent_utxos.len(),
+        "transaction input and spent-output counts differ"
+    );
+    let secp = elements::secp256k1_zkp::SECP256K1;
+    let mut input_commitments = Vec::new();
+    let mut output_commitments = Vec::new();
+    let surjection_domain = transaction_surjection_domain(transaction, spent_utxos)?;
+
+    for (index, (input, spent)) in transaction.input.iter().zip(spent_utxos).enumerate() {
+        let generator = txout_asset_generator(spent, index, "input")?;
+        input_commitments.push(txout_value_commitment(spent, generator, index, "input")?);
+        if input.has_issuance() {
+            let (issued_asset, token_asset) = input.issuance_ids();
+            for (value, asset, label, has_rangeproof) in [
+                (
+                    input.asset_issuance.amount,
+                    issued_asset,
+                    "issued asset",
+                    input.witness.amount_rangeproof.is_some(),
+                ),
+                (
+                    input.asset_issuance.inflation_keys,
+                    token_asset,
+                    "reissuance token",
+                    input.witness.inflation_keys_rangeproof.is_some(),
+                ),
+            ] {
+                anyhow::ensure!(
+                    matches!(value, Value::Confidential(_)) || !has_rangeproof,
+                    "input {index} has a range proof for an explicit {label} issuance"
+                );
+                match value {
+                    Value::Null => {}
+                    Value::Explicit(amount) => {
+                        anyhow::ensure!(
+                            amount > 0,
+                            "input {index} has an invalid zero-valued {label} issuance"
+                        );
+                        let generator = Generator::new_unblinded(secp, asset.into_tag());
+                        input_commitments
+                            .push(PedersenCommitment::new_unblinded(secp, amount, generator));
+                    }
+                    Value::Confidential(commitment) => {
+                        input_commitments.push(commitment);
+                    }
+                }
+                anyhow::ensure!(
+                    !matches!(value, Value::Confidential(_)),
+                    "input {index} has an unsupported confidential {label} issuance"
+                );
+            }
+        }
+    }
+
+    for (index, output) in transaction.output.iter().enumerate() {
+        anyhow::ensure!(
+            output.value != Value::Explicit(0),
+            "output {index} has an explicit zero value"
+        );
+        let generator = txout_asset_generator(output, index, "output")?;
+        let value_commitment = txout_value_commitment(output, generator, index, "output")?;
+        output_commitments.push(value_commitment);
+        if let Some(commitment) = output.value.commitment() {
+            let rangeproof = output
+                .witness
+                .rangeproof
+                .as_ref()
+                .with_context(|| format!("output {index} is missing its value range proof"))?;
+            rangeproof
+                .verify(secp, commitment, output.script_pubkey.as_bytes(), generator)
+                .with_context(|| format!("output {index} has an invalid value range proof"))?;
+        } else {
+            anyhow::ensure!(
+                output.witness.rangeproof.is_none(),
+                "output {index} has a range proof for an explicit value"
+            );
+        }
+        if let Some(generator) = output.asset.commitment() {
+            let proof =
+                output.witness.surjection_proof.as_ref().with_context(|| {
+                    format!("output {index} is missing its asset surjection proof")
+                })?;
+            anyhow::ensure!(
+                proof.verify(secp, generator, &surjection_domain),
+                "output {index} has an invalid asset surjection proof"
+            );
+        } else {
+            anyhow::ensure!(
+                output.witness.surjection_proof.is_none(),
+                "output {index} has a surjection proof for an explicit asset"
+            );
+        }
+    }
+    anyhow::ensure!(
+        verify_commitments_sum_to_equal(secp, &input_commitments, &output_commitments),
+        "transaction input and output commitments do not balance"
+    );
+    Ok(())
+}
+
+pub(crate) fn transaction_surjection_domain(
+    transaction: &Transaction,
+    spent_utxos: &[TxOut],
+) -> anyhow::Result<Vec<Generator>> {
+    anyhow::ensure!(
+        transaction.input.len() == spent_utxos.len(),
+        "transaction input and spent-output counts differ"
+    );
+    let secp = elements::secp256k1_zkp::SECP256K1;
+    let mut domain = Vec::new();
+    for (index, (input, spent)) in transaction.input.iter().zip(spent_utxos).enumerate() {
+        domain.push(txout_asset_generator(spent, index, "input")?);
+        if input.has_issuance() {
+            let (issued_asset, token_asset) = input.issuance_ids();
+            for (value, asset) in [
+                (input.asset_issuance.amount, issued_asset),
+                (input.asset_issuance.inflation_keys, token_asset),
+            ] {
+                match value {
+                    Value::Null => {}
+                    Value::Explicit(0) => {
+                        anyhow::bail!("input {index} contains an invalid zero-valued issuance")
+                    }
+                    Value::Explicit(_) | Value::Confidential(_) => {
+                        domain.push(Generator::new_unblinded(secp, asset.into_tag()));
+                    }
+                }
+            }
+        }
+    }
+    Ok(domain)
+}
+
+fn txout_asset_generator(txout: &TxOut, index: usize, role: &str) -> anyhow::Result<Generator> {
+    match txout.asset {
+        Asset::Explicit(asset) => Ok(Generator::new_unblinded(
+            elements::secp256k1_zkp::SECP256K1,
+            asset.into_tag(),
+        )),
+        Asset::Confidential(generator) => Ok(generator),
+        Asset::Null => anyhow::bail!("{role} {index} has no asset"),
+    }
+}
+
+fn txout_value_commitment(
+    txout: &TxOut,
+    generator: Generator,
+    index: usize,
+    role: &str,
+) -> anyhow::Result<PedersenCommitment> {
+    match txout.value {
+        Value::Explicit(value) => {
+            anyhow::ensure!(value > 0, "{role} {index} has an explicit zero value");
+            Ok(PedersenCommitment::new_unblinded(
+                elements::secp256k1_zkp::SECP256K1,
+                value,
+                generator,
+            ))
+        }
+        Value::Confidential(commitment) => Ok(commitment),
+        Value::Null => anyhow::bail!("{role} {index} has no value"),
+    }
 }
 
 pub fn decode_utxo(
@@ -353,4 +528,144 @@ pub fn select_smallest_sufficient(
         }
     }
     anyhow::bail!("insufficient balance")
+}
+
+/// Select fee inputs while preserving enough value to reblind change whenever any selected input
+/// carries a confidential asset or value commitment. Exact-value explicit inputs remain usable;
+/// exact-value confidential inputs are skipped in favor of a larger candidate.
+pub fn select_fee_funding(
+    mut values: Vec<ValidatedUtxo>,
+    target: u64,
+    max_inputs: usize,
+    confidential_change: u64,
+) -> anyhow::Result<Vec<ValidatedUtxo>> {
+    anyhow::ensure!(max_inputs > 0, "fee selection allows no inputs");
+    let confidential_target = target
+        .checked_add(confidential_change)
+        .context("fee target overflow")?;
+    values.sort_by(|left, right| {
+        left.secrets
+            .value
+            .cmp(&right.secrets.value)
+            .then_with(|| left.outpoint.txid.cmp(&right.outpoint.txid))
+            .then_with(|| left.outpoint.vout.cmp(&right.outpoint.vout))
+    });
+
+    if let Some(index) = values.iter().position(|utxo| {
+        utxo.secrets.value
+            >= if input_needs_confidential_change(utxo) {
+                confidential_target
+            } else {
+                target
+            }
+    }) {
+        return Ok(vec![values.swap_remove(index)]);
+    }
+
+    // Prefer an explicit-only combination when it can pay the exact fee. This
+    // avoids imposing confidential-change headroom unnecessarily.
+    let mut explicit_total = 0u64;
+    let mut explicit_count = 0usize;
+    for utxo in values
+        .iter()
+        .rev()
+        .filter(|utxo| !input_needs_confidential_change(utxo))
+        .take(max_inputs)
+    {
+        explicit_total = explicit_total
+            .checked_add(utxo.secrets.value)
+            .context("input amount overflow")?;
+        explicit_count += 1;
+        if explicit_total >= target {
+            return Ok(values
+                .into_iter()
+                .rev()
+                .filter(|utxo| !input_needs_confidential_change(utxo))
+                .take(explicit_count)
+                .collect());
+        }
+    }
+
+    let mut selected = Vec::new();
+    let mut total = 0u64;
+    let mut needs_change = false;
+    for utxo in values.into_iter().rev().take(max_inputs) {
+        total = total
+            .checked_add(utxo.secrets.value)
+            .context("input amount overflow")?;
+        needs_change |= input_needs_confidential_change(&utxo);
+        selected.push(utxo);
+        let required = if needs_change {
+            confidential_target
+        } else {
+            target
+        };
+        if total >= required {
+            return Ok(selected);
+        }
+    }
+    anyhow::bail!("insufficient balance with confidential-change headroom")
+}
+
+pub(crate) fn input_needs_confidential_change(utxo: &ValidatedUtxo) -> bool {
+    utxo.secrets.asset_bf != AssetBlindingFactor::zero()
+        || utxo.secrets.value_bf != ValueBlindingFactor::zero()
+}
+
+#[cfg(test)]
+mod fee_selection_tests {
+    use super::*;
+    use elements::TxOutWitness;
+    use elements::confidential::Nonce;
+
+    fn candidate(value: u64, id: u8, confidential: bool) -> ValidatedUtxo {
+        let asset = AssetId::from_str(&"11".repeat(32)).expect("asset");
+        let value_bf = if confidential {
+            ValueBlindingFactor::new(&mut rand::thread_rng())
+        } else {
+            ValueBlindingFactor::zero()
+        };
+        ValidatedUtxo {
+            outpoint: OutPoint::new(Txid::from_str(&format!("{id:064x}")).expect("txid"), 0),
+            txout: TxOut {
+                asset: Asset::Explicit(asset),
+                value: Value::Explicit(value),
+                nonce: Nonce::Null,
+                script_pubkey: Script::new(),
+                witness: TxOutWitness::default(),
+            },
+            secrets: TxOutSecrets::new(asset, AssetBlindingFactor::zero(), value, value_bf),
+            wallet_key: None,
+            holder_key: None,
+        }
+    }
+
+    #[test]
+    fn confidential_exact_fee_uses_larger_candidate_with_change() {
+        let selected = select_fee_funding(
+            vec![candidate(2_000, 1, true), candidate(5_000, 2, true)],
+            2_000,
+            1,
+            1,
+        )
+        .expect("larger confidential candidate");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].secrets.value, 5_000);
+    }
+
+    #[test]
+    fn exact_explicit_inputs_need_no_change_headroom() {
+        let selected = select_fee_funding(
+            vec![candidate(1_000, 1, false), candidate(1_000, 2, false)],
+            2_000,
+            2,
+            1,
+        )
+        .expect("explicit exact-fee combination");
+        assert_eq!(selected.len(), 2);
+        assert_eq!(
+            selected.iter().map(|utxo| utxo.secrets.value).sum::<u64>(),
+            2_000
+        );
+    }
 }

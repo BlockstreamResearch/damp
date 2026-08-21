@@ -4,8 +4,12 @@ import { esploraUrlForDeployment } from "./esplora";
 
 async function fetchText(url: string, init?: RequestInit) {
   const response = await fetch(url, { cache: "no-store", ...init });
-  if (!response.ok) throw new Error(`Esplora request failed (${response.status}) for ${url}.`);
-  return response.text();
+  const text = await response.text();
+  if (!response.ok) {
+    const detail = text.trim().replace(/[^\x20-\x7e]/g, " ").slice(0, 512);
+    throw new Error(`Esplora request failed (${response.status}) for ${url}${detail ? `: ${detail}` : "."}`);
+  }
+  return text;
 }
 
 export async function liveAnchorUtxo(

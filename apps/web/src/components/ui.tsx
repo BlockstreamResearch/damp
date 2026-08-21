@@ -35,8 +35,9 @@ import {
 } from "../lib/deployments";
 import { activeNavigationTarget, appRoleForPath } from "../lib/navigation";
 import { formatUnits, shortHash } from "../lib/domain";
-import { useDeploymentWalletSync } from "../lib/wallet-query";
+import { useBaseWalletSync, useDeploymentWalletSync } from "../lib/wallet-query";
 import { assetBalances, nextFundingAddress } from "../lib/wallet-sync";
+import { nativeFeeAssetId } from "../lib/faucet";
 
 export function Brand({ tone }: { tone: "holder" | "issuer" }) {
   return (
@@ -130,7 +131,7 @@ export function AppShell({
           </div>
           <div className="header-action">{action ?? <WalletStatus />}</div>
         </header>
-        <div className="page-body">{children}</div>
+        <div className="page-body"><div className="responsive-deployment-selector"><DeploymentSelector /></div>{children}</div>
       </main>
     </div>
   );
@@ -162,8 +163,18 @@ function DeploymentSelector() {
 export function WalletStatus() {
   const signer = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
   const deployment = useActiveDeployment();
-  const wallet = useDeploymentWalletSync(deployment.data, signer.connected ? signer.fingerprint : undefined);
+  const deploymentWallet = useDeploymentWalletSync(deployment.data, signer.connected ? signer.fingerprint : undefined);
+  const baseWallet = useBaseWalletSync({
+    fingerprint: signer.connected && !deployment.data ? signer.fingerprint : undefined,
+    network: signer.network,
+    enabled: signer.connected && !deployment.data,
+  });
+  const wallet = deployment.data ? deploymentWallet : baseWallet;
   const [open, setOpen] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectionMessage, setConnectionMessage] = useState<string>();
+  const [mnemonicInput, setMnemonicInput] = useState("");
+  const [savedDebugSignerAvailable, setSavedDebugSignerAvailable] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -173,17 +184,16 @@ export function WalletStatus() {
     const selected = deployment.data;
     const snapshot = wallet.data?.snapshot;
     const balances = assetBalances(snapshot);
-    const lbtc = selected ? balances.find((balance) => balance.assetId === selected.policyAsset) : undefined;
-    const other = selected ? balances.filter((balance) => balance.assetId !== selected.policyAsset) : [];
+    const feeAsset = selected?.policyAsset ?? (signer.network ? nativeFeeAssetId(signer.network) : undefined);
+    const lbtc = balances.find((balance) => balance.assetId === feeAsset);
+    const other = balances.filter((balance) => balance.assetId !== feeAsset);
     const syncError = wallet.data?.syncError ?? (wallet.error instanceof Error ? wallet.error.message : undefined);
     const funding = nextFundingAddress(snapshot);
     return {
       fingerprint: signer.fingerprint,
       network: signer.network === "liquid-testnet" ? "Liquid testnet" : "Elements regtest",
       deploymentSelected: Boolean(selected),
-      syncState: !selected
-        ? "idle"
-        : syncError
+      syncState: syncError
           ? "error"
           : wallet.isPending && !snapshot
             ? "loading"
@@ -206,6 +216,14 @@ export function WalletStatus() {
         pending: balance.pending.toString(),
       })),
       utxoCount: snapshot?.utxos.filter((utxo) => utxo.status === "confirmed" || utxo.status === "unconfirmed").length ?? 0,
+      utxos: (snapshot?.utxos ?? [])
+        .filter((utxo) => utxo.status === "confirmed" || utxo.status === "unconfirmed")
+        .slice(0, 6)
+        .map((utxo) => ({
+          outpoint: `${utxo.txid}:${utxo.vout}`,
+          status: utxo.status,
+          amount: utxo.assetId === feeAsset ? `${formatUnits(utxo.amount, 8)} L-BTC` : `${utxo.amount} units`,
+        })),
       receiveIndicator: funding
         ? `External #${funding.index} · ${shortHash(funding.confidentialAddress, 11, 7)}`
         : undefined,
@@ -214,7 +232,7 @@ export function WalletStatus() {
 
   useEffect(() => {
     if (!open) return;
-    const firstAction = panelRef.current?.querySelector<HTMLElement>("button:not(:disabled)");
+    const firstAction = panelRef.current?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)");
     (firstAction ?? panelRef.current)?.focus();
     const dismiss = (event: PointerEvent) => {
       if (containerRef.current?.contains(event.target as Node)) return;
@@ -235,21 +253,49 @@ export function WalletStatus() {
     };
   }, [open]);
 
-  async function connect() {
+  useEffect(() => {
+    if (!open || signer.connected) return;
+    // Keep the saved debug phrase out of React state and the rendered DOM.
+    // Only its availability is exposed; the phrase is read at click time.
+    setSavedDebugSignerAvailable(Boolean(loadDebugMnemonic()));
+  }, [open, signer.connected]);
+
+  async function connect(input: string) {
     const network = deployment.data?.network ?? "liquid-testnet";
-    const savedMnemonic = loadDebugMnemonic();
-    const input = window.prompt(
-      "Enter your BIP39 recovery phrase. Type NEW to create a fresh 12-word debug signer. NEW phrases are saved unencrypted in this browser's local storage.",
-      savedMnemonic ?? "",
-    );
-    if (!input) return;
-    let mnemonic = input;
+    const normalized = input.trim();
+    if (!normalized) throw new Error("Enter a recovery phrase, or type NEW for an unencrypted debug signer.");
+    let mnemonic = normalized;
     if (input.trim().toUpperCase() === "NEW") {
       mnemonic = await generateMnemonic();
       saveDebugMnemonic(mnemonic);
-      window.alert(`Debug recovery phrase (saved unencrypted in local storage):\n\n${mnemonic}`);
     }
     await connectSigner(mnemonic, network);
+    return normalized.toUpperCase() === "NEW";
+  }
+
+  async function connectFromPopover(input: string) {
+    setConnecting(true);
+    setConnectionMessage("Opening the local Liquid testnet signer…");
+    try {
+      const generated = await connect(input);
+      setMnemonicInput("");
+      if (generated) setSavedDebugSignerAvailable(true);
+      setConnectionMessage(generated ? "A new debug signer was generated and saved unencrypted in this browser." : undefined);
+    } catch (error) {
+      setConnectionMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function connectSavedDebugSigner() {
+    const saved = loadDebugMnemonic();
+    if (!saved) {
+      setSavedDebugSignerAvailable(false);
+      setConnectionMessage("No saved debug signer is available in this browser.");
+      return;
+    }
+    await connectFromPopover(saved);
   }
 
   return (
@@ -274,7 +320,13 @@ export function WalletStatus() {
         <WalletPopoverContent
           panelRef={panelRef}
           model={model}
-          onConnect={() => connect().catch((error) => window.alert(error instanceof Error ? error.message : String(error)))}
+          connecting={connecting}
+          connectionMessage={connectionMessage}
+          mnemonicInput={mnemonicInput}
+          savedDebugSignerAvailable={savedDebugSignerAvailable}
+          onMnemonicInput={setMnemonicInput}
+          onConnect={(input) => void connectFromPopover(input)}
+          onConnectSaved={() => void connectSavedDebugSigner()}
           onRefresh={() => wallet.refetch()}
           onDisconnect={() => {
             disconnectSigner();
@@ -297,6 +349,7 @@ export type WalletPopoverModel = {
   lbtcPending: string;
   otherAssets: Array<{ assetId: string; label: string; amount: string; pending: string }>;
   utxoCount: number;
+  utxos: Array<{ outpoint: string; status: "confirmed" | "unconfirmed" | "spent" | "orphaned"; amount: string }>;
   receiveIndicator?: string;
 };
 
@@ -306,12 +359,24 @@ export function WalletPopoverContent({
   onConnect,
   onRefresh,
   onDisconnect,
+  connecting = false,
+  connectionMessage,
+  mnemonicInput = "",
+  savedDebugSignerAvailable = false,
+  onMnemonicInput = () => undefined,
+  onConnectSaved = () => undefined,
 }: {
   panelRef?: RefObject<HTMLDivElement | null>;
   model?: WalletPopoverModel;
-  onConnect: () => void;
+  onConnect: (mnemonic: string) => void;
   onRefresh: () => void;
   onDisconnect: () => void;
+  connecting?: boolean;
+  connectionMessage?: string;
+  mnemonicInput?: string;
+  savedDebugSignerAvailable?: boolean;
+  onMnemonicInput?: (value: string) => void;
+  onConnectSaved?: () => void;
 }) {
   if (!model) {
     return (
@@ -319,7 +384,13 @@ export function WalletPopoverContent({
         <span className="overline">AMP Signer SDK</span>
         <h2>No signer connected</h2>
         <p>Connect a recovery phrase to discover this wallet’s Liquid testnet balances.</p>
-        <button className="button primary wide" type="button" onClick={onConnect}>Connect signer</button>
+        <form className="wallet-connect-form" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}>
+          <label>Recovery phrase or NEW<input aria-describedby="wallet-connect-help" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label>
+          <small id="wallet-connect-help">Existing phrases stay in signer memory only. NEW is saved unencrypted for explicit local debugging.</small>
+          <button className="button primary wide" type="submit" disabled={connecting}>{connecting ? "Connecting…" : "Connect signer"}</button>
+          {savedDebugSignerAvailable && <button className="button secondary wide" type="button" disabled={connecting} onClick={onConnectSaved}>Connect saved debug signer</button>}
+        </form>
+        {connectionMessage && <p className="wallet-popover-error" role="status" aria-live="polite">{connectionMessage}</p>}
       </div>
     );
   }
@@ -345,10 +416,7 @@ export function WalletPopoverContent({
         <div><dt>Network</dt><dd>{model.network}</dd></div>
         <div><dt>UTXOs</dt><dd>{model.utxoCount}</dd></div>
       </dl>
-      {!model.deploymentSelected ? (
-        <p>Select an active deployment to synchronize balances and receive addresses.</p>
-      ) : (
-        <>
+      <>
           <div className="wallet-popover-balance">
             <span>Available L-BTC</span>
             <strong>{model.lbtcConfirmed} <small>L-BTC</small></strong>
@@ -366,11 +434,12 @@ export function WalletPopoverContent({
             </div>
           )}
           {model.receiveIndicator && <p className="wallet-receive-indicator">Receive · {model.receiveIndicator}</p>}
-        </>
-      )}
+          {model.utxos.length > 0 && <details className="wallet-popover-utxos"><summary>Current outputs ({model.utxoCount})</summary><div>{model.utxos.map((utxo) => <p key={utxo.outpoint}><code title={utxo.outpoint}>{shortHash(utxo.outpoint, 9, 5)}</code><span>{utxo.status}</span><strong>{utxo.amount}</strong></p>)}</div></details>}
+          {!model.deploymentSelected && <p>Base wallet synchronized. Select or create a deployment to discover deployment-bound assets.</p>}
+      </>
       {model.syncError && <p className="wallet-popover-error" role="status">{model.syncError}</p>}
       <div className="wallet-popover-actions">
-        <button className="button secondary" type="button" onClick={onRefresh} disabled={!model.deploymentSelected || model.syncState === "loading"}>
+        <button className="button secondary" type="button" onClick={onRefresh} disabled={model.syncState === "loading" || model.syncState === "syncing"}>
           <RefreshCw size={14} /> Refresh
         </button>
         <button className="button secondary" type="button" onClick={onDisconnect}>
@@ -432,7 +501,7 @@ export function SafetyNote({ title, children }: { title: string; children: React
 
 export function BackLink({ to, children }: { to: "/wallet" | "/admin"; children: ReactNode }) {
   return (
-    <Link to={to} className="back-link">
+    <Link to={to} activeOptions={{ exact: true }} className="back-link">
       <ArrowLeft size={15} /> {children}
     </Link>
   );

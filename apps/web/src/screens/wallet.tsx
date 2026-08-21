@@ -38,6 +38,7 @@ import {
   requireDeployment,
   requirePublishedDeployment,
   shortHash,
+  userFacingError,
   type Deployment,
   type ReceiveRecord,
 } from "../lib/domain";
@@ -155,6 +156,7 @@ const sendSchema = z.object({
   amount: z.string().trim().min(1),
 });
 type SendForm = z.infer<typeof sendSchema>;
+type SendReview = SendForm & { recipientRecord: ReceiveRecord };
 
 async function resolveReceiveRecord(value: string, deployment: Deployment): Promise<ReceiveRecord> {
   const raw = value.trim().startsWith("{")
@@ -173,10 +175,27 @@ async function resolveReceiveRecord(value: string, deployment: Deployment): Prom
 export function WalletSend() {
   const deployment = useActiveDeployment();
   const queryClient = useQueryClient();
-  const [review, setReview] = useState<SendForm>();
+  const [review, setReview] = useState<SendReview>();
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const form = useForm<SendForm>({ resolver: zodResolver(sendSchema) });
+
+  async function reviewTransfer(values: SendForm) {
+    setReviewBusy(true);
+    setMessage(undefined);
+    try {
+      const selected = requirePublishedDeployment(deployment.data);
+      const amount = parseUnits(values.amount, selected.asset.precision);
+      if (amount <= 0n) throw new Error("Transfer amount must be positive.");
+      const recipientRecord = await resolveReceiveRecord(values.recipient, selected);
+      setReview({ ...values, recipientRecord });
+    } catch (error) {
+      setMessage(userFacingError(error));
+    } finally {
+      setReviewBusy(false);
+    }
+  }
 
   async function send() {
     setBusy(true);
@@ -186,7 +205,12 @@ export function WalletSend() {
       if (!review) throw new Error("Review the transfer first.");
       const amount = parseUnits(review.amount, selected.asset.precision);
       if (amount <= 0n) throw new Error("Transfer amount must be positive.");
-      const recipient = await resolveReceiveRecord(review.recipient, selected);
+      // Sign the exact deployment-bound record that was validated and shown on
+      // the review screen. A mutable URL must not be able to swap recipients
+      // between review and signing.
+      const recipient = receiveRecordSchema.parse(review.recipientRecord);
+      await validateReceiveRecordShape(recipient);
+      await validateReceiveRecord(publicManifest(selected), recipient);
       const esplora = esploraUrlForDeployment(selected);
       const signer = signerSnapshot();
       if (!signer.connected || !signer.fingerprint) throw new Error("Connect the AMP signer first.");
@@ -216,7 +240,7 @@ export function WalletSend() {
       await queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.fingerprint, selected.network) });
       setMessage(`Transfer broadcast: ${result.txid}`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingError(error));
     } finally {
       setBusy(false);
     }
@@ -228,15 +252,15 @@ export function WalletSend() {
       <div className="flow-layout">
         <Panel className="flow-main">
           <SectionHeading label={review ? "Review" : "Recipient and amount"} title={review ? "Confirm transfer details" : "Who are you paying?"} />
-          {!deployment.data ? <p>Import or select a deployment first.</p> : !review ? (
-            <form onSubmit={form.handleSubmit(setReview)} className="form-stack">
+          {!deployment.data ? <p>Import or select a deployment first.</p> : deployment.data.publication !== "published" ? <div className="generate-record"><ShieldCheck size={26} /><p>This deployment is confirmed, but canonical registry publication is still pending. Transfers remain disabled until its manifest and live D4 policy are byte-identical on the registry default branch.</p><Link className="button primary" to="/admin/setup">Finish registry publication</Link></div> : !review ? (
+            <form onSubmit={form.handleSubmit(reviewTransfer)} className="form-stack">
               <label>Receive record JSON or HTTPS URL<textarea rows={5} {...form.register("recipient")} />{form.formState.errors.recipient && <small className="field-error">{form.formState.errors.recipient.message}</small>}</label>
               <label>Amount<div className="amount-input"><input inputMode="decimal" {...form.register("amount")} /><span>{deployment.data.asset.ticker}</span></div></label>
-              <button className="button primary wide" type="submit">Review transfer <ArrowRight size={16} /></button>
+              <button className="button primary wide" disabled={reviewBusy} type="submit">{reviewBusy ? "Validating recipient…" : "Review transfer"} <ArrowRight size={16} /></button>
             </form>
           ) : (
             <div className="review-stack">
-              <ReviewRow label="Recipient" value={review.recipient.startsWith("{") ? "Direct receive record" : review.recipient} />
+              <ReviewRow label="Recipient" value={`${review.recipientRecord.alias} · ${shortHash(review.recipientRecord.confidentialAddress, 12, 8)}`} />
               <ReviewRow label="Amount" value={`${review.amount} ${deployment.data.asset.ticker}`} />
               <ReviewRow label="Asset ID" value={shortHash(deployment.data.regulatedAsset, 12, 10)} />
               <ReviewRow label="Policy" value="Canonical live blacklist" good />
@@ -261,6 +285,7 @@ export function WalletReceive() {
   const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
   const [message, setMessage] = useState<string>();
+  const [copying, setCopying] = useState(false);
   const storedRecords = useQuery({
     queryKey: ["receive-record", deployment.data?.deploymentId, signer.fingerprint],
     enabled: Boolean(deployment.data && signer.connected && signer.fingerprint),
@@ -276,7 +301,21 @@ export function WalletReceive() {
       const created = await ensureSignerReceiveRecord(selected, signer.fingerprint);
       queryClient.setQueryData(["receive-record", selected.deploymentId, signer.fingerprint], created);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingError(error));
+    }
+  }
+
+  async function copyRecord() {
+    setCopying(true);
+    setMessage("Copying the public receive record…");
+    try {
+      await navigator.clipboard.writeText(encoded);
+      setCopied(true);
+      setMessage("Public receive record copied. Share it with the sender for this deployment only.");
+    } catch (error) {
+      setMessage(`Could not copy the receive record: ${userFacingError(error)}`);
+    } finally {
+      setCopying(false);
     }
   }
 
@@ -284,7 +323,7 @@ export function WalletReceive() {
     <AppShell eyebrow="Holder wallet / Receive" title="Receive regulated assets">
       <BackLink to="/wallet">Back to wallet</BackLink>
       <div className="receive-layout">
-        <Panel className="receive-card"><SectionHeading label="Deployment-bound receive record" title="Share this with the sender" />{record ? <><div className="qr-wrap"><QRCodeSVG value={encoded} size={188} level="M" /></div><p className="receive-address">{record.confidentialAddress}</p><button className="button primary wide" type="button" onClick={() => navigator.clipboard.writeText(encoded).then(() => setCopied(true))}>{copied ? <Check size={16} /> : <Copy size={16} />} {copied ? "Copied" : "Copy receive record"}</button></> : <div className="generate-record"><Radio size={26} /><p>The AMP Signer SDK derives owner and blinding keys, constructs the exact user covenant, and signs the deployment-bound BIP322 record locally.</p><button className="button primary" disabled={!signer.connected || storedRecords.isFetching} type="button" onClick={generate}>{storedRecords.isFetching ? "Restoring…" : "Generate locally"}</button></div>}{storedRecords.error instanceof Error && <p className="field-error">{storedRecords.error.message}</p>}{message && <p className="inline-message" role="status">{message}</p>}</Panel>
+        <Panel className="receive-card"><SectionHeading label="Deployment-bound receive record" title="Share this with the sender" />{!deployment.data ? <div className="generate-record"><Radio size={26} /><p>No deployment is selected. Import or create one before generating a deployment-bound receive record.</p><Link className="button primary" to="/admin/setup">Open Setup</Link></div> : record ? <><div className="qr-wrap"><QRCodeSVG value={encoded} size={188} level="M" /></div><p className="receive-address">{record.confidentialAddress}</p><button className="button primary wide" disabled={copying} type="button" onClick={() => void copyRecord()}>{copied ? <Check size={16} /> : <Copy size={16} />} {copying ? "Copying…" : copied ? "Copied" : "Copy receive record"}</button></> : <div className="generate-record"><Radio size={26} /><p>The AMP Signer SDK derives owner and blinding keys, constructs the exact user covenant, and signs the deployment-bound BIP322 record locally.</p><button className="button primary" disabled={!signer.connected || storedRecords.isFetching} type="button" onClick={generate}>{storedRecords.isFetching ? "Restoring…" : "Generate locally"}</button></div>}{storedRecords.error instanceof Error && <p className="field-error">{storedRecords.error.message}</p>}{message && <p className="inline-message" role="status" aria-live="polite">{message}</p>}</Panel>
         <div className="receive-notes"><SafetyNote title="Safe to publish">Only public keys, the covenant script, confidential address, and ownership proof are exported.</SafetyNote><Panel><h3>Sender verification</h3><ul className="check-list"><li><ShieldCheck size={15} /> Deployment binding</li><li><ShieldCheck size={15} /> Exact holder script</li><li><ShieldCheck size={15} /> BIP322 ownership proof</li><li><ShieldCheck size={15} /> Address and blinding key</li></ul></Panel><div className="info-line"><Info size={15} /> Direct JSON works without a registry account.</div></div>
       </div>
     </AppShell>

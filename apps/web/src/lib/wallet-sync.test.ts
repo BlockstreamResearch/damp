@@ -31,6 +31,7 @@ import {
   assetBalances,
   discoverWalletSnapshot,
   feeFundingState,
+  issuanceFundingPlan,
   loadWalletSyncSnapshot,
   saveWalletSyncSnapshot,
   selectSpendableUtxos,
@@ -318,6 +319,56 @@ describe("wallet state and persistence", () => {
     expect(feeFundingState({ snapshot, assetId: "33".repeat(32) })).toBe("unfunded");
     expect(feeFundingState({ snapshot, assetId: "33".repeat(32), syncing: true })).toBe("loading");
     expect(feeFundingState({ assetId: policyAsset, syncing: true })).toBe("loading");
+  });
+
+  it("reuses two confirmed issuance outputs without requesting the faucet", async () => {
+    const first = txid("4");
+    const second = txid("5");
+    const snapshot = await discover({
+      dependencies: dependencies({
+        scans: (value) => {
+          if (value.source !== "wallet" || value.branch !== 0) return { hasActivity: false, utxos: [] };
+          if (value.index === 0) return { hasActivity: true, utxos: [listed(first, true)] };
+          if (value.index === 1) return { hasActivity: true, utxos: [listed(second, true)] };
+          return { hasActivity: false, utxos: [] };
+        },
+      }),
+    });
+
+    expect(issuanceFundingPlan({ snapshot, assetId: policyAsset })).toMatchObject({
+      confirmedOutputs: 2,
+      confirmedBalance: 10_000n,
+      ready: true,
+      projectedReady: true,
+      faucetOutputs: 0,
+    });
+  });
+
+  it("suppresses duplicate faucet requests for pending funding and requests only the missing shape", async () => {
+    const confirmed = txid("6");
+    const pending = txid("7");
+    const snapshot = await discover({
+      dependencies: dependencies({
+        scans: (value) => {
+          if (value.source !== "wallet" || value.branch !== 0) return { hasActivity: false, utxos: [] };
+          if (value.index === 0) return { hasActivity: true, utxos: [listed(confirmed, true)] };
+          if (value.index === 1) return { hasActivity: true, utxos: [listed(pending, false)] };
+          return { hasActivity: false, utxos: [] };
+        },
+      }),
+    });
+
+    expect(issuanceFundingPlan({ snapshot, assetId: policyAsset })).toMatchObject({
+      confirmedOutputs: 1,
+      pendingOutputs: 1,
+      ready: false,
+      projectedReady: true,
+      faucetOutputs: 0,
+    });
+    expect(issuanceFundingPlan({ snapshot, assetId: policyAsset, requiredAmount: 20_000n })).toMatchObject({
+      projectedReady: false,
+      faucetOutputs: 1,
+    });
   });
 
   it("restores the same fingerprint snapshot and isolates another mnemonic", async () => {

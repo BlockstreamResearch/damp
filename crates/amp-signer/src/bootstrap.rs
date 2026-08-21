@@ -16,13 +16,14 @@ use crate::blinding;
 use crate::keys::{blinding_public_key, derive_key_index, derive_xprv, xonly_from_xprv};
 use crate::model::{
     BootstrapRequest, BootstrapResult, CreateReceiveRecordRequest, OperationReview,
-    SIGNER_SDK_VERSION, SignerNetwork,
+    SIGNER_SDK_VERSION, SignerNetwork, WalletKeyLocator,
 };
 use crate::protocol::{Protocol, ProtocolConfig};
 use crate::receive;
 use crate::transaction::{
-    add_validated_input, add_wallet_metadata, decode_utxo, finalize_lwk_wallet_inputs,
-    parse_amount, set_lwk_genesis_hash, wallet_address,
+    add_validated_input, add_wallet_metadata, decode_confidential_wallet_utxo,
+    finalize_lwk_wallet_inputs, input_needs_confidential_change, parse_amount,
+    set_lwk_genesis_hash, wallet_address,
 };
 use lwk_signer::SwSigner;
 
@@ -54,7 +55,11 @@ pub fn bootstrap(
     let mut candidates = request
         .policy_utxos
         .iter()
-        .map(|utxo| decode_utxo(signer, utxo, policy_asset))
+        // Public Liquid faucets normally create fully confidential L-BTC
+        // outputs. Bootstrap has no Simplicity covenant input yet, so it can
+        // safely unblind and validate these wallet-owned inputs, then normalize
+        // its L-BTC change to the v0.1 explicit-asset form used thereafter.
+        .map(|utxo| decode_confidential_wallet_utxo(signer, utxo, policy_asset))
         .collect::<anyhow::Result<Vec<_>>>()?;
     candidates.sort_by(|left, right| {
         left.secrets
@@ -74,12 +79,26 @@ pub fn bootstrap(
             .checked_add(candidate.secrets.value)
             .context("policy input amount overflow")?;
         selected.push(candidate);
-        if selected.len() >= 2 && policy_total >= fee {
+        let required_total = fee
+            .checked_add(if selected.iter().any(input_needs_confidential_change) {
+                2
+            } else {
+                0
+            })
+            .context("bootstrap fee target overflow")?;
+        if selected.len() >= 2 && policy_total >= required_total {
             break;
         }
     }
+    let required_total = fee
+        .checked_add(if selected.iter().any(input_needs_confidential_change) {
+            2
+        } else {
+            0
+        })
+        .context("bootstrap fee target overflow")?;
     anyhow::ensure!(
-        selected.len() >= 2 && policy_total >= fee,
+        selected.len() >= 2 && policy_total >= required_total,
         "insufficient policy asset"
     );
     for utxo in &selected {
@@ -157,15 +176,13 @@ pub fn bootstrap(
     {
         let regulated_input = &mut pset.inputs_mut()[0];
         regulated_input.issuance_value_amount = Some(supply);
-        regulated_input.issuance_inflation_keys = Some(u64::from(matches!(
-            request.supply_mode,
-            SupplyMode::IssuerManaged
-        )));
+        regulated_input.issuance_inflation_keys =
+            matches!(request.supply_mode, SupplyMode::IssuerManaged).then_some(1);
         regulated_input.issuance_asset_entropy = Some(contract_hash.to_byte_array());
         regulated_input.blinded_issuance = Some(0);
         let verifier_input = &mut pset.inputs_mut()[1];
         verifier_input.issuance_value_amount = Some(1);
-        verifier_input.issuance_inflation_keys = Some(0);
+        verifier_input.issuance_inflation_keys = None;
         verifier_input.issuance_asset_entropy = Some(contract_hash.to_byte_array());
         verifier_input.blinded_issuance = Some(0);
     }
@@ -211,14 +228,58 @@ pub fn bootstrap(
     } else {
         None
     };
+    let mut value_only_outputs = holder_outputs;
+    let confidential_funding = selected.iter().any(|utxo| {
+        utxo.secrets.asset_bf != elements::confidential::AssetBlindingFactor::zero()
+            || utxo.secrets.value_bf != elements::confidential::ValueBlindingFactor::zero()
+    });
     let policy_change = policy_total - fee;
     if policy_change > 0 {
-        pset.add_output(Output::new_explicit(
-            token_address.script_pubkey(),
-            policy_change,
-            policy_asset,
-            None,
-        ));
+        if confidential_funding {
+            // A single value-only output can legitimately need a zero adaptive
+            // blinder (for example when its confidential inputs are equivalent
+            // to explicit commitments). Range proofs cannot encode a zero
+            // blinder. Split normalized L-BTC change across two internal wallet
+            // addresses so the first receives a fresh blinder and the second
+            // balances it. Both assets stay explicit as AMP v0.1 requires.
+            anyhow::ensure!(
+                policy_change >= 2,
+                "confidential bootstrap funding needs at least two sats of L-BTC change"
+            );
+            let first_value = policy_change / 2;
+            let change_values = [first_value, policy_change - first_value];
+            for (index, value) in change_values.into_iter().enumerate() {
+                let address = wallet_address(
+                    signer,
+                    &provisional,
+                    &WalletKeyLocator {
+                        branch: 1,
+                        index: u32::try_from(index)?,
+                    },
+                )?;
+                let index = pset.outputs().len();
+                pset.add_output(Output::new_explicit(
+                    address.script_pubkey(),
+                    value,
+                    policy_asset,
+                    Some(BitcoinPublicKey::new(
+                        address
+                            .blinding_pubkey
+                            .context("policy change address is not confidential")?,
+                    )),
+                ));
+                value_only_outputs.push(index);
+            }
+        } else {
+            pset.add_output(Output::new_explicit(
+                token_address.script_pubkey(),
+                policy_change,
+                policy_asset,
+                None,
+            ));
+        }
+    } else if confidential_funding {
+        anyhow::bail!("confidential bootstrap funding requires L-BTC change after the fee");
     }
     pset.add_output(Output::new_explicit(Script::new(), fee, policy_asset, None));
 
@@ -227,13 +288,15 @@ pub fn bootstrap(
         .enumerate()
         .map(|(index, utxo)| (index, utxo.secrets))
         .collect::<HashMap<usize, TxOutSecrets>>();
+    if !value_only_outputs.is_empty() {
+        blinding::blind_values(&mut pset, &secrets, &value_only_outputs)
+            .context("bootstrap value-only blinding failed")?;
+    }
     if let Some(index) = token_output {
+        // The fully confidential token is blinded last so its commitments can
+        // balance every earlier value-only output deterministically.
         blinding::blind_assets_and_values(&mut pset, &secrets, &[index])
             .context("bootstrap token blinding failed")?;
-    }
-    if !holder_outputs.is_empty() {
-        blinding::blind_values(&mut pset, &secrets, &holder_outputs)
-            .context("bootstrap holder-value blinding failed")?;
     }
     let mut wallet_indexes = Vec::new();
     for (index, utxo) in selected.iter().enumerate() {
@@ -242,7 +305,58 @@ pub fn bootstrap(
         wallet_indexes.push(index);
     }
     finalize_lwk_wallet_inputs(signer, &mut pset, &wallet_indexes)?;
-    let transaction = pset.extract_tx()?;
+    let extracted_transaction = pset.extract_tx()?;
+    let transaction: elements::Transaction =
+        elements::encode::deserialize(&elements::encode::serialize(&extracted_transaction))
+            .context("bootstrap transaction failed its canonical round trip")?;
+    let pset_surjection_domain = crate::blinding::canonical_surjection_inputs(&pset, &secrets)?
+        .into_iter()
+        .map(|input| {
+            input
+                .surjection_target(elements::secp256k1_zkp::SECP256K1)
+                .map(|target| target.0)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let transaction_surjection_domain = crate::transaction::transaction_surjection_domain(
+        &transaction,
+        &selected
+            .iter()
+            .map(|utxo| utxo.txout.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    anyhow::ensure!(
+        pset_surjection_domain == transaction_surjection_domain,
+        "bootstrap surjection domain changed during canonical serialization"
+    );
+    if let Some(index) = token_output {
+        anyhow::ensure!(
+            pset.outputs()[index].asset_comm == transaction.output[index].asset.commitment(),
+            "bootstrap token asset commitment changed during canonical serialization"
+        );
+        anyhow::ensure!(
+            pset.outputs()[index].asset_surjection_proof
+                == transaction.output[index].witness.surjection_proof,
+            "bootstrap token surjection proof changed during canonical serialization"
+        );
+    }
+    for (index, (pset_input, transaction_input)) in
+        pset.inputs().iter().zip(&transaction.input).enumerate()
+    {
+        if pset_input.has_issuance() {
+            anyhow::ensure!(
+                pset_input.issuance_ids() == transaction_input.issuance_ids(),
+                "bootstrap input {index} issuance IDs changed during canonical serialization"
+            );
+        }
+    }
+    crate::transaction::verify_transaction_amounts(
+        &transaction,
+        &selected
+            .iter()
+            .map(|utxo| utxo.txout.clone())
+            .collect::<Vec<_>>(),
+    )
+    .context("bootstrap transaction proof validation failed")?;
     let txid = transaction.txid().to_string();
     let mut deployment = provisional;
     deployment.genesis_anchor = format!("{txid}:0");

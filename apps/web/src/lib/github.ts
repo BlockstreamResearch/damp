@@ -1,6 +1,29 @@
 const registryRepository = (import.meta.env.VITE_GITHUB_REGISTRY_REPO as string | undefined) ?? "BlockstreamResearch/damp";
+const localRegistryBaseUrl = localDevelopmentRegistryUrl(
+  import.meta.env.DEV,
+  import.meta.env.VITE_LOCAL_REGISTRY_BASE_URL as string | undefined,
+);
 
-export const registryRepositoryUrl = `https://github.com/${registryRepository}`;
+export const registryRepositoryUrl = localRegistryBaseUrl ?? `https://github.com/${registryRepository}`;
+
+export function localDevelopmentRegistryUrl(development: boolean, configured: string | undefined) {
+  if (!development || !configured) return undefined;
+  const url = new URL(configured);
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
+    throw new Error("The development registry override must use a loopback host.");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("The development registry override must use HTTP or HTTPS.");
+  }
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/`;
+  return url.toString();
+}
+
+function assertRegistryPath(path: string) {
+  if (!/^(?:deployments\/[0-9a-f]{64}\.json|policies\/[0-9a-f]{64}\/[0-9a-f]{64}\.json)$/.test(path)) {
+    throw new Error("Invalid canonical registry path.");
+  }
+}
 
 export function canonicalRegistryContent(content: unknown) {
   return `${JSON.stringify(content, null, 2)}\n`;
@@ -20,6 +43,16 @@ export async function registryPathForVerifierScript(deploymentId: string, script
 }
 
 export async function fetchCanonicalRegistryFile(path: string, request: typeof fetch = fetch) {
+  assertRegistryPath(path);
+  if (localRegistryBaseUrl) {
+    const response = await request(new URL(path, localRegistryBaseUrl), {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (response.status === 404) return undefined;
+    if (!response.ok) throw new Error(`Local test registry fetch failed (${response.status}).`);
+    return response.text();
+  }
   const [owner, repository] = registryRepository.split("/");
   const repositoryResponse = await request(`https://api.github.com/repos/${owner}/${repository}`, {
     cache: "no-store",
@@ -59,4 +92,10 @@ export function downloadCanonicalRegistryFile(path: string, content: unknown) {
   link.click();
   URL.revokeObjectURL(url);
   return { filename, path };
+}
+
+export async function copyCanonicalRegistryFile(path: string, content: unknown) {
+  assertRegistryPath(path);
+  await navigator.clipboard.writeText(canonicalRegistryContent(content));
+  return { path };
 }

@@ -146,6 +146,20 @@ export function shortHash(value: string, start = 8, end = 6) {
   return `${value.slice(0, start)}…${value.slice(-end)}`;
 }
 
+export function userFacingError(error: unknown) {
+  if (error instanceof z.ZodError) {
+    const [first, ...remaining] = error.issues;
+    if (!first) return "Invalid data.";
+    const location = first.path.length > 0 ? ` at ${first.path.map(String).join(".")}` : "";
+    const detail = first.message.replace(/[.]$/, "");
+    const rest = remaining.length > 0
+      ? ` ${remaining.length} more validation error${remaining.length === 1 ? "" : "s"}.`
+      : "";
+    return `Invalid data${location}: ${detail}.${rest}`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function formatUnits(amount: bigint | string, precision: number) {
   const value = typeof amount === "string" ? BigInt(amount) : amount;
   const scale = 10n ** BigInt(precision);

@@ -73,7 +73,11 @@ and spends from bounded raw Waterfalls transactions before consulting Esplora.
 New Liquid testnet deployments derive two signer funding addresses and link
 them directly to the public L-BTC faucet. The native fee asset is selected by
 the network, while the regulated and verifier asset IDs are derived by the
-bootstrap issuance transaction. GitHub Pages builds read the public
+bootstrap issuance transaction. Bootstrap accepts ordinary fully confidential
+faucet outputs after signer-owned unblinding, then returns fee change as two
+internal wallet outputs whose L-BTC asset ID is explicit and whose values remain
+confidential. Those normalized outputs satisfy the stricter AMP input format for
+later transfers, policy updates, and reissuance. GitHub Pages builds read the public
 `VITE_GITHUB_REGISTRY_REPO` setting for read-only registry verification. Registry
 publication is intentionally manual: the app downloads canonical JSON, shows its
 exact repository path, and enables the next operation only after the byte-identical

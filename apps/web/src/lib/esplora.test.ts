@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AnchorConflictError, anchorChanged, requireFreshAnchor, traverseLiveAnchor } from "./esplora";
+import { AnchorConflictError, EsploraRequestError, anchorChanged, isRetryableEsploraRequest, requireFreshAnchor, traverseLiveAnchor } from "./esplora";
 
 const genesis = "1".repeat(64);
 const winner = "2".repeat(64);
@@ -87,5 +87,13 @@ describe("verifier anchor traversal", () => {
     await expect(requireFreshAnchor(deployment, expected, "https://node", request)).rejects.toBeInstanceOf(
       AnchorConflictError,
     );
+  });
+
+  it("retries only transient propagation and service failures", () => {
+    for (const status of [404, 408, 425, 429, 500, 503]) {
+      expect(isRetryableEsploraRequest(new EsploraRequestError(status, "https://node/tx/id"))).toBe(true);
+    }
+    expect(isRetryableEsploraRequest(new EsploraRequestError(400, "https://node/tx/id"))).toBe(false);
+    expect(isRetryableEsploraRequest(new Error("invalid anchor"))).toBe(false);
   });
 });

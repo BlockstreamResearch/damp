@@ -215,7 +215,12 @@ fn js_error(error: impl std::fmt::Display) -> JsError {
 }
 
 fn to_js_value(value: &impl Serialize) -> Result<JsValue, JsError> {
-    serde_wasm_bindgen::to_value(value).map_err(Into::into)
+    // Registry JSON distinguishes an explicit null parent from a missing field.
+    // Match serde_json at the WASM boundary instead of turning Option::None into
+    // JavaScript undefined, which strict consumers correctly reject.
+    value
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -227,9 +232,10 @@ mod tests {
         AssetMetadata, DeploymentNetwork, PROTOCOL_ID_V1, PolicySnapshotV1, REGISTRY_SCHEMA_V1,
         SupplyMode,
     };
-    use elements::confidential::{Asset, Nonce, Value};
+    use anyhow::Context;
+    use elements::confidential::{Asset, AssetBlindingFactor, Nonce, Value, ValueBlindingFactor};
     use elements::hashes::Hash as _;
-    use elements::{AssetId, Script, TxOut, TxOutWitness, Txid};
+    use elements::{Address, AssetId, Script, TxOut, TxOutSecrets, TxOutWitness, Txid};
 
     use super::*;
 
@@ -423,6 +429,248 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn bootstrap_accepts_confidential_lbtc_and_normalizes_explicit_asset_change()
+    -> anyhow::Result<()> {
+        let signer = SwSigner::new(MNEMONIC, false)?;
+        let network = SignerNetwork::ElementsRegtest;
+        let policy_asset = AssetId::from_str(&"aa".repeat(32))?;
+        let funding = vec![
+            confidential_funding_utxo(&signer, network, policy_asset, 100_000, 0)?,
+            confidential_funding_utxo(&signer, network, policy_asset, 100_000, 1)?,
+        ];
+        let decoded_funding = funding
+            .iter()
+            .map(|utxo| transaction::decode_confidential_wallet_utxo(&signer, utxo, policy_asset))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        assert!(decoded_funding.iter().all(|utxo| {
+            utxo.secrets.asset_bf != AssetBlindingFactor::zero()
+                && utxo.secrets.value_bf != ValueBlindingFactor::zero()
+        }));
+
+        let bootstrapped = bootstrap::bootstrap(
+            &signer,
+            network,
+            BootstrapRequest {
+                network: DeploymentNetwork::ElementsRegtest,
+                policy_asset: policy_asset.to_string(),
+                deployment_salt: "22".repeat(32),
+                asset: AssetMetadata {
+                    name: "Confidential funding test".to_owned(),
+                    ticker: "CFT".to_owned(),
+                    precision: 0,
+                },
+                issued_supply: "1000".to_owned(),
+                supply_mode: SupplyMode::IssuerManaged,
+                policy_utxos: funding.clone(),
+                fee: "2000".to_owned(),
+                required_confirmations: 1,
+                receive_alias: "holder".to_owned(),
+            },
+        )?;
+
+        let transaction: elements::Transaction =
+            elements::encode::deserialize(&hex::decode(&bootstrapped.transaction)?)?;
+        let (serialized_regulated_asset, serialized_token_asset) =
+            transaction.input[0].issuance_ids();
+        let (serialized_verifier_asset, _) = transaction.input[1].issuance_ids();
+        assert_eq!(
+            transaction.input[0].asset_issuance.inflation_keys,
+            Value::Explicit(1)
+        );
+        assert_eq!(
+            transaction.input[1].asset_issuance.inflation_keys,
+            Value::Null
+        );
+        assert_eq!(
+            serialized_regulated_asset.to_string(),
+            bootstrapped.deployment.regulated_asset
+        );
+        assert_eq!(
+            serialized_token_asset.to_string(),
+            bootstrapped.deployment.reissuance_token.clone().unwrap()
+        );
+        assert_eq!(
+            serialized_verifier_asset.to_string(),
+            bootstrapped.deployment.verifier_asset
+        );
+        let spent_outputs = transaction
+            .input
+            .iter()
+            .map(|input| {
+                let utxo = funding
+                    .iter()
+                    .find(|utxo| {
+                        utxo.txid == input.previous_output.txid.to_string()
+                            && utxo.vout == input.previous_output.vout
+                    })
+                    .context("transaction input is not one of the funding UTXOs")?;
+                let parent: elements::Transaction = elements::encode::deserialize(&hex::decode(
+                    utxo.transaction
+                        .as_deref()
+                        .context("missing funding transaction")?,
+                )?)?;
+                parent
+                    .output
+                    .get(utxo.vout as usize)
+                    .cloned()
+                    .context("missing funding output")
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        transaction::verify_transaction_amounts(&transaction, &spent_outputs)?;
+        let mut change_total = 0u64;
+        for (vout, index) in [(4, 0), (5, 1)] {
+            let change = transaction
+                .output
+                .get(vout as usize)
+                .context("missing normalized L-BTC change")?;
+            assert_eq!(change.asset.explicit(), Some(policy_asset));
+            assert!(matches!(change.value, Value::Confidential(_)));
+
+            let decoded = transaction::decode_utxo(
+                &signer,
+                &SpendableUtxo {
+                    txid: bootstrapped.txid.clone(),
+                    vout,
+                    tx_out: None,
+                    transaction: Some(bootstrapped.transaction.clone()),
+                    spendable: true,
+                    wallet_key: Some(WalletKeyLocator { branch: 1, index }),
+                    holder_key: None,
+                },
+                policy_asset,
+            )?;
+            change_total += decoded.secrets.value;
+            assert_eq!(decoded.secrets.asset_bf, AssetBlindingFactor::zero());
+            assert_ne!(decoded.secrets.value_bf, ValueBlindingFactor::zero());
+        }
+        assert_eq!(change_total, 198_000);
+
+        let transfer = transfer::sign_transfer(
+            &signer,
+            network,
+            TransferRequest {
+                deployment: bootstrapped.deployment.clone(),
+                current_policy: bootstrapped.initial_policy.clone(),
+                verifier_utxo: parent_utxo(
+                    &bootstrapped.txid,
+                    0,
+                    &bootstrapped.transaction,
+                    None,
+                    None,
+                ),
+                regulated_utxos: vec![parent_utxo(
+                    &bootstrapped.txid,
+                    1,
+                    &bootstrapped.transaction,
+                    None,
+                    Some(HolderKeyLocator {
+                        derivation_index: bootstrapped.holder_derivation_index,
+                        owner_public_key: bootstrapped
+                            .initial_receive_record
+                            .owner_public_key
+                            .clone(),
+                    }),
+                )],
+                fee_utxos: vec![parent_utxo(
+                    &bootstrapped.txid,
+                    4,
+                    &bootstrapped.transaction,
+                    Some(WalletKeyLocator {
+                        branch: 1,
+                        index: 0,
+                    }),
+                    None,
+                )],
+                recipient: bootstrapped.initial_receive_record,
+                amount: "600".to_owned(),
+                fee: "2000".to_owned(),
+            },
+        )?;
+        assert_eq!(transfer.operation, "transfer");
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_supply_bootstrap_uses_null_reissuance_fields() -> anyhow::Result<()> {
+        let signer = SwSigner::new(MNEMONIC, false)?;
+        let network = SignerNetwork::ElementsRegtest;
+        let policy_asset = AssetId::from_str(&"bb".repeat(32))?;
+        let funding = vec![
+            confidential_funding_utxo(&signer, network, policy_asset, 50_000, 0)?,
+            confidential_funding_utxo(&signer, network, policy_asset, 50_000, 1)?,
+        ];
+        let bootstrapped = bootstrap::bootstrap(
+            &signer,
+            network,
+            BootstrapRequest {
+                network: DeploymentNetwork::ElementsRegtest,
+                policy_asset: policy_asset.to_string(),
+                deployment_salt: "33".repeat(32),
+                asset: AssetMetadata {
+                    name: "Fixed supply test".to_owned(),
+                    ticker: "FIX".to_owned(),
+                    precision: 0,
+                },
+                issued_supply: "1000".to_owned(),
+                supply_mode: SupplyMode::Fixed,
+                policy_utxos: funding,
+                fee: "2000".to_owned(),
+                required_confirmations: 1,
+                receive_alias: "holder".to_owned(),
+            },
+        )?;
+        assert!(bootstrapped.deployment.reissuance_token.is_none());
+        assert!(bootstrapped.deployment.reissuance_entropy.is_none());
+        let transaction: elements::Transaction =
+            elements::encode::deserialize(&hex::decode(&bootstrapped.transaction)?)?;
+        assert_eq!(
+            transaction.input[0].asset_issuance.inflation_keys,
+            Value::Null
+        );
+        assert_eq!(
+            transaction.input[1].asset_issuance.inflation_keys,
+            Value::Null
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bootstrap_extends_confidential_selection_for_split_change() -> anyhow::Result<()> {
+        let signer = SwSigner::new(MNEMONIC, false)?;
+        let network = SignerNetwork::ElementsRegtest;
+        let policy_asset = AssetId::from_str(&"bc".repeat(32))?;
+        let funding = vec![
+            confidential_funding_utxo(&signer, network, policy_asset, 1_000, 0)?,
+            confidential_funding_utxo(&signer, network, policy_asset, 1_000, 1)?,
+            confidential_funding_utxo(&signer, network, policy_asset, 5_000, 2)?,
+        ];
+        let result = bootstrap::bootstrap(
+            &signer,
+            network,
+            BootstrapRequest {
+                network: DeploymentNetwork::ElementsRegtest,
+                policy_asset: policy_asset.to_string(),
+                deployment_salt: "44".repeat(32),
+                asset: AssetMetadata {
+                    name: "Confidential headroom test".to_owned(),
+                    ticker: "CHT".to_owned(),
+                    precision: 0,
+                },
+                issued_supply: "1000".to_owned(),
+                supply_mode: SupplyMode::Fixed,
+                policy_utxos: funding,
+                fee: "2000".to_owned(),
+                required_confirmations: 1,
+                receive_alias: "holder".to_owned(),
+            },
+        )?;
+        let transaction: elements::Transaction =
+            elements::encode::deserialize(&hex::decode(result.transaction)?)?;
+        assert_eq!(transaction.input.len(), 3);
+        Ok(())
+    }
+
     fn funding_utxo(
         signer: &SwSigner,
         network: SignerNetwork,
@@ -445,6 +693,51 @@ mod tests {
             vout: 0,
             tx_out: Some(hex::encode(elements::encode::serialize(&txout))),
             transaction: None,
+            spendable: true,
+            wallet_key: Some(WalletKeyLocator { branch: 0, index }),
+            holder_key: None,
+        })
+    }
+
+    fn confidential_funding_utxo(
+        signer: &SwSigner,
+        network: SignerNetwork,
+        asset: AssetId,
+        value: u64,
+        index: u32,
+    ) -> anyhow::Result<SpendableUtxo> {
+        let derived = keys::derive_wallet_address(signer, network, 0, index)?;
+        let address = Address::from_str(&derived.confidential_address)?;
+        let blinder = address
+            .blinding_pubkey
+            .context("derived address is not confidential")?;
+        let spent = [TxOutSecrets::new(
+            asset,
+            AssetBlindingFactor::zero(),
+            value,
+            ValueBlindingFactor::zero(),
+        )];
+        let (txout, _abf, _vbf, _ephemeral) = TxOut::new_last_confidential(
+            &mut rand::thread_rng(),
+            elements::secp256k1_zkp::SECP256K1,
+            value,
+            asset,
+            address.script_pubkey(),
+            blinder,
+            &spent,
+            &[],
+        )?;
+        let parent = elements::Transaction {
+            version: 2,
+            lock_time: elements::LockTime::ZERO,
+            input: Vec::new(),
+            output: vec![txout],
+        };
+        Ok(SpendableUtxo {
+            txid: parent.txid().to_string(),
+            vout: 0,
+            tx_out: None,
+            transaction: Some(hex::encode(elements::encode::serialize(&parent))),
             spendable: true,
             wallet_key: Some(WalletKeyLocator { branch: 0, index }),
             holder_key: None,

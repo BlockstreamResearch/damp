@@ -716,6 +716,64 @@ export function feeFundingState(input: {
   return "unfunded";
 }
 
+export type IssuanceFundingPlan = {
+  confirmedOutputs: number;
+  pendingOutputs: number;
+  confirmedBalance: bigint;
+  pendingBalance: bigint;
+  ready: boolean;
+  projectedReady: boolean;
+  faucetOutputs: number;
+};
+
+/**
+ * Summarizes the exact funding shape required by bootstrap. Issuance consumes
+ * two distinct L-BTC inputs, so a single large output is not sufficient. A
+ * pending output is included only when deciding whether another faucet request
+ * would be redundant; it never makes the signer-ready state true.
+ */
+export function issuanceFundingPlan(input: {
+  snapshot?: WalletSyncSnapshot;
+  assetId: string;
+  requiredOutputs?: number;
+  requiredAmount?: bigint;
+}): IssuanceFundingPlan {
+  const requiredOutputs = input.requiredOutputs ?? 2;
+  const requiredAmount = input.requiredAmount ?? 2_000n;
+  if (!Number.isSafeInteger(requiredOutputs) || requiredOutputs < 1) {
+    throw new Error("Issuance requires at least one funding output.");
+  }
+  if (requiredAmount < 0n) throw new Error("Issuance funding amount cannot be negative.");
+
+  const funding = (input.snapshot?.utxos ?? []).filter((utxo) =>
+    utxo.source === "wallet" && utxo.assetId === input.assetId
+  );
+  const confirmed = funding.filter((utxo) => utxo.status === "confirmed");
+  const pending = funding.filter((utxo) => utxo.status === "unconfirmed");
+  const confirmedBalance = confirmed.reduce((total, utxo) => total + BigInt(utxo.amount), 0n);
+  const pendingBalance = pending.reduce((total, utxo) => total + BigInt(utxo.amount), 0n);
+  const ready = confirmed.length >= requiredOutputs && confirmedBalance >= requiredAmount;
+  const projectedOutputs = confirmed.length + pending.length;
+  const projectedBalance = confirmedBalance + pendingBalance;
+  const projectedReady = projectedOutputs >= requiredOutputs && projectedBalance >= requiredAmount;
+  const faucetOutputs = projectedReady
+    ? 0
+    : Math.max(
+      Math.max(0, requiredOutputs - projectedOutputs),
+      projectedBalance < requiredAmount ? 1 : 0,
+    );
+
+  return {
+    confirmedOutputs: confirmed.length,
+    pendingOutputs: pending.length,
+    confirmedBalance,
+    pendingBalance,
+    ready,
+    projectedReady,
+    faucetOutputs,
+  };
+}
+
 export function nextFundingAddress(snapshot: WalletSyncSnapshot | undefined) {
   return snapshot?.addresses
     .filter((address): address is z.infer<typeof walletAddressSchema> => address.source === "wallet" && address.branch === 0 && !address.hasActivity)

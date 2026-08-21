@@ -1,11 +1,15 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use anyhow::Context;
+use elements::bitcoin::PublicKey as BitcoinPublicKey;
+use elements::confidential::{AssetBlindingFactor, ValueBlindingFactor};
 use elements::hashes::Hash as _;
 use elements::pset::{Output, PartiallySignedTransaction};
 use elements::secp256k1_zkp::{Keypair, Message};
-use elements::{AssetId, Script};
+use elements::{AssetId, Script, TxOutSecrets};
 
+use crate::blinding;
 use crate::keys::{derive_xprv, xonly_from_xprv};
 use crate::model::{
     OperationReview, PolicyUpdateRequest, SignedOperation, SignerNetwork, WalletKeyLocator,
@@ -14,7 +18,7 @@ use crate::policy::{prepare_policy, protocol_for_deployment};
 use crate::protocol::{AnchorBranch, Protocol};
 use crate::transaction::{
     add_validated_input, add_wallet_metadata, decode_utxo, finalize_lwk_wallet_inputs,
-    parse_amount, select_smallest_sufficient, set_lwk_genesis_hash, wallet_address,
+    parse_amount, select_fee_funding, set_lwk_genesis_hash, wallet_address,
 };
 use crate::transfer::finish;
 use lwk_signer::SwSigner;
@@ -93,11 +97,15 @@ pub fn sign_policy_update(
         .iter()
         .map(|utxo| decode_utxo(signer, utxo, policy_asset))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let selected_fees = select_smallest_sufficient(fee_candidates, fee, usize::MAX)?;
+    let selected_fees = select_fee_funding(fee_candidates, fee, usize::MAX, 1)?;
     let fee_total = selected_fees.iter().try_fold(0u64, |sum, utxo| {
         sum.checked_add(utxo.secrets.value)
             .context("fee amount overflow")
     })?;
+    let confidential_fee_funding = selected_fees.iter().any(|utxo| {
+        utxo.secrets.asset_bf != AssetBlindingFactor::zero()
+            || utxo.secrets.value_bf != ValueBlindingFactor::zero()
+    });
     let protocol = protocol_for_deployment(&request.deployment)?;
     let anchor = protocol.anchor(current)?;
     let successor_anchor = protocol.anchor(successor)?;
@@ -120,24 +128,47 @@ pub fn sign_policy_update(
         None,
     ));
     let fee_change = fee_total - fee;
+    let mut value_only_outputs = Vec::new();
     if fee_change > 0 {
         let locator = selected_fees
             .first()
             .and_then(|utxo| utxo.wallet_key.as_ref())
             .context("policy-asset change needs a wallet key locator")?;
         let change = wallet_address(signer, &request.deployment, locator)?;
+        let index = pset.outputs().len();
         pset.add_output(Output::new_explicit(
             change.script_pubkey(),
             fee_change,
             policy_asset,
-            None,
+            confidential_fee_funding
+                .then(|| {
+                    change
+                        .blinding_pubkey
+                        .context("policy-asset change address is not confidential")
+                        .map(BitcoinPublicKey::new)
+                })
+                .transpose()?,
         ));
+        if confidential_fee_funding {
+            value_only_outputs.push(index);
+        }
+    } else if confidential_fee_funding {
+        anyhow::bail!("confidential fee funding requires policy-asset change");
     }
     pset.add_output(Output::new_explicit(Script::new(), fee, policy_asset, None));
 
     let mut all_inputs = Vec::with_capacity(1 + selected_fees.len());
     all_inputs.push(verifier);
     all_inputs.extend(selected_fees);
+    if !value_only_outputs.is_empty() {
+        let secrets = all_inputs
+            .iter()
+            .enumerate()
+            .map(|(index, utxo)| (index, utxo.secrets))
+            .collect::<HashMap<usize, TxOutSecrets>>();
+        blinding::blind_values(&mut pset, &secrets, &value_only_outputs)
+            .context("policy-update fee-change blinding failed")?;
+    }
     let environment = anchor.environment(
         &pset,
         0,

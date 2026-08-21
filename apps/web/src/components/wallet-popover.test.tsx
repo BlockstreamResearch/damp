@@ -31,6 +31,13 @@ vi.mock("../lib/deployments", () => {
 });
 
 vi.mock("../lib/wallet-query", () => ({
+  useBaseWalletSync: () => state.wallet ?? {
+    data: undefined,
+    error: null,
+    isPending: false,
+    isFetching: false,
+    refetch,
+  },
   useDeploymentWalletSync: () => state.wallet ?? {
     data: undefined,
     error: null,
@@ -68,16 +75,35 @@ const connectedModel: WalletPopoverModel = {
   lbtcPending: "0.00002",
   otherAssets: [{ assetId: "22".repeat(32), label: "AMP", amount: "42", pending: "3" }],
   utxoCount: 3,
+  utxos: [{ outpoint: `${"33".repeat(32)}:1`, status: "confirmed", amount: "0.00012 L-BTC" }],
   receiveIndicator: "External #2 · tlq1qq…abc1234",
 };
 
 describe("AMP signer wallet popover content", () => {
   it("offers the existing connect action while disconnected", () => {
     const onConnect = vi.fn();
-    render(<WalletPopoverContent onConnect={onConnect} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    render(<WalletPopoverContent mnemonicInput="abandon ability" onConnect={onConnect} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
     expect(screen.getByRole("dialog", { name: "AMP signer wallet" })).toHaveTextContent("No signer connected");
     fireEvent.click(screen.getByRole("button", { name: "Connect signer" }));
-    expect(onConnect).toHaveBeenCalledOnce();
+    expect(onConnect).toHaveBeenCalledWith("abandon ability");
+  });
+
+  it("keeps signer connection progress and errors inside the accessible popover", () => {
+    const { rerender } = render(<WalletPopoverContent connecting connectionMessage="Opening the local Liquid testnet signer…" onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Connecting…" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Opening the local Liquid testnet signer…");
+
+    rerender(<WalletPopoverContent connectionMessage="Recovery phrase is invalid" onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Connect signer" })).toBeEnabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Recovery phrase is invalid");
+  });
+
+  it("offers a saved debug signer without putting its recovery phrase in the input", () => {
+    const onConnectSaved = vi.fn();
+    render(<WalletPopoverContent savedDebugSignerAvailable onConnect={vi.fn()} onConnectSaved={onConnectSaved} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    expect(screen.getByLabelText("Recovery phrase or NEW")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Connect saved debug signer" }));
+    expect(onConnectSaved).toHaveBeenCalledOnce();
   });
 
   it("shows synchronized balances, pending funds, assets, UTXOs, and a safe address indicator", () => {
@@ -91,6 +117,8 @@ describe("AMP signer wallet popover content", () => {
     expect(screen.getByText("42 + 3 pending")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.getByText(/External #2/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Current outputs (3)"));
+    expect(screen.getByText("0.00012 L-BTC")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     fireEvent.click(screen.getByRole("button", { name: /Disconnect/ }));
     expect(onRefresh).toHaveBeenCalledOnce();
@@ -112,6 +140,13 @@ describe("AMP signer wallet popover content", () => {
     expect(screen.getByText("Available L-BTC").parentElement).toHaveTextContent("0 L-BTC");
     expect(screen.queryByText(/pending/)).not.toBeInTheDocument();
   });
+
+  it("shows the base wallet before a deployment is selected", () => {
+    render(<WalletPopoverContent model={{ ...connectedModel, deploymentSelected: false, lbtcConfirmed: "0.00002", otherAssets: [] }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    expect(screen.getByText("Available L-BTC").parentElement).toHaveTextContent("0.00002 L-BTC");
+    expect(screen.getByText(/Base wallet synchronized/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Refresh/ })).toBeEnabled();
+  });
 });
 
 describe("AMP signer wallet popover interactions", () => {
@@ -128,7 +163,7 @@ describe("AMP signer wallet popover interactions", () => {
     const trigger = screen.getByRole("button", { name: "Open AMP Signer SDK connection" });
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog", { name: "AMP signer wallet" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect signer" })).toHaveFocus();
+    expect(screen.getByLabelText("Recovery phrase or NEW")).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "AMP signer wallet" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();

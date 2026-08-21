@@ -19,7 +19,7 @@ use crate::protocol::{AnchorBranch, Protocol};
 use crate::receive;
 use crate::transaction::{
     add_validated_input, add_wallet_metadata, decode_confidential_wallet_utxo, decode_utxo,
-    finalize_lwk_wallet_inputs, parse_amount, select_smallest_sufficient, set_lwk_genesis_hash,
+    finalize_lwk_wallet_inputs, parse_amount, select_fee_funding, set_lwk_genesis_hash,
     wallet_address,
 };
 use crate::transfer::finish;
@@ -106,11 +106,15 @@ pub fn reissue(
         .iter()
         .map(|utxo| decode_utxo(signer, utxo, policy_asset))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let selected_fees = select_smallest_sufficient(fee_candidates, fee, usize::MAX)?;
+    let selected_fees = select_fee_funding(fee_candidates, fee, usize::MAX, 1)?;
     let fee_total = selected_fees.iter().try_fold(0u64, |sum, utxo| {
         sum.checked_add(utxo.secrets.value)
             .context("fee amount overflow")
     })?;
+    let confidential_fee_funding = selected_fees.iter().any(|utxo| {
+        utxo.secrets.asset_bf != elements::confidential::AssetBlindingFactor::zero()
+            || utxo.secrets.value_bf != elements::confidential::ValueBlindingFactor::zero()
+    });
     let protocol = protocol_for_deployment(&request.deployment)?;
     let anchor = protocol.anchor(policy)?;
     let (_, issuer_xprv) = derive_xprv(signer, "issuer", request.issuer_derivation_index)?;
@@ -192,12 +196,25 @@ pub fn reissue(
             .and_then(|utxo| utxo.wallet_key.as_ref())
             .context("policy change needs a wallet key locator")?;
         let change = wallet_address(signer, &request.deployment, locator)?;
+        let index = pset.outputs().len();
         pset.add_output(Output::new_explicit(
             change.script_pubkey(),
             fee_change,
             policy_asset,
-            None,
+            confidential_fee_funding
+                .then(|| {
+                    change
+                        .blinding_pubkey
+                        .context("policy-asset change address is not confidential")
+                        .map(BitcoinPublicKey::new)
+                })
+                .transpose()?,
         ));
+        if confidential_fee_funding {
+            regulated_outputs.push(index);
+        }
+    } else if confidential_fee_funding {
+        anyhow::bail!("confidential fee funding requires policy-asset change");
     }
     pset.add_output(Output::new_explicit(Script::new(), fee, policy_asset, None));
 
@@ -210,12 +227,12 @@ pub fn reissue(
         .enumerate()
         .map(|(index, utxo)| (index, utxo.secrets))
         .collect::<HashMap<usize, TxOutSecrets>>();
-    blinding::blind_assets_and_values(&mut pset, &secrets, &[token_output])
-        .context("reissuance-token blinding failed")?;
     if !regulated_outputs.is_empty() {
         blinding::blind_values(&mut pset, &secrets, &regulated_outputs)
             .context("reissued holder-value blinding failed")?;
     }
+    blinding::blind_assets_and_values(&mut pset, &secrets, &[token_output])
+        .context("reissuance-token blinding failed")?;
 
     let environment = anchor.environment(
         &pset,

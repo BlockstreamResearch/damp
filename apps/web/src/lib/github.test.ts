@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   canonicalRegistryContent,
   deploymentRegistryPath,
+  localDevelopmentRegistryUrl,
   verifyCanonicalRegistryFile,
 } from "./github";
 
@@ -43,5 +44,13 @@ describe("manual registry publication", () => {
   it("rejects missing or byte-different files", async () => {
     await expect(verifyCanonicalRegistryFile(path, manifest, registryRequest())).rejects.toThrow("is not available");
     await expect(verifyCanonicalRegistryFile(path, manifest, registryRequest(JSON.stringify(manifest)))).rejects.toThrow("does not match");
+  });
+
+  it("allows registry overrides only for loopback development servers", () => {
+    expect(localDevelopmentRegistryUrl(true, "http://127.0.0.1:5173/registry")).toBe("http://127.0.0.1:5173/registry/");
+    expect(localDevelopmentRegistryUrl(true, "https://localhost:4443/registry/")).toBe("https://localhost:4443/registry/");
+    expect(localDevelopmentRegistryUrl(false, "http://127.0.0.1:5173/registry")).toBeUndefined();
+    expect(() => localDevelopmentRegistryUrl(true, "https://registry.example/amp")).toThrow("loopback host");
+    expect(() => localDevelopmentRegistryUrl(true, "file:///tmp/registry")).toThrow("loopback host");
   });
 });

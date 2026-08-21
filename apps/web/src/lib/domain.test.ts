@@ -6,6 +6,7 @@ import {
   parseUnits,
   receiveRecordSchema,
   smallestTreeDepth,
+  userFacingError,
 } from "./domain";
 
 const hash = "11".repeat(32);
@@ -79,5 +80,16 @@ describe("registry schemas", () => {
       proofAddress: "tex1" + "q".repeat(60),
       bip322Signature: "proof",
     })).toThrow();
+  });
+
+  it("turns strict schema failures into concise field-specific feedback", () => {
+    const parsed = deploymentManifestSchema.safeParse({});
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      const message = userFacingError(parsed.error);
+      expect(message).toMatch(/^Invalid data at schema:/);
+      expect(message).toMatch(/more validation errors\.$/);
+      expect(message).not.toContain('"code"');
+    }
   });
 });

@@ -47,6 +47,24 @@ export type AnchorTraversal = {
 
 export type EsploraRequest = typeof fetch;
 
+export class EsploraRequestError extends Error {
+  readonly status: number;
+  readonly url: string;
+
+  constructor(status: number, url: string) {
+    super(`Esplora request failed (${status}) for ${url}.`);
+    this.name = "EsploraRequestError";
+    this.status = status;
+    this.url = url;
+  }
+}
+
+export function isRetryableEsploraRequest(error: unknown) {
+  return error instanceof EsploraRequestError
+    && (error.status === 404 || error.status === 408 || error.status === 425
+      || error.status === 429 || error.status >= 500);
+}
+
 export class AnchorConflictError extends Error {
   readonly winningAnchor: AnchorTraversal;
 
@@ -165,13 +183,13 @@ function confirmationsAtTip(status: z.infer<typeof transactionStatusSchema>, tip
 
 async function getJson(request: EsploraRequest, url: string): Promise<unknown> {
   const response = await request(url, { cache: "no-store", headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`Esplora request failed (${response.status}) for ${url}.`);
+  if (!response.ok) throw new EsploraRequestError(response.status, url);
   return response.json();
 }
 
 async function getTextNumber(request: EsploraRequest, url: string): Promise<number> {
   const response = await request(url, { cache: "no-store", headers: { Accept: "text/plain" } });
-  if (!response.ok) throw new Error(`Esplora request failed (${response.status}) for ${url}.`);
+  if (!response.ok) throw new EsploraRequestError(response.status, url);
   const value = Number(await response.text());
   if (!Number.isSafeInteger(value) || value < 0) throw new Error("Esplora returned an invalid chain height.");
   return value;

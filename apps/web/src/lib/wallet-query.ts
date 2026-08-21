@@ -25,7 +25,10 @@ export function useDeploymentWalletSync(deployment: Deployment | null | undefine
   const persisted = useQuery({
     queryKey: walletSyncQueryKeys.persisted(fingerprint ?? "disconnected", network, scope),
     enabled,
-    queryFn: () => loadWalletSyncSnapshot(fingerprint!, network, scope),
+    // React Query reserves `undefined` for a missing query result. IndexedDB
+    // legitimately returns no snapshot on a first connection, so represent the
+    // cache miss as null and let the live synchronization start normally.
+    queryFn: async () => (await loadWalletSyncSnapshot(fingerprint!, network, scope)) ?? null,
     staleTime: Number.POSITIVE_INFINITY,
   });
   return useQuery({
@@ -49,7 +52,7 @@ export function useBaseWalletSync(input: {
   const persisted = useQuery({
     queryKey: walletSyncQueryKeys.persisted(fingerprint, network, "base"),
     enabled,
-    queryFn: () => loadWalletSyncSnapshot(fingerprint, network, "base"),
+    queryFn: async () => (await loadWalletSyncSnapshot(fingerprint, network, "base")) ?? null,
     staleTime: Number.POSITIVE_INFINITY,
   });
   return useQuery({

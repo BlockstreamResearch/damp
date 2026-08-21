@@ -20,8 +20,8 @@ use crate::protocol::{AnchorBranch, MAX_REGULATED_INPUTS, Protocol};
 use crate::receive;
 use crate::transaction::{
     ValidatedUtxo, add_validated_input, add_wallet_metadata, decode_utxo,
-    finalize_lwk_wallet_inputs, parse_amount, select_smallest_sufficient, set_lwk_genesis_hash,
-    wallet_address,
+    finalize_lwk_wallet_inputs, parse_amount, select_fee_funding, select_smallest_sufficient,
+    set_lwk_genesis_hash, wallet_address,
 };
 use lwk_signer::SwSigner;
 
@@ -93,8 +93,12 @@ pub fn sign_transfer(
     // The verifier budget is measured for one ordinary policy-asset input in
     // addition to the anchor and regulated inputs. Requiring one sufficiently
     // large fee UTXO keeps the transaction shape deterministic.
-    let selected_fees = select_smallest_sufficient(fee_candidates, fee, 1)?;
+    let selected_fees = select_fee_funding(fee_candidates, fee, 1, 1)?;
     let fee_total = checked_sum(&selected_fees)?;
+    let confidential_fee_funding = selected_fees.iter().any(|utxo| {
+        utxo.secrets.asset_bf != elements::confidential::AssetBlindingFactor::zero()
+            || utxo.secrets.value_bf != elements::confidential::ValueBlindingFactor::zero()
+    });
 
     let protocol = protocol_for_deployment(&request.deployment)?;
     let anchor = protocol.anchor(policy)?;
@@ -155,12 +159,25 @@ pub fn sign_transfer(
             .and_then(|utxo| utxo.wallet_key.as_ref())
             .context("policy-asset change needs a wallet key locator")?;
         let change = wallet_address(signer, &request.deployment, locator)?;
+        let index = pset.outputs().len();
         pset.add_output(Output::new_explicit(
             change.script_pubkey(),
             fee_change,
             policy_asset,
-            None,
+            confidential_fee_funding
+                .then(|| {
+                    change
+                        .blinding_pubkey
+                        .context("policy-asset change address is not confidential")
+                        .map(BitcoinPublicKey::new)
+                })
+                .transpose()?,
         ));
+        if confidential_fee_funding {
+            confidential_outputs.push(index);
+        }
+    } else if confidential_fee_funding {
+        anyhow::bail!("confidential fee funding requires policy-asset change");
     }
     pset.add_output(Output::new_explicit(Script::new(), fee, policy_asset, None));
     anyhow::ensure!(recipients.len() <= 10, "too many regulated outputs");
@@ -293,7 +310,20 @@ pub fn finish(
     pset: PartiallySignedTransaction,
     review: OperationReview,
 ) -> anyhow::Result<SignedOperation> {
+    let spent_utxos = pset
+        .inputs()
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            input
+                .witness_utxo
+                .clone()
+                .with_context(|| format!("input {index} is missing its spent output"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let transaction = pset.extract_tx()?;
+    crate::transaction::verify_transaction_amounts(&transaction, &spent_utxos)
+        .with_context(|| format!("{} transaction proof validation failed", review.operation))?;
     Ok(SignedOperation {
         sdk: SIGNER_SDK_VERSION,
         operation: review.operation,
