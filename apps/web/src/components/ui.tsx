@@ -33,13 +33,13 @@ import {
   useDeployments,
   useSelectDeployment,
 } from "../lib/deployments";
-import { activeNavigationTarget, appRoleForPath } from "../lib/navigation";
-import { formatUnits, shortHash } from "../lib/domain";
-import { useBaseWalletSync, useDeploymentWalletSync } from "../lib/wallet-query";
-import { assetBalances, nextFundingAddress } from "../lib/wallet-sync";
-import { nativeFeeAssetId } from "../lib/faucet";
+import { activeNavigationTarget, appRoleForPath, contextualDocumentTitle } from "../lib/navigation";
+import { formatUnits, networkLabel, shortHash } from "../lib/domain";
+import { useBaseWalletSync, useDeploymentWalletSync, walletSyncPresentation } from "../lib/wallet-query";
+import { assetBalances, feeFundingState, nextFundingAddress } from "../lib/wallet-sync";
+import { liquidTestnetFaucetUrl, nativeFeeAssetId } from "../lib/faucet";
 
-export function Brand({ tone }: { tone: "holder" | "issuer" }) {
+export function Brand({ tone, network }: { tone: "holder" | "issuer"; network: string }) {
   return (
     <div className="brand">
       <span className={`brand-mark ${tone}`} aria-hidden="true">
@@ -49,7 +49,7 @@ export function Brand({ tone }: { tone: "holder" | "issuer" }) {
       </span>
       <span className="brand-copy">
         <strong>Simplicity AMP</strong>
-        <small>Liquid testnet</small>
+        <small>{network}</small>
       </span>
     </div>
   );
@@ -83,12 +83,19 @@ export function AppShell({
   const path = useRouterState({ select: (state) => state.location.pathname });
   const role = appRoleForPath(path);
   if (!role) throw new Error(`Route ${path} does not belong to an application shell.`);
+  const deployment = useActiveDeployment();
+  const signer = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
+  const currentNetwork = deployment.data?.network ?? signer.network;
+  const currentNetworkLabel = currentNetwork ? networkLabel(currentNetwork) : "Network not selected";
   const nav = role === "holder" ? holderNav : issuerNav;
   const activeTarget = activeNavigationTarget(path, nav);
+  useEffect(() => {
+    document.title = contextualDocumentTitle(title);
+  }, [title]);
   return (
     <div className={`app-shell ${role}`}>
       <aside className="side-rail">
-        <Brand tone={role} />
+        <Brand tone={role} network={currentNetworkLabel} />
         <nav aria-label={`${role} navigation`}>
           {nav.map((item) => {
             const Icon = item.icon;
@@ -110,9 +117,9 @@ export function AppShell({
         </nav>
         <div className="rail-bottom">
           <DeploymentSelector />
-          <span className="network-status" aria-label="Liquid testnet network">
+          <span className="network-status" aria-label={`${currentNetworkLabel} network`}>
             <span className="network-dot" aria-hidden="true" />
-            <span className="network-label">Liquid testnet</span>
+            <span className="network-label">{currentNetworkLabel}</span>
           </span>
           <a href="https://github.com/BlockstreamResearch/damp" target="_blank" rel="noreferrer">
             <BookOpen size={15} /> Protocol source
@@ -129,7 +136,7 @@ export function AppShell({
             <span className="eyebrow">{eyebrow}</span>
             <h1>{title}</h1>
           </div>
-          <div className="header-action">{action ?? <WalletStatus />}</div>
+          <div className="header-action">{action ?? <WalletStatus role={role} />}</div>
         </header>
         <div className="page-body"><div className="responsive-deployment-selector"><DeploymentSelector /></div>{children}</div>
       </main>
@@ -160,10 +167,14 @@ function DeploymentSelector() {
   );
 }
 
-export function WalletStatus() {
+export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" } = {}) {
   const signer = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
   const deployment = useActiveDeployment();
-  const deploymentWallet = useDeploymentWalletSync(deployment.data, signer.connected ? signer.fingerprint : undefined);
+  const signerMatchesDeployment = !deployment.data || signer.network === deployment.data.network;
+  const deploymentWallet = useDeploymentWalletSync(
+    deployment.data,
+    signer.connected && signerMatchesDeployment ? signer.fingerprint : undefined,
+  );
   const baseWallet = useBaseWalletSync({
     fingerprint: signer.connected && !deployment.data ? signer.fingerprint : undefined,
     network: signer.network,
@@ -172,7 +183,10 @@ export function WalletStatus() {
   const wallet = deployment.data ? deploymentWallet : baseWallet;
   const [open, setOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [connectionMessage, setConnectionMessage] = useState<string>();
+  const [connectionNotice, setConnectionNotice] = useState<WalletPopoverNotice>();
+  const [connectionNetwork, setConnectionNetwork] = useState<"liquid-testnet" | "elements-regtest">(
+    deployment.data?.network ?? "liquid-testnet",
+  );
   const [mnemonicInput, setMnemonicInput] = useState("");
   const [savedDebugSignerAvailable, setSavedDebugSignerAvailable] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -184,22 +198,47 @@ export function WalletStatus() {
     const selected = deployment.data;
     const snapshot = wallet.data?.snapshot;
     const balances = assetBalances(snapshot);
-    const feeAsset = selected?.policyAsset ?? (signer.network ? nativeFeeAssetId(signer.network) : undefined);
+    let feeAsset = selected?.policyAsset;
+    let feeAssetError: string | undefined;
+    if (!feeAsset && signer.network) {
+      try {
+        feeAsset = nativeFeeAssetId(signer.network);
+      } catch (error) {
+        feeAssetError = error instanceof Error ? error.message : String(error);
+      }
+    }
     const lbtc = balances.find((balance) => balance.assetId === feeAsset);
     const other = balances.filter((balance) => balance.assetId !== feeAsset);
-    const syncError = wallet.data?.syncError ?? (wallet.error instanceof Error ? wallet.error.message : undefined);
+    const networkError = selected && signer.network !== selected.network
+      ? `Reconnect the AMP signer for ${networkLabel(selected.network)}.`
+      : undefined;
+    const syncError = networkError
+      ?? feeAssetError
+      ?? wallet.data?.syncError
+      ?? (wallet.error instanceof Error ? wallet.error.message : undefined);
+    const presentation = walletSyncPresentation({
+      connected: true,
+      snapshot,
+      pending: wallet.isPending,
+      fetching: wallet.isFetching,
+      error: networkError || feeAssetError ? new Error(networkError ?? feeAssetError!) : wallet.error,
+      syncError: wallet.data?.syncError,
+    });
     const funding = nextFundingAddress(snapshot);
+    const fundingState = feeAsset ? feeFundingState({
+      snapshot,
+      assetId: feeAsset,
+      minimum: 1_500n,
+      syncing: wallet.isFetching || wallet.isPending,
+      syncError,
+    }) : "loading";
     return {
+      role,
       fingerprint: signer.fingerprint,
-      network: signer.network === "liquid-testnet" ? "Liquid testnet" : "Elements regtest",
+      network: signer.network ? networkLabel(signer.network) : "Network unavailable",
       deploymentSelected: Boolean(selected),
-      syncState: syncError
-          ? "error"
-          : wallet.isPending && !snapshot
-            ? "loading"
-            : wallet.isFetching
-              ? "syncing"
-              : "synced",
+      hasSnapshot: presentation.hasSnapshot,
+      syncState: presentation.state === "stale" ? "stale" : presentation.state === "disconnected" ? "idle" : presentation.state,
       syncError,
       lbtcConfirmed: formatUnits(lbtc?.confirmed ?? 0n, 8),
       lbtcPending: formatUnits(lbtc?.pending ?? 0n, 8),
@@ -227,12 +266,22 @@ export function WalletStatus() {
       receiveIndicator: funding
         ? `External #${funding.index} · ${shortHash(funding.confidentialAddress, 11, 7)}`
         : undefined,
+      faucetUrl: signer.network === "liquid-testnet"
+        && presentation.state === "synced"
+        && fundingState === "unfunded"
+        && funding
+        ? liquidTestnetFaucetUrl(funding.confidentialAddress)
+        : undefined,
     };
-  }, [deployment.data, signer, wallet.data, wallet.error, wallet.isFetching, wallet.isPending]);
+  }, [deployment.data, role, signer, wallet.data, wallet.error, wallet.isFetching, wallet.isPending]);
+
+  useEffect(() => {
+    if (!signer.connected && deployment.data?.network) setConnectionNetwork(deployment.data.network);
+  }, [deployment.data?.network, signer.connected]);
 
   useEffect(() => {
     if (!open) return;
-    const firstAction = panelRef.current?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)");
+    const firstAction = panelRef.current?.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled), button:not(:disabled), a[href]");
     (firstAction ?? panelRef.current)?.focus();
     const dismiss = (event: PointerEvent) => {
       if (containerRef.current?.contains(event.target as Node)) return;
@@ -260,8 +309,10 @@ export function WalletStatus() {
     setSavedDebugSignerAvailable(Boolean(loadDebugMnemonic()));
   }, [open, signer.connected]);
 
-  async function connect(input: string) {
-    const network = deployment.data?.network ?? "liquid-testnet";
+  async function connect(input: string, network: "liquid-testnet" | "elements-regtest") {
+    if (deployment.data && deployment.data.network !== network) {
+      throw new Error(`This deployment requires ${networkLabel(deployment.data.network)}.`);
+    }
     const normalized = input.trim();
     if (!normalized) throw new Error("Enter a recovery phrase, or type NEW for an unencrypted debug signer.");
     let mnemonic = normalized;
@@ -275,14 +326,16 @@ export function WalletStatus() {
 
   async function connectFromPopover(input: string) {
     setConnecting(true);
-    setConnectionMessage("Opening the local Liquid testnet signer…");
+    setConnectionNotice({ tone: "progress", message: `Opening the local ${networkLabel(connectionNetwork)} signer…` });
     try {
-      const generated = await connect(input);
+      const generated = await connect(input, connectionNetwork);
       setMnemonicInput("");
       if (generated) setSavedDebugSignerAvailable(true);
-      setConnectionMessage(generated ? "A new debug signer was generated and saved unencrypted in this browser." : undefined);
+      setConnectionNotice(generated
+        ? { tone: "success", message: "A new debug signer was generated and saved unencrypted in this browser." }
+        : { tone: "success", message: "Signer connected. Wallet discovery has started." });
     } catch (error) {
-      setConnectionMessage(error instanceof Error ? error.message : String(error));
+      setConnectionNotice({ tone: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
       setConnecting(false);
     }
@@ -292,7 +345,7 @@ export function WalletStatus() {
     const saved = loadDebugMnemonic();
     if (!saved) {
       setSavedDebugSignerAvailable(false);
-      setConnectionMessage("No saved debug signer is available in this browser.");
+      setConnectionNotice({ tone: "error", message: "No saved debug signer is available in this browser." });
       return;
     }
     await connectFromPopover(saved);
@@ -319,17 +372,29 @@ export function WalletStatus() {
       {open && (
         <WalletPopoverContent
           panelRef={panelRef}
+          role={role}
           model={model}
           connecting={connecting}
-          connectionMessage={connectionMessage}
+          connectionNotice={connectionNotice}
+          connectionNetwork={connectionNetwork}
+          connectionNetworkLocked={Boolean(deployment.data)}
           mnemonicInput={mnemonicInput}
           savedDebugSignerAvailable={savedDebugSignerAvailable}
           onMnemonicInput={setMnemonicInput}
+          onConnectionNetwork={setConnectionNetwork}
           onConnect={(input) => void connectFromPopover(input)}
           onConnectSaved={() => void connectSavedDebugSigner()}
-          onRefresh={() => wallet.refetch()}
+          onRefresh={() => {
+            if (signerMatchesDeployment) void wallet.refetch();
+            else setConnectionNotice({ tone: "error", message: `Reconnect the AMP signer for ${networkLabel(deployment.data!.network)}.` });
+          }}
+          onFaucetOpened={() => setConnectionNotice({
+            tone: "neutral",
+            message: "Liquid testnet faucet opened. Refresh after funding arrives.",
+          })}
           onDisconnect={() => {
             disconnectSigner();
+            setConnectionNotice(undefined);
             setOpen(false);
             triggerRef.current?.focus();
           }}
@@ -340,10 +405,12 @@ export function WalletStatus() {
 }
 
 export type WalletPopoverModel = {
+  role?: "holder" | "issuer";
   fingerprint: string;
   network: string;
   deploymentSelected: boolean;
-  syncState: "idle" | "loading" | "syncing" | "synced" | "error";
+  hasSnapshot?: boolean;
+  syncState: "idle" | "loading" | "syncing" | "synced" | "stale" | "error";
   syncError?: string;
   lbtcConfirmed: string;
   lbtcPending: string;
@@ -351,46 +418,64 @@ export type WalletPopoverModel = {
   utxoCount: number;
   utxos: Array<{ outpoint: string; status: "confirmed" | "unconfirmed" | "spent" | "orphaned"; amount: string }>;
   receiveIndicator?: string;
+  faucetUrl?: string;
+};
+
+export type WalletPopoverNotice = {
+  tone: "neutral" | "progress" | "success" | "error";
+  message: string;
 };
 
 export function WalletPopoverContent({
   panelRef,
   model,
+  role = model?.role ?? "holder",
   onConnect,
   onRefresh,
   onDisconnect,
   connecting = false,
-  connectionMessage,
+  connectionNotice,
+  connectionNetwork = "liquid-testnet",
+  connectionNetworkLocked = false,
   mnemonicInput = "",
   savedDebugSignerAvailable = false,
   onMnemonicInput = () => undefined,
+  onConnectionNetwork = () => undefined,
   onConnectSaved = () => undefined,
+  onFaucetOpened = () => undefined,
 }: {
   panelRef?: RefObject<HTMLDivElement | null>;
+  role?: "holder" | "issuer";
   model?: WalletPopoverModel;
   onConnect: (mnemonic: string) => void;
   onRefresh: () => void;
   onDisconnect: () => void;
   connecting?: boolean;
-  connectionMessage?: string;
+  connectionNotice?: WalletPopoverNotice;
+  connectionNetwork?: "liquid-testnet" | "elements-regtest";
+  connectionNetworkLocked?: boolean;
   mnemonicInput?: string;
   savedDebugSignerAvailable?: boolean;
   onMnemonicInput?: (value: string) => void;
+  onConnectionNetwork?: (value: "liquid-testnet" | "elements-regtest") => void;
   onConnectSaved?: () => void;
+  onFaucetOpened?: () => void;
 }) {
   if (!model) {
     return (
-      <div id="amp-signer-wallet-popover" className="wallet-popover" role="dialog" aria-label="AMP signer wallet" tabIndex={-1} ref={panelRef}>
+      <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="AMP signer wallet" tabIndex={-1} ref={panelRef}>
         <span className="overline">AMP Signer SDK</span>
         <h2>No signer connected</h2>
-        <p>Connect a recovery phrase to discover this wallet’s Liquid testnet balances.</p>
+        <p>Choose the intended test network, then connect a recovery phrase to discover its wallet balances.</p>
         <form className="wallet-connect-form" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}>
+          <label>Network<select aria-label="Signer network" disabled={connecting || connectionNetworkLocked} value={connectionNetwork} onChange={(event) => onConnectionNetwork(event.target.value as "liquid-testnet" | "elements-regtest")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label>
+          {connectionNetworkLocked && <small>This deployment locks the signer network to {networkLabel(connectionNetwork)}.</small>}
           <label>Recovery phrase or NEW<input aria-describedby="wallet-connect-help" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label>
           <small id="wallet-connect-help">Existing phrases stay in signer memory only. NEW is saved unencrypted for explicit local debugging.</small>
           <button className="button primary wide" type="submit" disabled={connecting}>{connecting ? "Connecting…" : "Connect signer"}</button>
           {savedDebugSignerAvailable && <button className="button secondary wide" type="button" disabled={connecting} onClick={onConnectSaved}>Connect saved debug signer</button>}
         </form>
-        {connectionMessage && <p className="wallet-popover-error" role="status" aria-live="polite">{connectionMessage}</p>}
+        {connectionNotice && <p className={`wallet-popover-status ${connectionNotice.tone}`} role="status" aria-live="polite">{connectionNotice.message}</p>}
       </div>
     );
   }
@@ -400,11 +485,12 @@ export function WalletPopoverContent({
     loading: "Loading wallet",
     syncing: "Syncing",
     synced: "Synced",
+    stale: "Last good state",
     error: "Sync error",
   }[model.syncState];
 
   return (
-    <div id="amp-signer-wallet-popover" className="wallet-popover" role="dialog" aria-label="AMP signer wallet" tabIndex={-1} ref={panelRef}>
+    <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="AMP signer wallet" tabIndex={-1} ref={panelRef}>
       <div className="wallet-popover-heading">
         <div>
           <span className="overline">AMP Signer SDK</span>
@@ -419,8 +505,7 @@ export function WalletPopoverContent({
       <>
           <div className="wallet-popover-balance">
             <span>Available L-BTC</span>
-            <strong>{model.lbtcConfirmed} <small>L-BTC</small></strong>
-            {model.lbtcPending !== "0" && <small>+ {model.lbtcPending} pending</small>}
+            {model.hasSnapshot !== false ? <><strong>{model.lbtcConfirmed} <small>L-BTC</small></strong>{model.lbtcPending !== "0" && <small>+ {model.lbtcPending} pending</small>}</> : <strong className="wallet-balance-unknown">Balance unavailable</strong>}
           </div>
           {model.otherAssets.length > 0 && (
             <div className="wallet-popover-assets" aria-label="Other asset balances">
@@ -438,6 +523,8 @@ export function WalletPopoverContent({
           {!model.deploymentSelected && <p>Base wallet synchronized. Select or create a deployment to discover deployment-bound assets.</p>}
       </>
       {model.syncError && <p className="wallet-popover-error" role="status">{model.syncError}</p>}
+      {model.faucetUrl && <div className="wallet-popover-faucet"><p>The public testnet receive address will be sent to liquidtestnet.com.</p><a className="button secondary wide" href={model.faucetUrl} target="_blank" rel="noreferrer" onClick={onFaucetOpened}>Get testnet L-BTC <ExternalLink size={14} /></a></div>}
+      {connectionNotice && <p className={`wallet-popover-status ${connectionNotice.tone}`} role="status" aria-live="polite">{connectionNotice.message}</p>}
       <div className="wallet-popover-actions">
         <button className="button secondary" type="button" onClick={onRefresh} disabled={model.syncState === "loading" || model.syncState === "syncing"}>
           <RefreshCw size={14} /> Refresh

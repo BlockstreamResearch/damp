@@ -85,6 +85,32 @@ export async function putDraft<T>(deploymentId: string, name: string, value: T) 
   return (await database).put("drafts", value, `${deploymentId}:${name}`);
 }
 
+export async function deleteDraft(deploymentId: string, name: string) {
+  return (await database).delete("drafts", `${deploymentId}:${name}`);
+}
+
+export async function putTxidKeyedReceipt<T extends { txid: string }>(
+  deploymentId: string,
+  operation: string,
+  receipt: T,
+) {
+  const db = await database;
+  const transaction = db.transaction("drafts", "readwrite");
+  await Promise.all([
+    transaction.store.put(receipt, `${deploymentId}:receipt:${operation}:${receipt.txid}`),
+    transaction.store.put(receipt, `${deploymentId}:receipt:${operation}:latest`),
+  ]);
+  await transaction.done;
+}
+
+export async function getLatestReceipt<T>(deploymentId: string, operation: string): Promise<T | undefined> {
+  return (await database).get("drafts", `${deploymentId}:receipt:${operation}:latest`);
+}
+
+export async function clearLatestReceipt(deploymentId: string, operation: string) {
+  return (await database).delete("drafts", `${deploymentId}:receipt:${operation}:latest`);
+}
+
 export async function getCachedRecord<T>(key: string): Promise<T | undefined> {
   return (await database).get("caches", key);
 }

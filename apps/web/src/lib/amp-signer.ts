@@ -190,8 +190,12 @@ export async function deriveWalletAddress(
   return requireSigner(network).deriveWalletAddress(branch, index) as DerivedWalletAddress;
 }
 
-export async function deriveAmpKey(deploymentSalt: string, role: "holder" | "issuer") {
-  return requireSigner().deriveAmpKey(deploymentSalt, role) as {
+export async function deriveAmpKey(
+  deploymentSalt: string,
+  role: "holder" | "issuer",
+  network?: SignerNetwork,
+) {
+  return requireSigner(network).deriveAmpKey(deploymentSalt, role) as {
     sdk: string;
     derivationIndex: number;
     derivationPath: string;

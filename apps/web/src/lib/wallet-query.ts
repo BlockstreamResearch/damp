@@ -18,6 +18,39 @@ export const walletSyncQueryKeys = {
 
 export type WalletSyncResult = { snapshot: WalletSyncSnapshot; syncError?: string };
 
+export type WalletSyncPresentation = {
+  state: "disconnected" | "loading" | "syncing" | "synced" | "stale" | "error";
+  hasSnapshot: boolean;
+  message?: string;
+};
+
+export function walletSyncPresentation(input: {
+  connected: boolean;
+  snapshot?: WalletSyncSnapshot;
+  pending?: boolean;
+  fetching?: boolean;
+  error?: unknown;
+  syncError?: string;
+}): WalletSyncPresentation {
+  if (!input.connected) return { state: "disconnected", hasSnapshot: false };
+  const hasSnapshot = Boolean(input.snapshot);
+  const message = input.syncError
+    ?? (input.error instanceof Error ? input.error.message : input.error ? String(input.error) : undefined);
+  if (message) {
+    return { state: hasSnapshot ? "stale" : "error", hasSnapshot, message };
+  }
+  if (!hasSnapshot && (input.pending || input.fetching)) return { state: "loading", hasSnapshot: false };
+  if (!hasSnapshot) {
+    return {
+      state: "error",
+      hasSnapshot: false,
+      message: "Wallet synchronization did not produce a verified snapshot.",
+    };
+  }
+  if (input.fetching) return { state: "syncing", hasSnapshot: true };
+  return { state: "synced", hasSnapshot: true };
+}
+
 export function useDeploymentWalletSync(deployment: Deployment | null | undefined, fingerprint?: string) {
   const enabled = Boolean(deployment && fingerprint);
   const network = deployment?.network ?? "liquid-testnet";

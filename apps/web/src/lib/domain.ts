@@ -62,6 +62,22 @@ export const localDeploymentSchema = deploymentManifestSchema.extend({
 
 export type Deployment = z.infer<typeof localDeploymentSchema>;
 
+export function networkLabel(network: DeploymentManifest["network"]) {
+  return network === "liquid-testnet" ? "Liquid testnet" : "Elements regtest";
+}
+
+export function supplyModeLabel(mode: DeploymentManifest["supplyMode"]) {
+  return mode === "issuer-managed" ? "Issuer managed" : "Fixed supply";
+}
+
+export function publicationLabel(publication: Deployment["publication"]) {
+  return {
+    local: "Local only",
+    pending: "Registry pending",
+    published: "Published",
+  }[publication];
+}
+
 export function requireDeployment(deployment: Deployment | null | undefined): Deployment {
   if (!deployment) throw new Error("Import or create a deployment first.");
   return deployment;

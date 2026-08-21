@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { activeNavigationTarget, appRoleForPath } from "../lib/navigation";
+import { activeNavigationTarget, appRoleForPath, contextualDocumentTitle } from "../lib/navigation";
 
 const nav = {
   issuer: [{ to: "/admin" }, { to: "/admin/setup" }, { to: "/admin/reissue" }],
@@ -28,6 +28,7 @@ describe("activeNavigationTarget", () => {
     ["issuer", "/admin/reissue/review", "/admin/reissue"],
     ["holder", "/wallet/send/review", "/wallet/send"],
     ["holder", "/wallet/receive/share", "/wallet/receive"],
+    ["holder", "/wallet/import", "/wallet"],
   ] as const)("uses the most specific %s item for nested path %s", (role, pathname, expected) => {
     expect(selected(role, pathname)).toBe(expected);
   });
@@ -41,6 +42,12 @@ describe("activeNavigationTarget", () => {
     expect(selected("issuer", "/wallet/send")).toBeUndefined();
     expect(selected("holder", "/admin/setup")).toBeUndefined();
     expect(selected("holder", "/wallets")).toBeUndefined();
+  });
+});
+
+describe("contextualDocumentTitle", () => {
+  it("keeps each route identifiable in browser history and tabs", () => {
+    expect(contextualDocumentTitle("Mint governed supply")).toBe("Mint governed supply · Simplicity AMP");
   });
 });
 

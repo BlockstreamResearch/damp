@@ -7,7 +7,7 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { AdminDashboard, AdminReissue, AdminSetup } from "./screens/admin";
-import { WalletDashboard, WalletReceive, WalletSend } from "./screens/wallet";
+import { WalletDashboard, WalletImport, WalletReceive, WalletSend } from "./screens/wallet";
 
 const rootRoute = createRootRoute({ component: Outlet });
 
@@ -23,6 +23,7 @@ const routes = [
   createRoute({ getParentRoute: () => rootRoute, path: "/wallet", component: WalletDashboard }),
   createRoute({ getParentRoute: () => rootRoute, path: "/wallet/send", component: WalletSend }),
   createRoute({ getParentRoute: () => rootRoute, path: "/wallet/receive", component: WalletReceive }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/wallet/import", component: WalletImport }),
   createRoute({ getParentRoute: () => rootRoute, path: "/admin", component: AdminDashboard }),
   createRoute({ getParentRoute: () => rootRoute, path: "/admin/setup", component: AdminSetup }),
   createRoute({ getParentRoute: () => rootRoute, path: "/admin/reissue", component: AdminReissue }),

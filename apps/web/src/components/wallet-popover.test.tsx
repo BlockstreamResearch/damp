@@ -1,20 +1,23 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
-  signer: { connected: false, fingerprint: undefined as string | undefined, network: "liquid-testnet" as const },
+  signer: { connected: false, fingerprint: undefined as string | undefined, network: "liquid-testnet" as "liquid-testnet" | "elements-regtest" },
   deployment: undefined as Record<string, unknown> | undefined,
   wallet: undefined as Record<string, unknown> | undefined,
+  fundingAddress: undefined as { index: number; confidentialAddress: string } | undefined,
+  feeState: "unfunded" as "loading" | "ready" | "pending" | "unfunded" | "error",
 }));
 const disconnect = vi.hoisted(() => vi.fn());
 const refetch = vi.hoisted(() => vi.fn());
+const connectSignerMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ fingerprint: "aabbccdd" })));
 
 vi.mock("../lib/amp-signer", async () => {
   return {
     signerSnapshot: () => state.signer,
     subscribeSigner: () => () => undefined,
     disconnectSigner: disconnect,
-    connectSigner: vi.fn(),
+    connectSigner: connectSignerMock,
     generateMnemonic: vi.fn(() => Promise.resolve("test mnemonic")),
     loadDebugMnemonic: vi.fn(() => undefined),
     saveDebugMnemonic: vi.fn(),
@@ -31,6 +34,11 @@ vi.mock("../lib/deployments", () => {
 });
 
 vi.mock("../lib/wallet-query", () => ({
+  walletSyncPresentation: (input: { snapshot?: unknown; fetching?: boolean; error?: unknown; syncError?: string }) => ({
+    state: input.error || input.syncError ? (input.snapshot ? "stale" : "error") : input.fetching ? "syncing" : input.snapshot ? "synced" : "loading",
+    hasSnapshot: Boolean(input.snapshot),
+    message: input.syncError,
+  }),
   useBaseWalletSync: () => state.wallet ?? {
     data: undefined,
     error: null,
@@ -59,7 +67,8 @@ vi.mock("../lib/wallet-sync", () => ({
     }
     return [...balances.values()];
   },
-  nextFundingAddress: () => undefined,
+  nextFundingAddress: () => state.fundingAddress,
+  feeFundingState: () => state.feeState,
 }));
 
 import { WalletPopoverContent, WalletStatus, type WalletPopoverModel } from "./ui";
@@ -89,13 +98,18 @@ describe("AMP signer wallet popover content", () => {
   });
 
   it("keeps signer connection progress and errors inside the accessible popover", () => {
-    const { rerender } = render(<WalletPopoverContent connecting connectionMessage="Opening the local Liquid testnet signer…" onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    const { rerender } = render(<WalletPopoverContent connecting connectionNotice={{ tone: "progress", message: "Opening the local Liquid testnet signer…" }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Connecting…" })).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("Opening the local Liquid testnet signer…");
+    expect(screen.getByRole("status")).toHaveClass("progress");
 
-    rerender(<WalletPopoverContent connectionMessage="Recovery phrase is invalid" onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    rerender(<WalletPopoverContent connectionNotice={{ tone: "error", message: "Recovery phrase is invalid" }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Connect signer" })).toBeEnabled();
     expect(screen.getByRole("status")).toHaveTextContent("Recovery phrase is invalid");
+    expect(screen.getByRole("status")).toHaveClass("error");
+
+    rerender(<WalletPopoverContent connectionNotice={{ tone: "success", message: "Signer connected" }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    expect(screen.getByRole("status")).toHaveClass("success");
   });
 
   it("offers a saved debug signer without putting its recovery phrase in the input", () => {
@@ -141,6 +155,13 @@ describe("AMP signer wallet popover content", () => {
     expect(screen.queryByText(/pending/)).not.toBeInTheDocument();
   });
 
+  it("keeps unknown balances distinct and applies explicit issuer grammar", () => {
+    render(<WalletPopoverContent role="issuer" model={{ ...connectedModel, role: "issuer", hasSnapshot: false, syncState: "error", syncError: "No verified snapshot" }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "AMP signer wallet" })).toHaveClass("issuer");
+    expect(screen.getByText("Balance unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("No verified snapshot");
+  });
+
   it("shows the base wallet before a deployment is selected", () => {
     render(<WalletPopoverContent model={{ ...connectedModel, deploymentSelected: false, lbtcConfirmed: "0.00002", otherAssets: [] }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
     expect(screen.getByText("Available L-BTC").parentElement).toHaveTextContent("0.00002 L-BTC");
@@ -154,8 +175,11 @@ describe("AMP signer wallet popover interactions", () => {
     state.signer = { connected: false, fingerprint: undefined, network: "liquid-testnet" };
     state.deployment = undefined;
     state.wallet = undefined;
+    state.fundingAddress = undefined;
+    state.feeState = "unfunded";
     disconnect.mockClear();
     refetch.mockClear();
+    connectSignerMock.mockClear();
   });
 
   it("opens from the status control, traps initial focus in its action, and restores focus on Escape", () => {
@@ -163,10 +187,42 @@ describe("AMP signer wallet popover interactions", () => {
     const trigger = screen.getByRole("button", { name: "Open AMP Signer SDK connection" });
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog", { name: "AMP signer wallet" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Recovery phrase or NEW")).toHaveFocus();
+    expect(screen.getByLabelText("Signer network")).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "AMP signer wallet" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("offers an explicit Elements regtest choice on a fresh wallet", () => {
+    const onNetwork = vi.fn();
+    render(<WalletPopoverContent connectionNetwork="liquid-testnet" onConnectionNetwork={onNetwork} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Signer network"), { target: { value: "elements-regtest" } });
+    expect(onNetwork).toHaveBeenCalledWith("elements-regtest");
+  });
+
+  it("connects a fresh signer on the explicitly selected Elements regtest network", async () => {
+    render(<WalletStatus />);
+    fireEvent.click(screen.getByRole("button", { name: "Open AMP Signer SDK connection" }));
+    fireEvent.change(screen.getByLabelText("Signer network"), { target: { value: "elements-regtest" } });
+    fireEvent.change(screen.getByLabelText("Recovery phrase or NEW"), { target: { value: "test recovery phrase" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect signer" }));
+    await waitFor(() => expect(connectSignerMock).toHaveBeenCalledWith("test recovery phrase", "elements-regtest"));
+  });
+
+  it("fails closed when the connected signer network does not match the deployment", () => {
+    state.signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet" };
+    state.deployment = {
+      network: "elements-regtest",
+      policyAsset: "11".repeat(32),
+      regulatedAsset: "22".repeat(32),
+      reissuanceToken: null,
+      asset: { ticker: "AMP", precision: 0 },
+    };
+    render(<WalletStatus role="issuer" />);
+    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    expect(screen.getByRole("dialog", { name: "AMP signer wallet" })).toHaveClass("issuer");
+    expect(screen.getByRole("status")).toHaveTextContent("Reconnect the AMP signer for Elements regtest");
+    expect(screen.getByText("Balance unavailable")).toBeInTheDocument();
   });
 
   it("dismisses on an outside pointer interaction", () => {
@@ -202,5 +258,44 @@ describe("AMP signer wallet popover interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: /Disconnect/ }));
     expect(disconnect).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog", { name: "AMP signer wallet" })).not.toBeInTheDocument();
+  });
+
+  it("shows the faucet only after a successful unfunded Liquid-testnet sync", () => {
+    const policyAsset = "11".repeat(32);
+    state.signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet" };
+    state.deployment = {
+      network: "liquid-testnet",
+      policyAsset,
+      regulatedAsset: "22".repeat(32),
+      reissuanceToken: null,
+      asset: { ticker: "AMP", precision: 0 },
+    };
+    state.fundingAddress = { index: 2, confidentialAddress: `tlq1${"q".repeat(40)}` };
+    state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
+
+    const { rerender } = render(<WalletStatus />);
+    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    const faucet = screen.getByRole("link", { name: /Get testnet L-BTC/ });
+    expect(faucet).toHaveAttribute("rel", expect.stringContaining("noreferrer"));
+    expect(screen.getByText(/public testnet receive address will be sent to liquidtestnet.com/i)).toBeInTheDocument();
+    fireEvent.click(faucet);
+    expect(screen.getByRole("status")).toHaveTextContent("Liquid testnet faucet opened. Refresh after funding arrives.");
+
+    state.feeState = "pending";
+    state.wallet = { data: { snapshot: { utxos: [{ status: "unconfirmed", assetId: policyAsset, amount: "1500" }], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
+    rerender(<WalletStatus />);
+    expect(screen.queryByRole("link", { name: /Get testnet L-BTC/ })).not.toBeInTheDocument();
+
+    state.feeState = "unfunded";
+    state.wallet = { data: undefined, error: new Error("Waterfalls unavailable"), isPending: false, isFetching: false, refetch };
+    rerender(<WalletStatus />);
+    expect(screen.queryByRole("link", { name: /Get testnet L-BTC/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Balance unavailable")).toBeInTheDocument();
+
+    state.signer = { connected: true, fingerprint: "aabbccdd", network: "elements-regtest" };
+    state.deployment = { ...state.deployment, network: "elements-regtest" };
+    state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
+    rerender(<WalletStatus />);
+    expect(screen.queryByRole("link", { name: /Get testnet L-BTC/ })).not.toBeInTheDocument();
   });
 });

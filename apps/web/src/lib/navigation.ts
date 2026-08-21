@@ -1,5 +1,9 @@
 export type AppRole = "holder" | "issuer";
 
+export function contextualDocumentTitle(title: string) {
+  return `${title} · Simplicity AMP`;
+}
+
 export function appRoleForPath(pathname: string): AppRole | undefined {
   const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   if (normalizedPath === "/admin" || normalizedPath.startsWith("/admin/")) return "issuer";
