@@ -1,0 +1,105 @@
+// Shared transaction-shape rules for every blacklist verifier depth.
+//
+// Depth-specific entrypoints own Merkle proof verification and budget padding.
+// This module owns the invariant protocol shape:
+//   input 0  = current verifier anchor
+//   input 1  = initiating regulated balance
+//   output 0 = successor verifier anchor
+//   remaining regulated inputs require policy proofs
+//   remaining regulated outputs require owner-bound user scripts
+
+use std::lib::asserts::{assert_eq_32, assert_eq_64, assert_eq_256};
+use std::lib::binary::not;
+use std::lib::u32::safe_add_32;
+
+use crate::lib::assets::{
+    explicit_input_asset,
+    explicit_input_asset_and_amount,
+    explicit_output_asset_and_amount,
+};
+use crate::lib::taproot::state_script_hash;
+
+pub type Recipients = [Option<Pubkey>; 10];
+pub type ProofState = (u32, u32, Option<u32>, bool);
+
+fn scan_input(regulated_input_count: u32, _context: (), index: u8) -> Either<u32, u32> {
+    let index: u32 = jet::left_pad_low_8_32(index);
+    match jet::input_asset(index) {
+        None => Left(regulated_input_count),
+        Some(asset: Asset1) => {
+            let asset_id: u256 = unwrap_right::<(u1, u256)>(asset);
+            match jet::eq_256(asset_id, param::REGULATED_ASSET_ID) {
+                false => Right(regulated_input_count),
+                true => Right(safe_add_32(regulated_input_count, 1)),
+            }
+        },
+    }
+}
+
+fn validate_output(recipients: Recipients, _context: (), index: u8) -> Either<Recipients, Recipients> {
+    let index: u32 = jet::left_pad_low_8_32(index);
+    match jet::output_asset(index) {
+        None => Left(recipients),
+        Some(asset: Asset1) => {
+            let asset_id: u256 = unwrap_right::<(u1, u256)>(asset);
+            match jet::eq_256(asset_id, param::REGULATED_ASSET_ID) {
+                false => Right(recipients),
+                true => {
+                    let [next, r2, r3, r4, r5, r6, r7, r8, r9, r10]: Recipients = recipients;
+                    assert_eq_256(
+                        unwrap(jet::output_script_hash(index)),
+                        state_script_hash(param::USER_EXECUTABLE_LEAF_HASH, unwrap(next)),
+                    );
+                    Right([r2, r3, r4, r5, r6, r7, r8, r9, r10, None])
+                },
+            }
+        },
+    }
+}
+
+fn ensure_unused_recipient(recipient: Option<Pubkey>, _unused: ()) {
+    match recipient {
+        None => (),
+        Some(_recipient: Pubkey) => panic!(),
+    }
+}
+
+pub fn consume_budget(word: u256, valid: bool) -> bool {
+    assert_eq_256(word, 0);
+    valid
+}
+
+pub fn verify_anchor_and_initiator(transfer_owner: Pubkey) {
+    assert_eq_32(jet::current_index(), 0);
+    assert!(not(jet::eq_256(param::REGULATED_ASSET_ID, param::VERIFIER_ASSET_ID)));
+
+    let (input_asset, input_amount): (u256, u64) = explicit_input_asset_and_amount(0);
+    assert_eq_256(input_asset, param::VERIFIER_ASSET_ID);
+    assert_eq_64(input_amount, param::VERIFIER_ASSET_AMOUNT);
+
+    let (output_asset, output_amount): (u256, u64) = explicit_output_asset_and_amount(0);
+    assert_eq_256(output_asset, param::VERIFIER_ASSET_ID);
+    assert_eq_64(output_amount, param::VERIFIER_ASSET_AMOUNT);
+    assert_eq_256(unwrap(jet::output_script_hash(0)), jet::current_script_hash());
+
+    assert_eq_256(explicit_input_asset(1), param::REGULATED_ASSET_ID);
+    assert_eq_256(
+        unwrap(jet::input_script_hash(1)),
+        state_script_hash(param::USER_EXECUTABLE_LEAF_HASH, transfer_owner),
+    );
+}
+
+pub fn count_regulated_inputs() -> u32 {
+    unwrap_left::<u32>(for_while::<scan_input>(0, ()))
+}
+
+pub fn assert_all_inputs_verified(regulated_input_count: u32, state: ProofState) {
+    let (_inputs, verified_inputs, _last, _finished): ProofState = state;
+    assert_eq_32(verified_inputs, regulated_input_count);
+}
+
+pub fn verify_regulated_outputs(recipients: Recipients) {
+    let output_scan: Either<Recipients, Recipients> =
+        for_while::<validate_output>(recipients, ());
+    array_fold::<ensure_unused_recipient, 10>(unwrap_left::<Recipients>(output_scan), ());
+}

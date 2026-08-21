@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  signer: { connected: false, network: "liquid-testnet" as "liquid-testnet" | "elements-regtest" },
+  signer: { connected: false, network: "liquid-testnet" as "liquid-testnet" | "elements-regtest", fingerprint: undefined as string | undefined, profileId: undefined as string | undefined },
   deriveIssuer: vi.fn(),
   putDeployment: vi.fn(),
   getDeployment: vi.fn(),
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./amp-signer", () => ({
   deriveAmpKey: mocks.deriveIssuer,
   signerSnapshot: () => mocks.signer,
+  signerSessionRevision: () => 1,
   validateDeployment: vi.fn(),
 }));
 
@@ -130,17 +131,20 @@ describe("role-neutral deployment import", () => {
   });
 
   it("strips injected authority while preserving an authority already attached locally", async () => {
-    const injected = { ...importedDeployment(), issuerDerivationIndex: 999 };
+    const injected = { ...importedDeployment(), issuerDerivationIndex: 999, issuerFingerprint: "11223344" };
     await persistPublicDeploymentImport({ deployment: injected, snapshot });
-    expect(mocks.putDeployment).toHaveBeenLastCalledWith(expect.objectContaining({ issuerDerivationIndex: undefined }));
+    expect(mocks.putDeployment).toHaveBeenLastCalledWith(expect.objectContaining({ issuerDerivationIndex: undefined, issuerFingerprint: undefined }));
 
-    mocks.getDeployment.mockResolvedValue({ ...importedDeployment(), issuerDerivationIndex: 7 });
+    const issuerProfileId = `elements-regtest:${"aa".repeat(32)}`;
+    mocks.getDeployment.mockResolvedValue({ ...importedDeployment(), issuerDerivationIndex: 7, issuerFingerprint: "aabbccdd", issuerProfileId });
     await persistPublicDeploymentImport({ deployment: injected, snapshot });
-    expect(mocks.putDeployment).toHaveBeenLastCalledWith(expect.objectContaining({ issuerDerivationIndex: 7 }));
+    expect(mocks.putDeployment).toHaveBeenLastCalledWith(expect.objectContaining({ issuerDerivationIndex: 7, issuerFingerprint: "aabbccdd", issuerProfileId }));
   });
 
   it("keeps issuer attachment network- and key-gated", async () => {
     mocks.signer.connected = true;
+    mocks.signer.fingerprint = "aabbccdd";
+    mocks.signer.profileId = `elements-regtest:${"aa".repeat(32)}`;
     mocks.signer.network = "liquid-testnet";
     await expect(attachIssuerControl(importedDeployment())).rejects.toThrow("Reconnect the AMP signer for elements-regtest");
     expect(mocks.deriveIssuer).not.toHaveBeenCalled();
@@ -150,6 +154,8 @@ describe("role-neutral deployment import", () => {
     const attached = await attachIssuerControl(importedDeployment());
     expect(mocks.deriveIssuer).toHaveBeenCalledWith(manifest.deploymentSalt, "issuer", "elements-regtest");
     expect(attached.issuerDerivationIndex).toBe(42);
+    expect(attached.issuerFingerprint).toBe("aabbccdd");
+    expect(attached.issuerProfileId).toBe(mocks.signer.profileId);
     expect(mocks.putDeployment).toHaveBeenCalledWith(attached);
   });
 });

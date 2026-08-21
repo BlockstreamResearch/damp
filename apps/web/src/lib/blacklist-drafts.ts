@@ -1,13 +1,17 @@
-export function blacklistScope(deploymentId: string, policyRoot: string) {
-  return `${deploymentId}:${policyRoot}`;
+function profileScope(signerProfileId?: string) {
+  return signerProfileId ?? "locked";
 }
 
-export function blacklistDraftName(policyRoot: string) {
-  return `blacklist:${policyRoot}`;
+export function blacklistScope(deploymentId: string, policyRoot: string, signerProfileId?: string) {
+  return `${deploymentId}:${policyRoot}:${profileScope(signerProfileId)}`;
 }
 
-export function pendingPolicyDraftName(policyRoot: string) {
-  return `pending-policy:${policyRoot}`;
+export function blacklistDraftName(policyRoot: string, signerProfileId?: string) {
+  return `blacklist:${policyRoot}:${profileScope(signerProfileId)}`;
+}
+
+export function pendingPolicyDraftName(policyRoot: string, signerProfileId?: string) {
+  return `pending-policy:${policyRoot}:${profileScope(signerProfileId)}`;
 }
 
 export function isCurrentBlacklistLoad(activeToken: symbol | undefined, requestToken: symbol) {

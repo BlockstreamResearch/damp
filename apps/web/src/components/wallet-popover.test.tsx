@@ -2,15 +2,19 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
-  signer: { connected: false, fingerprint: undefined as string | undefined, network: "liquid-testnet" as "liquid-testnet" | "elements-regtest" },
+  signer: { connected: false, fingerprint: undefined, network: "liquid-testnet", walletReady: true, profiles: [] } as { connected: boolean; fingerprint?: string; network: "liquid-testnet" | "elements-regtest"; profileId?: string; walletReady?: boolean; profiles?: Array<{ id: string; publicIdentity: string; fingerprint: string; network: "liquid-testnet" | "elements-regtest"; label: string; unlocked: boolean; active: boolean }> },
   deployment: undefined as Record<string, unknown> | undefined,
   wallet: undefined as Record<string, unknown> | undefined,
   fundingAddress: undefined as { index: number; confidentialAddress: string } | undefined,
   feeState: "unfunded" as "loading" | "ready" | "pending" | "unfunded" | "error",
+  pendingOperation: false,
 }));
 const disconnect = vi.hoisted(() => vi.fn());
 const refetch = vi.hoisted(() => vi.fn());
 const connectSignerMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ fingerprint: "aabbccdd" })));
+const switchProfileMock = vi.hoisted(() => vi.fn());
+const renameProfileMock = vi.hoisted(() => vi.fn());
+const removeProfileMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/amp-signer", async () => {
   return {
@@ -21,8 +25,15 @@ vi.mock("../lib/amp-signer", async () => {
     generateMnemonic: vi.fn(() => Promise.resolve("test mnemonic")),
     loadDebugMnemonic: vi.fn(() => undefined),
     saveDebugMnemonic: vi.fn(),
+    switchSignerProfile: switchProfileMock,
+    renameSignerProfile: renameProfileMock,
+    removeSignerProfile: removeProfileMock,
   };
 });
+
+vi.mock("../lib/signer-operation-state", () => ({
+  hasPendingSignerOperation: () => state.pendingOperation,
+}));
 
 vi.mock("../lib/deployments", () => {
   return {
@@ -88,6 +99,11 @@ const connectedModel: WalletPopoverModel = {
   receiveIndicator: "External #2 · tlq1qq…abc1234",
 };
 
+const profileAIdentity = "aa".repeat(32);
+const profileBIdentity = "bb".repeat(32);
+const profileA = { id: `liquid-testnet:${profileAIdentity}`, publicIdentity: profileAIdentity, fingerprint: "aabbccdd", network: "liquid-testnet" as const, label: "QA Alice", unlocked: true, active: true };
+const profileB = { id: `liquid-testnet:${profileBIdentity}`, publicIdentity: profileBIdentity, fingerprint: "11223344", network: "liquid-testnet" as const, label: "QA Bob", unlocked: true, active: false };
+
 describe("AMP signer wallet popover content", () => {
   it("offers the existing connect action while disconnected", () => {
     const onConnect = vi.fn();
@@ -118,6 +134,30 @@ describe("AMP signer wallet popover content", () => {
     expect(screen.getByLabelText("Recovery phrase or NEW")).toHaveValue("");
     fireEvent.click(screen.getByRole("button", { name: "Connect saved debug signer" }));
     expect(onConnectSaved).toHaveBeenCalledOnce();
+  });
+
+  it("shows remembered public profiles while keeping them locked after reload", () => {
+    const onProfileSelect = vi.fn();
+    render(<WalletPopoverContent profiles={[{ ...profileA, unlocked: false, active: false }]} selectedProfileId={profileA.id} connectionNetworkLocked onProfileSelect={onProfileSelect} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    expect(screen.getByLabelText("Remembered signer profile")).toHaveValue(profileA.id);
+    expect(screen.getByText(/Only public labels, account identities, fingerprints, and networks survive reload/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Recovery phrase or NEW")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Unlock signer profile" })).toBeEnabled();
+  });
+
+  it("offers minimal add, rename, and remove profile controls", () => {
+    const onAddProfile = vi.fn();
+    const onRenameProfile = vi.fn();
+    const onRemoveProfile = vi.fn();
+    render(<WalletPopoverContent model={{ ...connectedModel, profileLabel: "QA Alice" }} profiles={[profileA]} activeProfileId={profileA.id} onAddProfile={onAddProfile} onRenameProfile={onRenameProfile} onRemoveProfile={onRemoveProfile} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "QA Alice" })).toBeInTheDocument();
+    expect(screen.getByText(/derivation account 0/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(onAddProfile).toHaveBeenCalledOnce();
+    expect(onRenameProfile).toHaveBeenCalledOnce();
+    expect(onRemoveProfile).toHaveBeenCalledOnce();
   });
 
   it("shows synchronized balances, pending funds, assets, UTXOs, and a safe address indicator", () => {
@@ -177,9 +217,13 @@ describe("AMP signer wallet popover interactions", () => {
     state.wallet = undefined;
     state.fundingAddress = undefined;
     state.feeState = "unfunded";
+    state.pendingOperation = false;
     disconnect.mockClear();
     refetch.mockClear();
     connectSignerMock.mockClear();
+    switchProfileMock.mockClear();
+    renameProfileMock.mockClear();
+    removeProfileMock.mockClear();
   });
 
   it("opens from the status control, traps initial focus in its action, and restores focus on Escape", () => {
@@ -210,7 +254,7 @@ describe("AMP signer wallet popover interactions", () => {
   });
 
   it("fails closed when the connected signer network does not match the deployment", () => {
-    state.signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet" };
+    state.signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet", profileId: profileA.id };
     state.deployment = {
       network: "elements-regtest",
       policyAsset: "11".repeat(32),
@@ -225,6 +269,47 @@ describe("AMP signer wallet popover interactions", () => {
     expect(screen.getByText("Balance unavailable")).toBeInTheDocument();
   });
 
+  it("requires confirmation before switching profiles during a reviewed operation", () => {
+    state.pendingOperation = true;
+    state.signer = { connected: true, fingerprint: profileA.fingerprint, network: profileA.network, profileId: profileA.id, walletReady: true, profiles: [profileA, profileB] };
+    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
+    state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
+    render(<WalletStatus />);
+    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    fireEvent.change(screen.getByLabelText("Active signer profile"), { target: { value: profileB.id } });
+    expect(screen.getByRole("alertdialog", { name: "Confirm signer profile switch" })).toBeInTheDocument();
+    expect(switchProfileMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Switch profile" }));
+    expect(switchProfileMock).toHaveBeenCalledWith(profileB.id, "liquid-testnet");
+  });
+
+  it("unlocks a remembered profile without activating a mismatched phrase", async () => {
+    const lockedB = { ...profileB, unlocked: false };
+    state.signer = { connected: true, fingerprint: profileA.fingerprint, network: profileA.network, profileId: profileA.id, walletReady: true, profiles: [profileA, lockedB] };
+    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
+    state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
+    render(<WalletStatus />);
+    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    fireEvent.change(screen.getByLabelText("Active signer profile"), { target: { value: lockedB.id } });
+    expect(screen.getByText("Unlock remembered profile")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Profile recovery phrase or NEW"), { target: { value: "profile b phrase" } });
+    fireEvent.click(screen.getByRole("button", { name: "Unlock and switch" }));
+    await waitFor(() => expect(connectSignerMock).toHaveBeenCalledWith("profile b phrase", "liquid-testnet", { expectedProfileId: lockedB.id }));
+    expect(switchProfileMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects profile switching across the active deployment network", () => {
+    const regtestProfile = { ...profileB, id: `elements-regtest:${profileBIdentity}`, network: "elements-regtest" as const };
+    state.signer = { connected: true, fingerprint: profileA.fingerprint, network: profileA.network, profileId: profileA.id, walletReady: true, profiles: [profileA, regtestProfile] };
+    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
+    state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
+    render(<WalletStatus />);
+    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    fireEvent.change(screen.getByLabelText("Active signer profile"), { target: { value: regtestProfile.id } });
+    expect(screen.getByRole("status")).toHaveTextContent("requires Liquid testnet");
+    expect(switchProfileMock).not.toHaveBeenCalled();
+  });
+
   it("dismisses on an outside pointer interaction", () => {
     render(<WalletStatus />);
     const trigger = screen.getByRole("button", { name: "Open AMP Signer SDK connection" });
@@ -236,7 +321,7 @@ describe("AMP signer wallet popover interactions", () => {
 
   it("exposes refresh and disconnect actions for a connected signer", () => {
     const policyAsset = "11".repeat(32);
-    state.signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet" };
+    state.signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet", profileId: profileA.id };
     state.deployment = {
       network: "liquid-testnet",
       policyAsset,
@@ -262,7 +347,7 @@ describe("AMP signer wallet popover interactions", () => {
 
   it("shows the faucet only after a successful unfunded Liquid-testnet sync", () => {
     const policyAsset = "11".repeat(32);
-    state.signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet" };
+    state.signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet", profileId: profileA.id };
     state.deployment = {
       network: "liquid-testnet",
       policyAsset,
@@ -292,7 +377,7 @@ describe("AMP signer wallet popover interactions", () => {
     expect(screen.queryByRole("link", { name: /Get testnet L-BTC/ })).not.toBeInTheDocument();
     expect(screen.getByText("Balance unavailable")).toBeInTheDocument();
 
-    state.signer = { connected: true, fingerprint: "aabbccdd", network: "elements-regtest" };
+    state.signer = { connected: true, fingerprint: "aabbccdd", network: "elements-regtest", profileId: `elements-regtest:${profileAIdentity}` };
     state.deployment = { ...state.deployment, network: "elements-regtest" };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     rerender(<WalletStatus />);

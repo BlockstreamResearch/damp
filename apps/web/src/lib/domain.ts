@@ -57,8 +57,19 @@ export const localDeploymentSchema = deploymentManifestSchema.extend({
   confirmations: z.number().int().nonnegative().default(0),
   activeAnchor: z.string().regex(OUTPOINT).optional(),
   issuerDerivationIndex: z.number().int().min(0).max(0x7fff_ffff).optional(),
+  issuerFingerprint: z.string().regex(/^[0-9a-f]{8}$/).optional(),
+  issuerProfileId: z.string().regex(/^(liquid-testnet|elements-regtest):[0-9a-f]{64}$/).optional(),
   publication: z.enum(["local", "pending", "published"]),
-}).strict();
+}).strict().superRefine((deployment, context) => {
+  const authorityFields = [deployment.issuerDerivationIndex, deployment.issuerFingerprint, deployment.issuerProfileId];
+  const present = authorityFields.filter((value) => value !== undefined).length;
+  if (present !== 0 && present !== authorityFields.length) {
+    context.addIssue({
+      code: "custom",
+      message: "Local issuer authority requires a derivation, display fingerprint, and strong signer profile identity together.",
+    });
+  }
+});
 
 export type Deployment = z.infer<typeof localDeploymentSchema>;
 
@@ -93,7 +104,9 @@ export function requirePublishedDeployment(deployment: Deployment | null | undef
 
 export function publicManifest(deployment: Deployment): DeploymentManifest {
   const { deploymentId: _deploymentId, confirmations: _confirmations, activeAnchor: _activeAnchor,
-    issuerDerivationIndex: _issuerDerivationIndex, publication: _publication, ...manifest } = deployment;
+    issuerDerivationIndex: _issuerDerivationIndex, issuerFingerprint: _issuerFingerprint,
+    issuerProfileId: _issuerProfileId,
+    publication: _publication, ...manifest } = deployment;
   return deploymentManifestSchema.parse(manifest);
 }
 

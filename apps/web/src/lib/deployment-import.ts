@@ -1,5 +1,6 @@
 import {
   deriveAmpKey,
+  signerSessionRevision,
   signerSnapshot,
   validateDeployment,
 } from "./amp-signer";
@@ -98,13 +99,21 @@ export async function validatePublicDeploymentImport(
 }
 
 export async function persistPublicDeploymentImport(result: PublicDeploymentImport) {
-  const incoming = localDeploymentSchema.parse(result.deployment);
+  const {
+    issuerDerivationIndex: _untrustedIssuerDerivationIndex,
+    issuerFingerprint: _untrustedIssuerFingerprint,
+    issuerProfileId: _untrustedIssuerProfileId,
+    ...publicIncoming
+  } = result.deployment;
+  const incoming = localDeploymentSchema.parse(publicIncoming);
   const existing = await getDeployment(incoming.deploymentId);
   // A public import can retain authority already attached locally, but can
   // never create or replace it from public data.
   const deployment = localDeploymentSchema.parse({
     ...incoming,
-    issuerDerivationIndex: existing?.issuerDerivationIndex,
+    issuerDerivationIndex: existing?.issuerProfileId ? existing.issuerDerivationIndex : undefined,
+    issuerFingerprint: existing?.issuerProfileId && existing.issuerDerivationIndex !== undefined ? existing.issuerFingerprint : undefined,
+    issuerProfileId: existing?.issuerDerivationIndex !== undefined ? existing.issuerProfileId : undefined,
   });
   await putDeployment(deployment);
   await setActiveDeploymentId(deployment.deploymentId);
@@ -115,22 +124,34 @@ export async function persistPublicDeploymentImport(result: PublicDeploymentImpo
 export async function attachIssuerControl(deployment: Deployment) {
   const selected = localDeploymentSchema.parse(deployment);
   const signer = signerSnapshot();
-  if (!signer.connected) throw new Error("Connect the AMP signer first.");
+  if (!signer.connected || !signer.fingerprint || !signer.profileId) throw new Error("Connect the AMP signer first.");
   if (signer.network !== selected.network) {
     throw new Error(`Reconnect the AMP signer for ${selected.network}.`);
   }
+  const revision = signerSessionRevision();
   const issuer = await deriveAmpKey(selected.deploymentSalt, "issuer", selected.network);
+  const current = signerSnapshot();
+  if (signerSessionRevision() !== revision || current.profileId !== signer.profileId) {
+    throw new Error("The active signer profile changed while attaching issuer control. Try again.");
+  }
   if (issuer.publicKey !== selected.issuerPublicKey) {
     throw new Error("Connected signer does not control this deployment's issuer key.");
   }
   const attached = localDeploymentSchema.parse({
     ...selected,
     issuerDerivationIndex: issuer.derivationIndex,
+    issuerFingerprint: signer.fingerprint,
+    issuerProfileId: signer.profileId,
   });
   await putDeployment(attached);
   return attached;
 }
 
 export function publicImportHasIssuerAuthority(deployment: DeploymentManifest | Deployment) {
-  return "issuerDerivationIndex" in deployment && deployment.issuerDerivationIndex !== undefined;
+  return "issuerDerivationIndex" in deployment
+    && deployment.issuerDerivationIndex !== undefined
+    && "issuerFingerprint" in deployment
+    && deployment.issuerFingerprint !== undefined
+    && "issuerProfileId" in deployment
+    && deployment.issuerProfileId !== undefined;
 }

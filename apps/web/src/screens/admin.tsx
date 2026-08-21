@@ -8,11 +8,14 @@ import { AlertTriangle, ArrowRight, Check, ClipboardCopy, Download, ExternalLink
 
 import { AppShell, BackLink, Panel, Pill, SafetyNote, SectionHeading, TechnicalDetails } from "../components/ui";
 import { BlacklistTable } from "../components/blacklist-table";
+import { BootstrapRegistryState } from "../components/bootstrap-registry-state";
+import { OperationReceiptPanel } from "../components/operation-receipt";
 import {
   bootstrap as bootstrapDeployment,
   buildBlacklist,
   deriveWalletAddress,
   reissue,
+  signerSessionRevision,
   signerSnapshot,
   signPolicyUpdate,
   subscribeSigner,
@@ -80,9 +83,9 @@ import {
   loadOperationReceipt,
   operationReceiptQueryKey,
   saveOperationReceipt,
-  transactionExplorerUrl,
   tryBeginOperation,
 } from "../lib/operation-receipt";
+import { setSignerOperationPending } from "../lib/signer-operation-state";
 import { useBaseWalletSync, walletSyncQueryKeys } from "../lib/wallet-query";
 import {
   ensureSignerReceiveRecord,
@@ -122,6 +125,7 @@ function useLivePolicy(deployment: Deployment | null | undefined) {
 
 export function AdminDashboard() {
   const deployment = useActiveDeployment();
+  const signerState = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
   const { anchor, policy } = useLivePolicy(deployment.data);
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<BlacklistEntry[]>([]);
@@ -137,6 +141,12 @@ export function AdminDashboard() {
   const form = useForm<EntryForm>({ resolver: zodResolver(entryFormSchema) });
 
   useEffect(() => {
+    const key = `policy-update:${deployment.data?.deploymentId ?? "none"}:${signerState.profileId ?? "locked"}`;
+    setSignerOperationPending(key, Boolean(reviewUpdate || busy));
+    return () => setSignerOperationPending(key, false);
+  }, [busy, deployment.data?.deploymentId, reviewUpdate, signerState.profileId]);
+
+  useEffect(() => {
     const current = policy.data;
     const selected = deployment.data;
     if (!current || !selected) {
@@ -149,7 +159,7 @@ export function AdminDashboard() {
       setReviewUpdate(false);
       return;
     }
-    const scope = blacklistScope(selected.deploymentId, current.policyRoot);
+    const scope = blacklistScope(selected.deploymentId, current.policyRoot, signerState.profileId);
     const token = Symbol(scope);
     loadToken.current = token;
     activeScope.current = scope;
@@ -161,8 +171,8 @@ export function AdminDashboard() {
     setReviewUpdate(false);
     setMessage(undefined);
     void Promise.all([
-      getDraft<BlacklistEntry[]>(selected.deploymentId, blacklistDraftName(current.policyRoot)),
-      getDraft<PolicySnapshot>(selected.deploymentId, pendingPolicyDraftName(current.policyRoot)),
+      getDraft<BlacklistEntry[]>(selected.deploymentId, blacklistDraftName(current.policyRoot, signerState.profileId)),
+      getDraft<PolicySnapshot>(selected.deploymentId, pendingPolicyDraftName(current.policyRoot, signerState.profileId)),
     ]).then(([stored, storedPending]) => {
       if (!isCurrentBlacklistLoad(loadToken.current, token)) return;
       setDraft(stored ?? current.entries);
@@ -186,18 +196,18 @@ export function AdminDashboard() {
     return () => {
       if (isCurrentBlacklistLoad(loadToken.current, token)) loadToken.current = undefined;
     };
-  }, [deployment.data?.deploymentId, policy.data?.policyRoot]);
+  }, [deployment.data?.deploymentId, policy.data?.policyRoot, signerState.profileId]);
 
   useEffect(() => {
     const selected = deployment.data;
     const current = policy.data;
     if (!selected || !current || !workspaceReady) return;
-    const scope = blacklistScope(selected.deploymentId, current.policyRoot);
+    const scope = blacklistScope(selected.deploymentId, current.policyRoot, signerState.profileId);
     if (loadedScope !== scope) return;
-    void putDraft(selected.deploymentId, blacklistDraftName(current.policyRoot), draft).catch((error) => {
+    void putDraft(selected.deploymentId, blacklistDraftName(current.policyRoot, signerState.profileId), draft).catch((error) => {
       if (activeScope.current === scope) setMessage(`Could not save this blacklist draft: ${userFacingError(error)}`);
     });
-  }, [deployment.data?.deploymentId, draft, loadedScope, policy.data?.policyRoot, workspaceReady]);
+  }, [deployment.data?.deploymentId, draft, loadedScope, policy.data?.policyRoot, signerState.profileId, workspaceReady]);
 
   useEffect(() => {
     const selected = deployment.data;
@@ -213,7 +223,7 @@ export function AdminDashboard() {
   }, [anchor.data?.live, deployment.data, queryClient]);
 
   const renderedScope = deployment.data && policy.data
-    ? blacklistScope(deployment.data.deploymentId, policy.data.policyRoot)
+    ? blacklistScope(deployment.data.deploymentId, policy.data.policyRoot, signerState.profileId)
     : undefined;
   const scopedDraft = renderedScope && loadedScope === renderedScope
     ? draft
@@ -258,7 +268,7 @@ export function AdminDashboard() {
       const selected = requirePublishedDeployment(deployment.data);
       const current = policy.data;
       if (!current) throw new Error("Resolve the canonical live policy first.");
-      const scope = blacklistScope(selected.deploymentId, current.policyRoot);
+      const scope = blacklistScope(selected.deploymentId, current.policyRoot, signerState.profileId);
       const successor = await buildSuccessorPolicy(selected, current, scopedDraft);
       const path = await registryPathForVerifierScript(selected.deploymentId, successor.verifierScriptPubkey);
       requireCurrentBlacklistScope(activeScope.current, scope);
@@ -266,7 +276,7 @@ export function AdminDashboard() {
       setPending(successor);
       setPendingPath(path);
       setReviewUpdate(false);
-      await putDraft(selected.deploymentId, pendingPolicyDraftName(current.policyRoot), successor);
+      await putDraft(selected.deploymentId, pendingPolicyDraftName(current.policyRoot, signerState.profileId), successor);
       setMessage(`Downloaded ${downloaded.filename}. Add it at ${path}, merge it into the default branch, then activate.`);
     } catch (error) {
       setMessage(userFacingError(error));
@@ -286,16 +296,16 @@ export function AdminDashboard() {
   }
 
   async function activate() {
-    let attemptedScope: { deploymentId: string; policyRoot: string; scope: string } | undefined;
+    let attemptedScope: { deploymentId: string; policyRoot: string; signerProfileId?: string; scope: string } | undefined;
     setBusy(true);
     try {
       const selected = requirePublishedDeployment(deployment.data);
       const current = policy.data;
       const originalAnchor = anchor.data;
       if (!current || !originalAnchor) throw new Error("Resolve the canonical live policy first.");
-      const scope = blacklistScope(selected.deploymentId, current.policyRoot);
-      attemptedScope = { deploymentId: selected.deploymentId, policyRoot: current.policyRoot, scope };
-      const successor = scopedPending ?? await getDraft<PolicySnapshot>(selected.deploymentId, pendingPolicyDraftName(current.policyRoot));
+      const scope = blacklistScope(selected.deploymentId, current.policyRoot, signerState.profileId);
+      attemptedScope = { deploymentId: selected.deploymentId, policyRoot: current.policyRoot, signerProfileId: signerState.profileId, scope };
+      const successor = scopedPending ?? await getDraft<PolicySnapshot>(selected.deploymentId, pendingPolicyDraftName(current.policyRoot, signerState.profileId));
       if (!successor) throw new Error("Download a successor snapshot first.");
       const path = await registryPathForVerifierScript(selected.deploymentId, successor.verifierScriptPubkey);
       await verifyCanonicalRegistryFile(path, successor);
@@ -303,16 +313,16 @@ export function AdminDashboard() {
       const esplora = esploraUrlForDeployment(selected);
       await requireFreshAnchor(selected, originalAnchor.live, esplora);
       const signer = signerSnapshot();
-      if (!signer.connected || !signer.fingerprint) throw new Error("Connect the AMP signer first.");
+      if (!signer.connected || !signer.profileId) throw new Error("Connect the AMP signer first.");
       const [verifierUtxo, wallet] = await Promise.all([
         liveAnchorUtxo(selected, originalAnchor.live.txid),
-        synchronizeDeploymentWallet(selected, signer.fingerprint),
+        synchronizeDeploymentWallet(selected, signer.profileId),
       ]);
       const fees = selectSpendableUtxos(wallet, selected.policyAsset, "wallet");
       await requireFreshAnchor(selected, originalAnchor.live, esplora);
       requireCurrentBlacklistScope(activeScope.current, scope);
-      if (selected.issuerDerivationIndex === undefined) {
-        throw new Error("This deployment has no local issuer-key locator.");
+      if (selected.issuerDerivationIndex === undefined || selected.issuerProfileId !== signer.profileId) {
+        throw new Error("Attach issuer control for the active signer profile before authorizing governance.");
       }
       const result = await signPolicyUpdate({
         deployment: publicManifest(selected),
@@ -324,6 +334,9 @@ export function AdminDashboard() {
         issuerDerivationIndex: selected.issuerDerivationIndex,
       });
       requireCurrentBlacklistScope(activeScope.current, scope);
+      if (signerSnapshot().profileId !== signer.profileId) {
+        throw new Error("The active signer profile changed before broadcast. Review the policy update again.");
+      }
       const broadcastTxid = await broadcastTransaction(selected, result.transaction);
       if (broadcastTxid !== result.txid) throw new Error("Esplora returned a different transaction ID.");
       setMessage(`Policy update ${result.txid} broadcast. Waiting for the confirmed successor anchor…`);
@@ -337,11 +350,11 @@ export function AdminDashboard() {
         setLoadedScope(undefined);
         setWorkspaceReady(false);
       }
-      await Promise.all([queryClient.invalidateQueries({ queryKey: ["anchor", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: ["policy", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.active }), queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.fingerprint, selected.network) })]);
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ["anchor", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: ["policy", selected.deploymentId] }), queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.active }), queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.profileId, selected.network) })]);
       if (activeScope.current === scope) setMessage(`Policy ${successor.sequence} active at ${winning.live.txid}:0.`);
     } catch (error) {
       if (error instanceof AnchorConflictError && attemptedScope) {
-        await putDraft(attemptedScope.deploymentId, pendingPolicyDraftName(attemptedScope.policyRoot), null);
+        await putDraft(attemptedScope.deploymentId, pendingPolicyDraftName(attemptedScope.policyRoot, attemptedScope.signerProfileId), null);
         if (activeScope.current === attemptedScope.scope) {
           setPending(undefined);
           setPendingPath(undefined);
@@ -378,7 +391,7 @@ export function AdminDashboard() {
             <div className="review-row"><span>Blacklist</span><strong>{scopedPending.entryCount} exact outpoint{scopedPending.entryCount === 1 ? "" : "s"} · D{scopedPending.treeDepth}</strong></div>
             <div className="review-row"><span>Current anchor</span><strong>{anchor.data ? `${shortHash(anchor.data.live.txid)}:0` : "Resolving…"}</strong></div>
             <div className="review-row"><span>Network fee</span><strong>0.000015 L-BTC</strong></div>
-            <div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReviewUpdate(false)}>Back</button><button className="button issuer-primary" disabled={busy} type="button" onClick={() => void activate()}>{busy ? "Validating and signing…" : "Sign and activate"} <ArrowRight size={15} /></button></div>
+            <div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReviewUpdate(false)}>Back</button><button className="button issuer-primary" disabled={busy || !signerState.walletReady} type="button" onClick={() => void activate()}>{busy ? "Validating and signing…" : !signerState.walletReady ? "Sync wallet before signing" : "Sign and activate"} <ArrowRight size={15} /></button></div>
           </div>}
           {message && <p className="inline-message" role="status">{message}</p>}
         </Panel>
@@ -427,8 +440,9 @@ export function AdminSetup() {
   const [importedDeployment, setImportedDeployment] = useState<Deployment>();
   const [importError, setImportError] = useState<string>();
   const [message, setMessage] = useState<string>();
-  const [busyAction, setBusyAction] = useState<"prepare" | "issue" | "registry" | "verify" | "import" | "attach">();
+  const [busyAction, setBusyAction] = useState<"prepare" | "issue" | "confirm" | "registry" | "verify" | "import" | "attach">();
   const [reviewIssuance, setReviewIssuance] = useState(false);
+  const previousSetupSigner = useRef(signer.profileId);
   const importFieldRef = useRef<HTMLTextAreaElement>(null);
   const form = useForm<SetupForm>({ resolver: zodResolver(setupSchema), defaultValues: { name: "", ticker: "", precision: 8, supply: "", supplyMode: "fixed", network: "liquid-testnet" } });
   const pendingBootstrap = useQuery({
@@ -437,10 +451,10 @@ export function AdminSetup() {
     queryFn: () => getDraft<BootstrapState | null>(activeDeployment.data!.deploymentId, "bootstrap-state"),
   });
   const preparedRecovery = useQuery({
-    queryKey: ["bootstrap-recovery", signer.fingerprint],
-    enabled: Boolean(signer.connected && signer.fingerprint && activeDeployment.isFetched && !activeDeployment.data),
+    queryKey: ["bootstrap-recovery", signer.profileId],
+    enabled: Boolean(signer.connected && signer.profileId && activeDeployment.isFetched && !activeDeployment.data),
     queryFn: async () => {
-      const raw = await getDraft<unknown>("setup", "recovery");
+      const raw = await getDraft<unknown>("setup", `recovery:${signer.profileId}`);
       if (!raw) return null;
       const saved = bootstrapRecoverySchema.parse(raw);
       const addresses = await Promise.all([
@@ -456,7 +470,7 @@ export function AdminSetup() {
     staleTime: Number.POSITIVE_INFINITY,
   });
   const fundingWallet = useBaseWalletSync({
-    fingerprint: signer.connected ? signer.fingerprint : undefined,
+    profileId: signer.connected ? signer.profileId : undefined,
     network: configuration?.network,
     enabled: Boolean(configuration),
   });
@@ -474,6 +488,23 @@ export function AdminSetup() {
   const fundingSyncError = fundingWallet.data?.syncError ?? (fundingWallet.error instanceof Error ? fundingWallet.error.message : undefined);
   const fundingPending = !fundingReady && fundingPlan.projectedReady;
   const showFundingActions = Boolean(fundingSnapshot && !fundingSyncError && !fundingWallet.isFetching && faucetOutputCount > 0);
+
+  useEffect(() => {
+    if (previousSetupSigner.current === signer.profileId) return;
+    previousSetupSigner.current = signer.profileId;
+    setConfiguration(undefined);
+    setSalt(undefined);
+    setFundingAddresses([]);
+    setReviewIssuance(false);
+    setMessage(undefined);
+    form.reset({ name: "", ticker: "", precision: 8, supply: "", supplyMode: "fixed", network: signer.network ?? "liquid-testnet" });
+  }, [form, signer.network, signer.profileId]);
+
+  useEffect(() => {
+    const key = `bootstrap:${activeDeployment.data?.deploymentId ?? "new"}:${signer.profileId ?? "locked"}`;
+    setSignerOperationPending(key, Boolean(reviewIssuance || busyAction));
+    return () => setSignerOperationPending(key, false);
+  }, [activeDeployment.data?.deploymentId, busyAction, reviewIssuance, signer.profileId]);
 
   useEffect(() => {
     if (!pendingBootstrap.data || bootstrapped) return;
@@ -499,23 +530,6 @@ export function AdminSetup() {
   }, [bootstrapped, message]);
 
   useEffect(() => {
-    if (!bootstrapped || bootstrapped.deployment.confirmations < 1 || registryFiles) return;
-    let cancelled = false;
-    void Promise.all([
-      deploymentRegistryPath(bootstrapped.deployment.deploymentId),
-      registryPathForVerifierScript(
-        bootstrapped.deployment.deploymentId,
-        bootstrapped.snapshot.verifierScriptPubkey,
-      ),
-    ]).then(([manifestPath, snapshotPath]) => {
-      if (!cancelled) setRegistryFiles({ manifestPath, snapshotPath });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [bootstrapped, registryFiles]);
-
-  useEffect(() => {
     if (preparedRecovery.error) setMessage(userFacingError(preparedRecovery.error));
   }, [preparedRecovery.error]);
 
@@ -523,6 +537,9 @@ export function AdminSetup() {
     setBusyAction("prepare");
     setMessage("Preparing deterministic issuance and funding addresses…");
     try {
+      const activeSigner = signerSnapshot();
+      if (!activeSigner.connected || !activeSigner.fingerprint || !activeSigner.profileId) throw new Error("Connect the AMP signer first.");
+      const signerRevision = signerSessionRevision();
       const bytes = crypto.getRandomValues(new Uint8Array(32));
       const deploymentSalt = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
       const policyAsset = nativeFeeAssetId(value.network);
@@ -530,12 +547,15 @@ export function AdminSetup() {
         deriveWalletAddress(0, 0, value.network),
         deriveWalletAddress(0, 1, value.network),
       ]);
+      if (signerSessionRevision() !== signerRevision || signerSnapshot().profileId !== activeSigner.profileId) {
+        throw new Error("The active signer profile changed while preparing issuance. Start again.");
+      }
       const prepared = { ...value, policyAsset };
       setConfiguration(prepared);
       setSalt(deploymentSalt);
       setFundingAddresses(addresses);
       setReviewIssuance(false);
-      await putDraft("setup", "recovery", {
+      await putDraft("setup", `recovery:${activeSigner.profileId}`, {
         protocol: "simplicity-amp/v0.1",
         deploymentSalt,
         ...prepared,
@@ -566,8 +586,8 @@ export function AdminSetup() {
     try {
       if (!configuration || !salt) throw new Error("Prepare and save recovery data first.");
       const signerState = signerSnapshot();
-      if (!signerState.connected || !signerState.fingerprint) throw new Error("Connect the AMP signer first.");
-      const wallet = await synchronizeBaseWallet({ fingerprint: signerState.fingerprint, network: configuration.network });
+      if (!signerState.connected || !signerState.fingerprint || !signerState.profileId) throw new Error("Connect the AMP signer first.");
+      const wallet = await synchronizeBaseWallet({ profileId: signerState.profileId, network: configuration.network });
       const policyUtxos = selectSpendableUtxos(wallet, configuration.policyAsset, "wallet");
       const pending = wallet.utxos.filter((utxo) => utxo.source === "wallet" && utxo.assetId === configuration.policyAsset && utxo.status === "unconfirmed").length;
       if (policyUtxos.length < 2) {
@@ -597,11 +617,14 @@ export function AdminSetup() {
       const initialReceiveRecord = receiveRecordSchema.parse(result.initialReceiveRecord);
       await validateReceiveRecordShape(initialReceiveRecord);
       await validateReceiveRecord(manifest, initialReceiveRecord);
-      const local = localDeploymentSchema.parse({ ...manifest, deploymentId, confirmations: 0, activeAnchor: manifest.genesisAnchor, issuerDerivationIndex: result.issuerDerivationIndex, publication: "pending" });
+      const local = localDeploymentSchema.parse({ ...manifest, deploymentId, confirmations: 0, activeAnchor: manifest.genesisAnchor, issuerDerivationIndex: result.issuerDerivationIndex, issuerFingerprint: signerState.fingerprint, issuerProfileId: signerState.profileId, publication: "pending" });
+      if (signerSnapshot().profileId !== signerState.profileId) {
+        throw new Error("The active signer profile changed before broadcast. Review the issuance again.");
+      }
       setMessage("Artifacts validated. Broadcasting the reviewed Liquid testnet issuance…");
       const broadcastTxid = await broadcastTransaction(configuration, result.transaction);
       if (broadcastTxid !== result.txid) throw new Error("Esplora returned a different bootstrap transaction ID.");
-      await queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signerState.fingerprint, configuration.network) });
+      await queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signerState.profileId, configuration.network) });
       await putDeployment(local);
       await setActiveDeploymentId(deploymentId);
       await putPolicySnapshot(snapshot, await sha256Hex(snapshot.verifierScriptPubkey));
@@ -622,21 +645,49 @@ export function AdminSetup() {
     }
   }
 
-  async function prepareBootstrapRegistry() {
-    setBusyAction("registry");
-    setMessage("Checking bootstrap confirmation and preparing canonical registry paths…");
+  async function checkBootstrapConfirmation() {
+    setBusyAction("confirm");
+    setMessage("Checking the issuance transaction for a Liquid block confirmation…");
     try {
       if (!bootstrapped) throw new Error("Bootstrap a deployment first.");
       const anchor = await traverseLiveAnchor(bootstrapped.deployment, esploraUrlForDeployment(bootstrapped.deployment));
-      if (anchor.live.confirmations < 1) throw new Error("Bootstrap is not confirmed yet.");
+      if (anchor.live.confirmations < 1) {
+        setMessage("The issuance transaction is still unconfirmed. Wait for a Liquid block, then check again.");
+        return;
+      }
       const confirmedDeployment = localDeploymentSchema.parse({
         ...bootstrapped.deployment,
         activeAnchor: `${anchor.live.txid}:0`,
         confirmations: anchor.live.confirmations,
       });
       const confirmedBootstrap = { ...bootstrapped, deployment: confirmedDeployment };
-      const snapshotPath = await registryPathForVerifierScript(bootstrapped.deployment.deploymentId, bootstrapped.snapshot.verifierScriptPubkey);
-      const manifestPath = deploymentRegistryPath(bootstrapped.deployment.deploymentId);
+      await putDeployment(confirmedDeployment);
+      await putDraft(confirmedDeployment.deploymentId, "bootstrap-state", confirmedBootstrap);
+      setBootstrapped(confirmedBootstrap);
+      await queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.active });
+      setMessage("Issuance confirmation verified. You can now prepare the canonical registry files.");
+    } catch (error) {
+      setMessage(userFacingError(error));
+    } finally {
+      setBusyAction(undefined);
+    }
+  }
+
+  async function prepareBootstrapRegistry() {
+    setBusyAction("registry");
+    setMessage("Rechecking confirmation and preparing canonical registry paths…");
+    try {
+      if (!bootstrapped || bootstrapped.deployment.confirmations < 1) throw new Error("Verify the issuance confirmation first.");
+      const anchor = await traverseLiveAnchor(bootstrapped.deployment, esploraUrlForDeployment(bootstrapped.deployment));
+      if (anchor.live.confirmations < 1) throw new Error("The issuance confirmation is no longer present. Check confirmation again before publishing.");
+      const confirmedDeployment = localDeploymentSchema.parse({
+        ...bootstrapped.deployment,
+        activeAnchor: `${anchor.live.txid}:0`,
+        confirmations: anchor.live.confirmations,
+      });
+      const snapshotPath = await registryPathForVerifierScript(confirmedDeployment.deploymentId, bootstrapped.snapshot.verifierScriptPubkey);
+      const manifestPath = deploymentRegistryPath(confirmedDeployment.deploymentId);
+      const confirmedBootstrap = { ...bootstrapped, deployment: confirmedDeployment };
       await putDeployment(confirmedDeployment);
       await putDraft(confirmedDeployment.deploymentId, "bootstrap-state", confirmedBootstrap);
       setBootstrapped(confirmedBootstrap);
@@ -793,7 +844,7 @@ export function AdminSetup() {
                 {fundingSyncError && <p className="field-error">{fundingSyncError}</p>}
                 <div className="review-buttons">
                   <button className="button secondary" disabled={Boolean(busyAction)} type="button" onClick={downloadRecovery}><Download size={16} /> Save recovery</button>
-                  <button className="button issuer-primary" disabled={Boolean(busyAction) || Boolean(bootstrapped) || !signer.connected || !fundingReady} type="button" onClick={() => { setReviewIssuance(true); setMessage("Review the Liquid testnet issuance, fee, and destinations before signing."); }}>Review issuance <ArrowRight size={16} /></button>
+                  <button className="button issuer-primary" disabled={Boolean(busyAction) || Boolean(bootstrapped) || !signer.connected || !signer.walletReady || !fundingReady} type="button" onClick={() => { setReviewIssuance(true); setMessage("Review the Liquid testnet issuance, fee, and destinations before signing."); }}>Review issuance <ArrowRight size={16} /></button>
                 </div>
                 {reviewIssuance && <div className="review-stack issuance-review" aria-label="Issuance review">
                   <div className="review-row"><span>Network</span><strong>{configuration.network === "liquid-testnet" ? "Liquid testnet" : "Elements regtest"}</strong></div>
@@ -801,17 +852,11 @@ export function AdminSetup() {
                   <div className="review-row"><span>Network fee</span><strong>0.00002 L-BTC</strong></div>
                   <div className="review-row"><span>Issued supply</span><strong>{configuration.supply} {configuration.ticker} base units</strong></div>
                   <div className="review-row"><span>Destinations</span><strong>Signer holder covenant{configuration.supplyMode === "issuer-managed" ? " + signer reissuance token" : ""}</strong></div>
-                  <div className="review-buttons"><button className="button secondary" disabled={Boolean(busyAction)} type="button" onClick={() => setReviewIssuance(false)}>Back</button><button className="button issuer-primary" disabled={Boolean(busyAction) || Boolean(bootstrapped) || !fundingReady} type="button" onClick={bootstrap}>{bootstrapped ? "Already broadcast" : busyAction === "issue" ? "Validating and signing…" : "Sign and broadcast"}</button></div>
+                  <div className="review-buttons"><button className="button secondary" disabled={Boolean(busyAction)} type="button" onClick={() => setReviewIssuance(false)}>Back</button><button className="button issuer-primary" disabled={Boolean(busyAction) || Boolean(bootstrapped) || !signer.walletReady || !fundingReady} type="button" onClick={bootstrap}>{bootstrapped ? "Already broadcast" : busyAction === "issue" ? "Validating and signing…" : !signer.walletReady ? "Sync wallet before signing" : "Sign and broadcast"}</button></div>
                 </div>}
               </div>
             )}
-            {bootstrapped && <div className="review-stack bootstrap-result" aria-label="Bootstrap result">
-              <div className="review-row"><span>Issuance transaction</span><strong><code title={bootstrapped.deployment.genesisAnchor.split(":")[0]}>{shortHash(bootstrapped.deployment.genesisAnchor.split(":")[0], 12, 10)}</code></strong></div>
-              <div className="review-row"><span>Chain state</span><strong>{bootstrapped.deployment.confirmations > 0 ? `${bootstrapped.deployment.confirmations} confirmation${bootstrapped.deployment.confirmations === 1 ? "" : "s"}` : "Awaiting confirmation"}</strong></div>
-              <div className="review-row"><span>Registry state</span><strong>{bootstrapped.deployment.publication === "published" ? "Published" : registryFiles ? "Ready for manual publication" : "Pending confirmation check"}</strong></div>
-              {bootstrapped.deployment.network === "liquid-testnet" && <a className="button secondary" href={`https://blockstream.info/liquidtestnet/tx/${bootstrapped.deployment.genesisAnchor.split(":")[0]}`} target="_blank" rel="noreferrer">View transaction <ExternalLink size={14} /></a>}
-            </div>}
-            {bootstrapped && !registryFiles && <button className="button issuer-primary wide" disabled={Boolean(busyAction)} type="button" onClick={prepareBootstrapRegistry}><Download size={16} /> {busyAction === "registry" ? "Checking confirmation…" : "Prepare confirmed registry files"}</button>}
+            {bootstrapped && <BootstrapRegistryState network={bootstrapped.deployment.network} txid={bootstrapped.deployment.genesisAnchor.split(":")[0]} assetId={bootstrapped.deployment.regulatedAsset} confirmations={bootstrapped.deployment.confirmations} publication={bootstrapped.deployment.publication} filesReady={Boolean(registryFiles)} busyAction={busyAction === "confirm" || busyAction === "registry" ? busyAction : undefined} onCheckConfirmation={() => void checkBootstrapConfirmation()} onPrepareRegistry={() => void prepareBootstrapRegistry()} />}
             {bootstrapped && registryFiles && (
               <div className="registry-files">
                 <div><span>Deployment manifest</span><code title={registryFiles.manifestPath}>{registryFiles.manifestPath}</code><div className="registry-file-actions"><button className="button secondary" type="button" onClick={() => void copyBootstrapRegistryFile("manifest")}><ClipboardCopy size={15} /> Copy</button><button className="button secondary" type="button" onClick={downloadBootstrapManifest}><Download size={15} /> Download</button></div></div>
@@ -824,24 +869,25 @@ export function AdminSetup() {
           <aside className="setup-aside"><SafetyNote title="Small first tree">Every deployment starts with the D4 verifier. Governance upgrades to D5 or D6 only when the blacklist grows.</SafetyNote></aside>
         </div>
       )}
-      {mode === "import" && <div className="setup-layout"><Panel className="setup-main"><button className="setup-chooser-return text-button" type="button" onClick={() => setMode("choose")}><ArrowRight size={14} /> Back to setup choices</button><SectionHeading label="Public deployment import" title="Manifest JSON or HTTPS URL" /><div className="form-stack"><label>Public source<textarea ref={importFieldRef} aria-invalid={Boolean(importError)} aria-describedby={importError ? "setup-import-error" : "setup-import-help"} rows={12} value={importValue} onChange={(event) => { setImportValue(event.target.value); setImportError(undefined); }} />{importError ? <small id="setup-import-error" className="field-error">{importError}</small> : <small id="setup-import-help">The manifest must be byte-identical on the canonical registry default branch.</small>}</label><button className="button issuer-primary wide" disabled={Boolean(busyAction) || !importValue.trim()} type="button" onClick={importDeployment}><ShieldCheck size={16} /> {busyAction === "import" ? "Verifying canonical data…" : "Import public deployment"}</button>{importedDeployment && <div className="issuer-attachment"><div><strong>Public import complete</strong><small>{importedDeployment.issuerDerivationIndex === undefined ? "No issuer authority is attached to this browser." : "Issuer control is attached locally."}</small></div>{importedDeployment.issuerDerivationIndex === undefined && <button className="button secondary" disabled={Boolean(busyAction) || !signer.connected} type="button" onClick={() => void attachImportedIssuerControl()}>{busyAction === "attach" ? "Proving control…" : "Attach issuer control"}</button>}</div>}</div>{message && <p className="inline-message" role="status" aria-live="polite">{message}</p>}</Panel><aside className="setup-aside"><SafetyNote title="Role-neutral import">Holder use needs only canonical public data. Governance and reissuance stay locked until the connected signer separately proves the issuer key.</SafetyNote></aside></div>}
+      {mode === "import" && <div className="setup-layout"><Panel className="setup-main"><button className="setup-chooser-return text-button" type="button" onClick={() => setMode("choose")}><ArrowRight size={14} /> Back to setup choices</button><SectionHeading label="Public deployment import" title="Manifest JSON or HTTPS URL" /><div className="form-stack"><label>Public source<textarea ref={importFieldRef} aria-invalid={Boolean(importError)} aria-describedby={importError ? "setup-import-error" : "setup-import-help"} rows={12} value={importValue} onChange={(event) => { setImportValue(event.target.value); setImportError(undefined); }} />{importError ? <small id="setup-import-error" className="field-error">{importError}</small> : <small id="setup-import-help">The manifest must be byte-identical on the canonical registry default branch.</small>}</label><button className="button issuer-primary wide" disabled={Boolean(busyAction) || !importValue.trim()} type="button" onClick={importDeployment}><ShieldCheck size={16} /> {busyAction === "import" ? "Verifying canonical data…" : "Import public deployment"}</button>{importedDeployment && <div className="issuer-attachment"><div><strong>Public import complete</strong><small>{importedDeployment.issuerProfileId === signer.profileId && importedDeployment.issuerDerivationIndex !== undefined ? "Issuer control is attached to the active signer profile." : "No issuer authority is attached to the active signer profile."}</small></div>{(importedDeployment.issuerProfileId !== signer.profileId || importedDeployment.issuerDerivationIndex === undefined) && <button className="button secondary" disabled={Boolean(busyAction) || !signer.connected} type="button" onClick={() => void attachImportedIssuerControl()}>{busyAction === "attach" ? "Proving control…" : "Attach issuer control"}</button>}</div>}</div>{message && <p className="inline-message" role="status" aria-live="polite">{message}</p>}</Panel><aside className="setup-aside"><SafetyNote title="Role-neutral import">Holder use needs only canonical public data. Governance and reissuance stay locked until the connected signer separately proves the issuer key.</SafetyNote></aside></div>}
     </AppShell>
   );
 }
 
 export function AdminReissue() {
   const deployment = useActiveDeployment();
+  const signerState = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
   const { anchor, policy } = useLivePolicy(deployment.data);
   const queryClient = useQueryClient();
   const [review, setReview] = useState<ReissueForm>();
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
   const form = useForm<ReissueForm>({ resolver: zodResolver(reissueSchema) });
-  const receiptKey = operationReceiptQueryKey(deployment.data?.deploymentId, "reissuance");
+  const receiptKey = operationReceiptQueryKey(deployment.data?.deploymentId, "reissuance", signerState.profileId);
   const receiptQuery = useQuery({
     queryKey: receiptKey,
-    enabled: Boolean(deployment.data),
-    queryFn: async () => (await loadOperationReceipt(deployment.data!.deploymentId, "reissuance")) ?? null,
+    enabled: Boolean(deployment.data && signerState.connected && signerState.profileId),
+    queryFn: async () => (await loadOperationReceipt(deployment.data!.deploymentId, "reissuance", signerState.profileId!)) ?? null,
     staleTime: Number.POSITIVE_INFINITY,
   });
   const receipt = receiptQuery.data ?? undefined;
@@ -853,7 +899,13 @@ export function AdminReissue() {
     setReview(undefined);
     setMessage(undefined);
     form.reset({ amount: "" });
-  }, [deployment.data?.deploymentId, form]);
+  }, [deployment.data?.deploymentId, form, signerState.profileId]);
+
+  useEffect(() => {
+    const key = `reissuance:${deployment.data?.deploymentId ?? "none"}:${signerState.profileId ?? "locked"}`;
+    setSignerOperationPending(key, Boolean(review || busy));
+    return () => setSignerOperationPending(key, false);
+  }, [busy, deployment.data?.deploymentId, review, signerState.profileId]);
 
   async function authorize() {
     if (!tryBeginOperation(broadcastInFlight, receipt)) return;
@@ -866,15 +918,15 @@ export function AdminReissue() {
       if (!review) throw new Error("Review the reissuance first.");
       const esplora = esploraUrlForDeployment(selected);
       await requireFreshAnchor(selected, anchor.data.live, esplora);
-      if (selected.issuerDerivationIndex === undefined) {
-        throw new Error("This deployment has no local issuer-key locator.");
-      }
       const signer = signerSnapshot();
-      if (!signer.connected || !signer.fingerprint) throw new Error("Connect the AMP signer first.");
+      if (!signer.connected || !signer.profileId) throw new Error("Connect the AMP signer first.");
+      if (selected.issuerDerivationIndex === undefined || selected.issuerProfileId !== signer.profileId) {
+        throw new Error("Attach issuer control for the active signer profile before reissuing.");
+      }
       const [wallet, verifierUtxo, recipient] = await Promise.all([
-        synchronizeDeploymentWallet(selected, signer.fingerprint),
+        synchronizeDeploymentWallet(selected, signer.profileId),
         liveAnchorUtxo(selected, anchor.data.live.txid),
-        ensureSignerReceiveRecord(selected, signer.fingerprint),
+        ensureSignerReceiveRecord(selected, signer.profileId),
       ]);
       const fees = selectSpendableUtxos(wallet, selected.policyAsset, "wallet");
       const tokenUtxo = selectSpendableUtxos(wallet, selected.reissuanceToken!, "wallet")[0];
@@ -891,6 +943,9 @@ export function AdminReissue() {
         fee: "2000",
         issuerDerivationIndex: selected.issuerDerivationIndex,
       });
+      if (signerSnapshot().profileId !== signer.profileId) {
+        throw new Error("The active signer profile changed before broadcast. Review the reissuance again.");
+      }
       if (activeDeploymentId.current !== selected.deploymentId) {
         throw new Error("The active deployment changed before broadcast. Review the reissuance again.");
       }
@@ -901,6 +956,7 @@ export function AdminReissue() {
         operation: "reissuance",
         txid: result.txid,
         amount: review.amount,
+        signerProfileId: signer.profileId,
       });
       // Enter the terminal in-memory state before durable persistence. A local
       // storage failure must never re-enable the just-broadcast action.
@@ -912,7 +968,7 @@ export function AdminReissue() {
         receiptWarning = ` The receipt could not be saved for reload: ${userFacingError(error)}`;
       }
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.fingerprint, selected.network) }),
+        queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.profileId, selected.network) }),
         queryClient.invalidateQueries({ queryKey: ["anchor", selected.deploymentId] }),
         queryClient.invalidateQueries({ queryKey: ["policy", selected.deploymentId] }),
         queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.all }),
@@ -929,7 +985,8 @@ export function AdminReissue() {
 
   async function startNewReissuance() {
     const selected = requireDeployment(deployment.data);
-    await dismissOperationReceipt(selected.deploymentId, "reissuance");
+    if (!signerState.profileId) throw new Error("Connect the signer profile that created this receipt.");
+    await dismissOperationReceipt(selected.deploymentId, "reissuance", signerState.profileId);
     queryClient.setQueryData(receiptKey, null);
     setReview(undefined);
     setMessage(undefined);
@@ -939,7 +996,7 @@ export function AdminReissue() {
   return (
     <AppShell eyebrow="Issuer console / Reissue" title="Mint governed supply">
       <BackLink to="/admin">Back to policy workspace</BackLink>
-      <div className="setup-layout"><Panel className="setup-main"><SectionHeading label="Managed supply" title={receipt ? "Reissuance receipt" : review ? "Review the mint" : "Define the reissuance"} aside={<Pill tone="warn">Issuer governed</Pill>} />{!deployment.data ? <p>No deployment is selected. Create or import one in Setup before reissuing.</p> : deployment.data.publication !== "published" ? <div className="generate-record"><ShieldCheck size={26} /><p>The deployment is confirmed, but reissuance remains locked until canonical registry publication is verified.</p><Link className="button issuer-primary" to="/admin/setup">Finish registry publication</Link></div> : deployment.data.supplyMode !== "issuer-managed" ? <p>This deployment has fixed supply; reissuance is disabled.</p> : receipt ? <div className="operation-receipt" role="status"><Check size={26} /><h3>Broadcast accepted</h3><p>This terminal receipt prevents the reviewed mint from being signed or broadcast again.</p><dl><div><dt>Transaction</dt><dd><code title={receipt.txid}>{shortHash(receipt.txid, 12, 10)}</code></dd></div><div><dt>New units</dt><dd>{receipt.amount} {receipt.ticker} base units</dd></div></dl>{transactionExplorerUrl(deployment.data.network, receipt.txid) && <a className="button secondary wide" href={transactionExplorerUrl(deployment.data.network, receipt.txid)} target="_blank" rel="noreferrer">View transaction <ExternalLink size={14} /></a>}<button className="button issuer-primary wide" type="button" onClick={() => void startNewReissuance()}>Start a new reissuance</button></div> : !review ? <form className="form-stack" onSubmit={form.handleSubmit(setReview)}><label>New base units<input aria-invalid={Boolean(form.formState.errors.amount)} aria-describedby={form.formState.errors.amount ? "reissue-amount-error" : "reissue-amount-help"} inputMode="numeric" {...form.register("amount")} />{form.formState.errors.amount ? <small id="reissue-amount-error" className="field-error">{form.formState.errors.amount.message}</small> : <small id="reissue-amount-help">The protocol reviews and commits the amount; it has no public reason field.</small>}</label><button className="button issuer-primary wide" type="submit">Review reissuance <ArrowRight size={16} /></button></form> : <div className="review-stack"><div className="review-row"><span>New units</span><strong>{review.amount}</strong></div><div className="review-row"><span>Verifier</span><strong>Same script, governance spend</strong></div><div className="review-row"><span>Destination</span><strong>Validated holder covenant</strong></div><div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReview(undefined)}>Edit</button><button className="button issuer-primary" disabled={busy || receiptQuery.isPending} type="button" onClick={authorize}>{busy ? "Validating and signing…" : "Sign locally"} <ArrowRight size={16} /></button></div></div>}{message && <p className="inline-message" role="status" aria-live="polite">{message}</p>}</Panel><aside className="setup-aside"><div className="risk-note"><AlertTriangle size={18} /><p><strong>Issuer authority</strong>The AMP Signer SDK verifies the current anchor, token, holder destination, recreated script, explicit assets, and exact fee before using issuer secrets.</p></div><Panel><h3>Required checks</h3><ul className="check-list"><li><RefreshCw size={15} /> Fresh winning anchor</li><li><Check size={15} /> Token returned</li><li><Check size={15} /> Same verifier script</li><li><Check size={15} /> Holder-only new supply</li></ul></Panel></aside></div>
+      <div className="setup-layout"><Panel className="setup-main"><SectionHeading label="Managed supply" title={receipt ? "Reissuance receipt" : review ? "Review the mint" : "Define the reissuance"} aside={<Pill tone="warn">Issuer governed</Pill>} />{!deployment.data ? <p>No deployment is selected. Create or import one in Setup before reissuing.</p> : deployment.data.publication !== "published" ? <div className="generate-record"><ShieldCheck size={26} /><p>The deployment is confirmed, but reissuance remains locked until canonical registry publication is verified.</p><Link className="button issuer-primary" to="/admin/setup">Finish registry publication</Link></div> : deployment.data.supplyMode !== "issuer-managed" ? <p>This deployment has fixed supply; reissuance is disabled.</p> : receipt ? <OperationReceiptPanel receipt={receipt} network={deployment.data.network} amountLabel={`${receipt.amount} ${receipt.ticker} base units`} resetLabel="Start a new reissuance" tone="issuer" onReset={() => void startNewReissuance()} /> : !review ? <form className="form-stack" onSubmit={form.handleSubmit(setReview)}><label>New base units<input aria-invalid={Boolean(form.formState.errors.amount)} aria-describedby={form.formState.errors.amount ? "reissue-amount-error" : "reissue-amount-help"} inputMode="numeric" {...form.register("amount")} />{form.formState.errors.amount ? <small id="reissue-amount-error" className="field-error">{form.formState.errors.amount.message}</small> : <small id="reissue-amount-help">The protocol reviews and commits the amount; it has no public reason field.</small>}</label><button className="button issuer-primary wide" type="submit">Review reissuance <ArrowRight size={16} /></button></form> : <div className="review-stack"><div className="review-row"><span>New units</span><strong>{review.amount}</strong></div><div className="review-row"><span>Verifier</span><strong>Same script, governance spend</strong></div><div className="review-row"><span>Destination</span><strong>Validated holder covenant</strong></div><div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReview(undefined)}>Edit</button><button className="button issuer-primary" disabled={busy || receiptQuery.isPending || !signerState.walletReady} type="button" onClick={authorize}>{busy ? "Validating and signing…" : !signerState.walletReady ? "Sync wallet before signing" : "Sign locally"} <ArrowRight size={16} /></button></div></div>}{message && <p className="inline-message" role="status" aria-live="polite">{message}</p>}</Panel><aside className="setup-aside"><div className="risk-note"><AlertTriangle size={18} /><p><strong>Issuer authority</strong>The AMP Signer SDK verifies the current anchor, token, holder destination, recreated script, explicit assets, and exact fee before using issuer secrets.</p></div><Panel><h3>Required checks</h3><ul className="check-list"><li><RefreshCw size={15} /> Fresh winning anchor</li><li><Check size={15} /> Token returned</li><li><Check size={15} /> Same verifier script</li><li><Check size={15} /> Holder-only new supply</li></ul></Panel></aside></div>
     </AppShell>
   );
 }

@@ -14,7 +14,7 @@ mod transaction;
 mod transfer;
 
 const CONTRACT_BUNDLE_HASH: &str =
-    "fb5ad11d67c46fce7c9c0a20f4fca2fe550387e7b92b5527402b38e1ce85bb3f";
+    "10e5f8c6ea867a72d348ccee831babef9d9009b586b6332ce4fe6629bb3dc1ba";
 
 use amp_core::policy::{PolicySet, TreeDepth, outpoint_key};
 use amp_core::registry::{

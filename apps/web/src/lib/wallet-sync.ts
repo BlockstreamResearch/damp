@@ -6,6 +6,7 @@ import {
   createReceiveRecord,
   deriveWalletAddress,
   inspectUtxos,
+  markSignerWalletReady,
   signerSessionRevision,
   signerSnapshot,
   validateReceiveRecord,
@@ -31,7 +32,7 @@ import {
 } from "./store";
 import { walletDiscoverySource, type WalletDiscoverySource } from "./wallet-source";
 
-export const walletSyncVersion = 2 as const;
+export const walletSyncVersion = 3 as const;
 export const defaultWalletGapLimit = 10;
 const maxDiscoveryIndex = 999;
 const maxDiscoveredUtxos = 1_000;
@@ -146,7 +147,7 @@ export type WalletSyncUtxo = z.infer<typeof walletSyncUtxoSchema>;
 
 export const walletSyncSnapshotSchema = z.object({
   version: z.literal(walletSyncVersion),
-  fingerprint: z.string().regex(/^[0-9a-f]{8}$/),
+  profileId: z.string().regex(/^(liquid-testnet|elements-regtest):[0-9a-f]{64}$/),
   network: z.enum(["liquid-testnet", "elements-regtest"]),
   discoveryProvider: z.enum(["waterfalls-v4", "esplora"]),
   scope: z.union([z.literal("base"), z.string().regex(HASH)]),
@@ -376,31 +377,33 @@ const defaultDependencies: WalletDiscoveryDependencies = {
   now: () => new Date().toISOString(),
 };
 
-export function walletSyncStorageKey(fingerprint: string, network: SignerNetwork, scope: string) {
-  return `${walletSyncVersion}:${fingerprint}:${network}:${scope}`;
+export function walletSyncStorageKey(profileId: string, network: SignerNetwork, scope: string) {
+  return `${walletSyncVersion}:${profileId}:${network}:${scope}`;
 }
 
 export async function loadWalletSyncSnapshot(
-  fingerprint: string,
+  profileId: string,
   network: SignerNetwork,
   scope: string,
 ) {
-  const stored = await getWalletSyncRecord<unknown>(walletSyncStorageKey(fingerprint, network, scope));
+  const stored = await getWalletSyncRecord<unknown>(walletSyncStorageKey(profileId, network, scope));
   const parsed = walletSyncSnapshotSchema.safeParse(stored);
-  return parsed.success ? parsed.data : undefined;
+  return parsed.success && parsed.data.profileId === profileId && parsed.data.network === network && parsed.data.scope === scope
+    ? parsed.data
+    : undefined;
 }
 
 export async function saveWalletSyncSnapshot(snapshot: WalletSyncSnapshot) {
   const parsed = walletSyncSnapshotSchema.parse(snapshot);
   await putWalletSyncRecord(
-    walletSyncStorageKey(parsed.fingerprint, parsed.network, parsed.scope),
+    walletSyncStorageKey(parsed.profileId, parsed.network, parsed.scope),
     parsed,
   );
   return parsed;
 }
 
 export async function discoverWalletSnapshot(input: {
-  fingerprint: string;
+  profileId: string;
   network: SignerNetwork;
   scope: string;
   source: WalletDiscoverySource;
@@ -595,7 +598,7 @@ export async function discoverWalletSnapshot(input: {
 
   return walletSyncSnapshotSchema.parse({
     version: walletSyncVersion,
-    fingerprint: input.fingerprint,
+    profileId: input.profileId,
     network: input.network,
     discoveryProvider: input.source.provider,
     scope: input.scope,
@@ -616,34 +619,37 @@ export async function discoverWalletSnapshot(input: {
 }
 
 export async function synchronizeBaseWallet(input: {
-  fingerprint: string;
+  profileId: string;
   network: SignerNetwork;
   signal?: AbortSignal;
   request?: typeof fetch;
   dependencies?: Partial<WalletDiscoveryDependencies>;
 }) {
-  const revision = requireSignerIdentity(input.fingerprint, input.network);
-  const previous = await loadWalletSyncSnapshot(input.fingerprint, input.network, "base");
+  const revision = requireSignerIdentity(input.profileId, input.network);
+  const previous = await loadWalletSyncSnapshot(input.profileId, input.network, "base");
   const snapshot = await discoverWalletSnapshot({
     ...input,
     source: walletDiscoverySource(input.network),
     scope: "base",
     previous,
   });
-  requireSignerIdentity(input.fingerprint, input.network, revision);
-  return saveWalletSyncSnapshot(snapshot);
+  requireSignerIdentity(input.profileId, input.network, revision);
+  const saved = await saveWalletSyncSnapshot(snapshot);
+  requireSignerIdentity(input.profileId, input.network, revision);
+  markSignerWalletReady(input.profileId, input.network);
+  return saved;
 }
 
 export async function synchronizeDeploymentWallet(
   deployment: Deployment,
-  fingerprint: string,
+  profileId: string,
   options: { signal?: AbortSignal; request?: typeof fetch; dependencies?: Partial<WalletDiscoveryDependencies> } = {},
 ) {
-  const revision = requireSignerIdentity(fingerprint, deployment.network);
-  const record = await ensureSignerReceiveRecord(deployment, fingerprint);
-  const previous = await loadWalletSyncSnapshot(fingerprint, deployment.network, deployment.deploymentId);
+  const revision = requireSignerIdentity(profileId, deployment.network);
+  const record = await ensureSignerReceiveRecord(deployment, profileId);
+  const previous = await loadWalletSyncSnapshot(profileId, deployment.network, deployment.deploymentId);
   const snapshot = await discoverWalletSnapshot({
-    fingerprint,
+    profileId,
     network: deployment.network,
     scope: deployment.deploymentId,
     source: walletDiscoverySource(deployment.network),
@@ -651,8 +657,11 @@ export async function synchronizeDeploymentWallet(
     holderRecords: [record],
     ...options,
   });
-  requireSignerIdentity(fingerprint, deployment.network, revision);
-  return saveWalletSyncSnapshot(snapshot);
+  requireSignerIdentity(profileId, deployment.network, revision);
+  const saved = await saveWalletSyncSnapshot(snapshot);
+  requireSignerIdentity(profileId, deployment.network, revision);
+  markSignerWalletReady(profileId, deployment.network);
+  return saved;
 }
 
 export type AssetBalance = {
@@ -792,8 +801,8 @@ export function signerReceiveRecord(
   return matching;
 }
 
-export async function ensureSignerReceiveRecord(deployment: Deployment, fingerprint: string) {
-  const revision = requireSignerIdentity(fingerprint, deployment.network);
+export async function ensureSignerReceiveRecord(deployment: Deployment, profileId: string) {
+  const revision = requireSignerIdentity(profileId, deployment.network);
   const stored = await listReceiveRecords(deployment.deploymentId);
   // Derive the connected signer's deterministic holder identity first. A
   // deployment may contain public receive records for several mnemonics, but a
@@ -810,7 +819,7 @@ export async function ensureSignerReceiveRecord(deployment: Deployment, fingerpr
   const matching = signerReceiveRecord(stored, derived.ownerPublicKey, created.derivationIndex);
   if (!matching) {
     await putReceiveRecord(derived, created.derivationIndex);
-    requireSignerIdentity(fingerprint, deployment.network, revision);
+    requireSignerIdentity(profileId, deployment.network, revision);
     return { record: derived, derivationIndex: created.derivationIndex };
   }
 
@@ -820,17 +829,17 @@ export async function ensureSignerReceiveRecord(deployment: Deployment, fingerpr
   }
   await validateReceiveRecordShape(record);
   await validateReceiveRecord(publicManifest(deployment), record);
-  requireSignerIdentity(fingerprint, deployment.network, revision);
+  requireSignerIdentity(profileId, deployment.network, revision);
   return { record, derivationIndex: matching.derivationIndex };
 }
 
 function requireSignerIdentity(
-  fingerprint: string,
+  profileId: string,
   network: SignerNetwork,
   revision = signerSessionRevision(),
 ) {
   const current = signerSnapshot();
-  if (!current.connected || current.fingerprint !== fingerprint || current.network !== network) {
+  if (!current.connected || current.profileId !== profileId || current.network !== network) {
     throw new Error("The connected signer changed; restart wallet synchronization.");
   }
   if (signerSessionRevision() !== revision) {

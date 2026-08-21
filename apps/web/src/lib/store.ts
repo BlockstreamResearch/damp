@@ -92,23 +92,24 @@ export async function deleteDraft(deploymentId: string, name: string) {
 export async function putTxidKeyedReceipt<T extends { txid: string }>(
   deploymentId: string,
   operation: string,
+  signerProfileId: string,
   receipt: T,
 ) {
   const db = await database;
   const transaction = db.transaction("drafts", "readwrite");
   await Promise.all([
-    transaction.store.put(receipt, `${deploymentId}:receipt:${operation}:${receipt.txid}`),
-    transaction.store.put(receipt, `${deploymentId}:receipt:${operation}:latest`),
+    transaction.store.put(receipt, `${deploymentId}:receipt:${operation}:${signerProfileId}:${receipt.txid}`),
+    transaction.store.put(receipt, `${deploymentId}:receipt:${operation}:${signerProfileId}:latest`),
   ]);
   await transaction.done;
 }
 
-export async function getLatestReceipt<T>(deploymentId: string, operation: string): Promise<T | undefined> {
-  return (await database).get("drafts", `${deploymentId}:receipt:${operation}:latest`);
+export async function getLatestReceipt<T>(deploymentId: string, operation: string, signerProfileId: string): Promise<T | undefined> {
+  return (await database).get("drafts", `${deploymentId}:receipt:${operation}:${signerProfileId}:latest`);
 }
 
-export async function clearLatestReceipt(deploymentId: string, operation: string) {
-  return (await database).delete("drafts", `${deploymentId}:receipt:${operation}:latest`);
+export async function clearLatestReceipt(deploymentId: string, operation: string, signerProfileId: string) {
+  return (await database).delete("drafts", `${deploymentId}:receipt:${operation}:${signerProfileId}:latest`);
 }
 
 export async function getCachedRecord<T>(key: string): Promise<T | undefined> {

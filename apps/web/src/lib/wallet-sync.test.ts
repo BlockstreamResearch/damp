@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const storedWallets = vi.hoisted(() => new Map<string, unknown>());
 const currentSigner = vi.hoisted(() => ({
   fingerprint: "aabbccdd",
+  profileId: `elements-regtest:${"aa".repeat(32)}`,
   network: "elements-regtest" as const,
   revision: 1,
 }));
@@ -11,7 +12,7 @@ vi.mock("./amp-signer", async () => {
   const actual = await vi.importActual<typeof import("./amp-signer")>("./amp-signer");
   return {
     ...actual,
-    signerSnapshot: () => ({ connected: true, fingerprint: currentSigner.fingerprint, network: currentSigner.network }),
+    signerSnapshot: () => ({ connected: true, fingerprint: currentSigner.fingerprint, profileId: currentSigner.profileId, network: currentSigner.network }),
     signerSessionRevision: () => currentSigner.revision,
   };
 });
@@ -46,6 +47,7 @@ import {
 } from "./wallet-sync";
 
 const fingerprint = "aabbccdd";
+const profileId = `elements-regtest:${"aa".repeat(32)}`;
 const policyAsset = "11".repeat(32);
 const regulatedAsset = "22".repeat(32);
 
@@ -108,7 +110,7 @@ async function discover(input: {
   dependencies?: Partial<WalletDiscoveryDependencies>;
 } = {}) {
   return discoverWalletSnapshot({
-    fingerprint,
+    profileId,
     network: "elements-regtest",
     scope: "base",
     source: { provider: "esplora", baseUrl: "http://esplora.test/api" },
@@ -122,6 +124,7 @@ describe("wallet discovery", () => {
   beforeEach(() => {
     storedWallets.clear();
     currentSigner.fingerprint = fingerprint;
+    currentSigner.profileId = profileId;
     currentSigner.revision = 1;
     localStorage.setItem("simplicity-amp:regtest-esplora", "http://esplora.test/api");
   });
@@ -244,7 +247,7 @@ describe("wallet discovery", () => {
     const request = vi.fn<typeof fetch>(() => Promise.resolve(new Response(new Uint8Array(1_000_000))));
 
     await expect(discoverWalletSnapshot({
-      fingerprint,
+      profileId,
       network: "liquid-testnet",
       scope: "base",
       source: {
@@ -280,6 +283,7 @@ describe("wallet state and persistence", () => {
   beforeEach(() => {
     storedWallets.clear();
     currentSigner.fingerprint = fingerprint;
+    currentSigner.profileId = profileId;
     currentSigner.revision = 1;
     localStorage.setItem("simplicity-amp:regtest-esplora", "http://esplora.test/api");
   });
@@ -371,13 +375,14 @@ describe("wallet state and persistence", () => {
     });
   });
 
-  it("restores the same fingerprint snapshot and isolates another mnemonic", async () => {
+  it("restores the same strong profile snapshot and isolates another mnemonic", async () => {
     const snapshot = await discover();
     await saveWalletSyncSnapshot(snapshot);
 
-    await expect(loadWalletSyncSnapshot(fingerprint, "elements-regtest", "base")).resolves.toEqual(snapshot);
-    await expect(loadWalletSyncSnapshot("11223344", "elements-regtest", "base")).resolves.toBeUndefined();
-    expect(walletSyncStorageKey(fingerprint, "elements-regtest", "base")).not.toBe(walletSyncStorageKey("11223344", "elements-regtest", "base"));
+    await expect(loadWalletSyncSnapshot(profileId, "elements-regtest", "base")).resolves.toEqual(snapshot);
+    const otherProfileId = `elements-regtest:${"bb".repeat(32)}`;
+    await expect(loadWalletSyncSnapshot(otherProfileId, "elements-regtest", "base")).resolves.toBeUndefined();
+    expect(walletSyncStorageKey(profileId, "elements-regtest", "base")).not.toBe(walletSyncStorageKey(otherProfileId, "elements-regtest", "base"));
   });
 
   it("selects only the connected signer's deployment receive record", () => {
@@ -394,42 +399,43 @@ describe("wallet state and persistence", () => {
     const snapshot = await discover();
     await saveWalletSyncSnapshot(snapshot);
     await expect(synchronizeBaseWallet({
-      fingerprint,
+      profileId,
       network: "elements-regtest",
       dependencies: dependencies({ scans: () => { throw new Error("network failed"); } }),
     })).rejects.toThrow("network failed");
-    await expect(loadWalletSyncSnapshot(fingerprint, "elements-regtest", "base")).resolves.toEqual(snapshot);
+    await expect(loadWalletSyncSnapshot(profileId, "elements-regtest", "base")).resolves.toEqual(snapshot);
   });
 
   it("keeps the last good snapshot when adversarial activity exhausts the global address budget", async () => {
     const snapshot = await discover();
     await saveWalletSyncSnapshot(snapshot);
     await expect(synchronizeBaseWallet({
-      fingerprint,
+      profileId,
       network: "elements-regtest",
       dependencies: dependencies({ scans: () => ({ hasActivity: true, utxos: [] }) }),
     })).rejects.toMatchObject({
       code: "WALLET_DISCOVERY_SAFETY_LIMIT",
       limit: "addresses",
     } satisfies Partial<WalletDiscoverySafetyError>);
-    await expect(loadWalletSyncSnapshot(fingerprint, "elements-regtest", "base")).resolves.toEqual(snapshot);
+    await expect(loadWalletSyncSnapshot(profileId, "elements-regtest", "base")).resolves.toEqual(snapshot);
   });
 
   it("does not persist a scan if the connected signer changes mid-refresh", async () => {
     const snapshot = await discover();
     await saveWalletSyncSnapshot(snapshot);
     await expect(synchronizeBaseWallet({
-      fingerprint,
+      profileId,
       network: "elements-regtest",
       dependencies: {
         ...dependencies(),
         fetchTipHeight: () => {
           currentSigner.revision += 1;
           currentSigner.fingerprint = "11223344";
+          currentSigner.profileId = `elements-regtest:${"bb".repeat(32)}`;
           return Promise.resolve(101);
         },
       },
     })).rejects.toThrow("connected signer changed");
-    await expect(loadWalletSyncSnapshot(fingerprint, "elements-regtest", "base")).resolves.toEqual(snapshot);
+    await expect(loadWalletSyncSnapshot(profileId, "elements-regtest", "base")).resolves.toEqual(snapshot);
   });
 });

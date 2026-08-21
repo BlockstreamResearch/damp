@@ -578,9 +578,9 @@ fn maximum_ten_input_ten_output_transfer_uses_recorded_minimal_padding() -> anyh
             metrics.required_padding_bytes,
         );
         let expected = match depth {
-            TreeDepth::D4 => (15_835, 15_053_549, 0),
-            TreeDepth::D5 => (18_104, 16_617_840, 0),
-            TreeDepth::D6 => (20_408, 18_368_883, 0),
+            TreeDepth::D4 => (15_950, 14_692_239, 0),
+            TreeDepth::D5 => (18_235, 16_397_330, 0),
+            TreeDepth::D6 => (20_539, 18_074_773, 0),
         };
         assert_eq!(
             (
@@ -634,9 +634,9 @@ fn maximum_ten_input_ten_output_transfer_uses_recorded_minimal_padding() -> anyh
             ordinary_metrics.required_padding_bytes,
         );
         let expected_ordinary = match depth {
-            TreeDepth::D4 => (12_624, 12_668_815, 0),
-            TreeDepth::D5 => (14_317, 14_340_306, 0),
-            TreeDepth::D6 => (16_045, 16_091_349, 0),
+            TreeDepth::D4 => (12_739, 12_414_705, 0),
+            TreeDepth::D5 => (14_449, 14_119_796, 0),
+            TreeDepth::D6 => (16_176, 15_797_239, 0),
         };
         assert_eq!(
             (

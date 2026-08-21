@@ -9,6 +9,18 @@ import type {
   ReceiveRecord,
   TreeDepth,
 } from "./domain";
+import {
+  loadSignerProfileMetadata,
+  deriveSignerPublicIdentity,
+  removeSignerProfileMetadata,
+  renameSignerProfileMetadata,
+  saveSignerProfileMetadata,
+  signerProfileId,
+  upsertSignerProfileMetadata,
+  type SignerProfile,
+  type SignerProfileMetadata,
+} from "./signer-profiles";
+export type { SignerProfile } from "./signer-profiles";
 
 type SignerModule = typeof import("../generated/amp-signer/simplicity_amp_signer");
 export type SignerNetwork = DeploymentManifest["network"];
@@ -90,11 +102,17 @@ export type SignerState = {
   connected: boolean;
   fingerprint?: string;
   network?: SignerNetwork;
+  profileId?: string;
+  walletReady: boolean;
+  profiles: SignerProfile[];
 };
 
 let modulePromise: Promise<SignerModule> | undefined;
 let signer: WasmAmpSigner | undefined;
-let state: SignerState = { connected: false };
+const signerSessions = new Map<string, WasmAmpSigner>();
+let rememberedProfiles: SignerProfileMetadata[] = loadSignerProfileMetadata();
+let activeProfileId: string | undefined;
+let state: SignerState = { connected: false, walletReady: false, profiles: profileSnapshot() };
 let signerRevision = 0;
 const listeners = new Set<() => void>();
 const debugMnemonicKey = "simplicity-amp:debug-mnemonic:v1";
@@ -134,9 +152,25 @@ async function loadModule() {
   return modulePromise;
 }
 
-function publish(next: SignerState) {
-  signerRevision += 1;
-  state = next;
+function profileSnapshot(): SignerProfile[] {
+  return rememberedProfiles.map((profile) => ({
+    ...profile,
+    unlocked: signerSessions.has(profile.id),
+    active: profile.id === activeProfileId,
+  }));
+}
+
+function persistProfiles(profiles: SignerProfileMetadata[]) {
+  try {
+    saveSignerProfileMetadata(profiles);
+  } catch {
+    throw new Error("Signer profile metadata could not be saved in this browser.");
+  }
+}
+
+function publish(next: Omit<SignerState, "profiles">, sessionChanged = true) {
+  if (sessionChanged) signerRevision += 1;
+  state = { ...next, profiles: profileSnapshot() };
   for (const listener of listeners) listener();
 }
 
@@ -153,21 +187,120 @@ export function subscribeSigner(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-export async function connectSigner(mnemonic: string, network: SignerNetwork) {
+export async function connectSigner(
+  mnemonic: string,
+  network: SignerNetwork,
+  options: { expectedProfileId?: string; label?: string } = {},
+) {
   const words = normalizeMnemonic(mnemonic);
   if (!words) throw new Error("Enter a BIP39 recovery phrase.");
   const module = await loadModule();
-  signer?.free();
-  signer = new module.AmpSigner(words, network);
-  const info = signer.info() as { fingerprint: string };
-  publish({ connected: true, fingerprint: info.fingerprint, network });
+  const candidate = new module.AmpSigner(words, network);
+  let info: { fingerprint: string };
+  try {
+    info = candidate.info() as { fingerprint: string };
+  } catch (error) {
+    candidate.free();
+    throw error;
+  }
+  let publicIdentity: string;
+  try {
+    const identityAddress = candidate.deriveWalletAddress(0, 0) as DerivedWalletAddress;
+    publicIdentity = await deriveSignerPublicIdentity(identityAddress.scriptPubkey, network);
+  } catch (error) {
+    candidate.free();
+    throw error;
+  }
+  const id = signerProfileId(publicIdentity, network);
+  if (options.expectedProfileId && options.expectedProfileId !== id) {
+    candidate.free();
+    throw new Error("That recovery phrase does not unlock the selected signer profile.");
+  }
+  let nextProfiles: SignerProfileMetadata[];
+  try {
+    nextProfiles = upsertSignerProfileMetadata(rememberedProfiles, {
+      id,
+      publicIdentity,
+      fingerprint: info.fingerprint,
+      network,
+      label: options.label,
+    });
+  } catch (error) {
+    candidate.free();
+    throw error;
+  }
+  const existingSession = signerSessions.get(id);
+  if (existingSession) candidate.free();
+  else signerSessions.set(id, candidate);
+  try {
+    persistProfiles(nextProfiles);
+  } catch (error) {
+    if (!existingSession) {
+      signerSessions.delete(id);
+      candidate.free();
+    }
+    throw error;
+  }
+  rememberedProfiles = nextProfiles;
+  activeProfileId = id;
+  signer = signerSessions.get(id);
+  publish({ connected: true, fingerprint: info.fingerprint, network, profileId: id, walletReady: false });
   return info;
 }
 
 export function disconnectSigner() {
-  signer?.free();
+  for (const session of signerSessions.values()) session.free();
+  signerSessions.clear();
   signer = undefined;
-  publish({ connected: false });
+  activeProfileId = undefined;
+  publish({ connected: false, walletReady: false });
+}
+
+export function switchSignerProfile(id: string, requiredNetwork?: SignerNetwork) {
+  const profile = rememberedProfiles.find((candidate) => candidate.id === id);
+  if (!profile) throw new Error("Unknown signer profile.");
+  if (requiredNetwork && profile.network !== requiredNetwork) {
+    throw new Error(`This deployment requires ${requiredNetwork}; the selected profile uses ${profile.network}.`);
+  }
+  const next = signerSessions.get(id);
+  if (!next) throw new Error("That signer profile is locked. Enter its recovery phrase to unlock it.");
+  if (activeProfileId === id && signer === next) return profile;
+  activeProfileId = id;
+  signer = next;
+  publish({ connected: true, fingerprint: profile.fingerprint, network: profile.network, profileId: id, walletReady: false });
+  return profile;
+}
+
+export function renameSignerProfile(id: string, label: string) {
+  const nextProfiles = renameSignerProfileMetadata(rememberedProfiles, id, label);
+  persistProfiles(nextProfiles);
+  rememberedProfiles = nextProfiles;
+  const { profiles: _profiles, ...current } = state;
+  publish(current, false);
+}
+
+export function removeSignerProfile(id: string) {
+  const nextProfiles = removeSignerProfileMetadata(rememberedProfiles, id);
+  persistProfiles(nextProfiles);
+  rememberedProfiles = nextProfiles;
+  const removed = signerSessions.get(id);
+  removed?.free();
+  signerSessions.delete(id);
+  if (activeProfileId === id) {
+    activeProfileId = undefined;
+    signer = undefined;
+    publish({ connected: false, walletReady: false });
+  } else {
+    const { profiles: _profiles, ...current } = state;
+    publish(current, false);
+  }
+}
+
+export function markSignerWalletReady(profileId: string, network: SignerNetwork) {
+  if (!state.connected || state.profileId !== profileId || state.network !== network || state.walletReady) return false;
+  const { profiles: _profiles, ...current } = state;
+  publish({ ...current, walletReady: true }, false);
+  return true;
 }
 
 export async function generateMnemonic() {
@@ -180,6 +313,14 @@ export function requireSigner(network?: SignerNetwork) {
     throw new Error(`Reconnect the AMP signer for ${network}.`);
   }
   return signer;
+}
+
+function requireReadySigner(network?: SignerNetwork) {
+  const active = requireSigner(network);
+  if (!state.walletReady) {
+    throw new Error("Wait for this signer profile to finish a fresh wallet synchronization before signing.");
+  }
+  return active;
 }
 
 export async function deriveWalletAddress(
@@ -239,7 +380,7 @@ export async function bootstrap(input: {
   requiredConfirmations: number;
   receiveAlias: string;
 }) {
-  return requireSigner(input.network).bootstrap(input) as BootstrapResult;
+  return requireReadySigner(input.network).bootstrap(input) as BootstrapResult;
 }
 
 export async function signTransfer(input: {
@@ -252,7 +393,7 @@ export async function signTransfer(input: {
   amount: string;
   fee: string;
 }) {
-  return requireSigner(input.deployment.network).signTransfer(input) as SignedOperation;
+  return requireReadySigner(input.deployment.network).signTransfer(input) as SignedOperation;
 }
 
 export async function signPolicyUpdate(input: {
@@ -264,7 +405,7 @@ export async function signPolicyUpdate(input: {
   fee: string;
   issuerDerivationIndex: number;
 }) {
-  return requireSigner(input.deployment.network).signPolicyUpdate(input) as SignedOperation;
+  return requireReadySigner(input.deployment.network).signPolicyUpdate(input) as SignedOperation;
 }
 
 export async function reissue(input: {
@@ -278,7 +419,7 @@ export async function reissue(input: {
   fee: string;
   issuerDerivationIndex: number;
 }) {
-  return requireSigner(input.deployment.network).reissue(input) as SignedOperation;
+  return requireReadySigner(input.deployment.network).reissue(input) as SignedOperation;
 }
 
 export async function buildBlacklist(entries: BlacklistEntry[], depth: TreeDepth) {

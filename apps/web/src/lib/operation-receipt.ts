@@ -6,8 +6,9 @@ import { clearLatestReceipt, getLatestReceipt, putTxidKeyedReceipt } from "./sto
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
 
 export const operationReceiptSchema = z.object({
-  schema: z.literal("simplicity-amp-operation-receipt-v1"),
+  schema: z.literal("simplicity-amp-operation-receipt-v3"),
   deploymentId: hash,
+  signerProfileId: z.string().regex(/^(liquid-testnet|elements-regtest):[0-9a-f]{64}$/),
   operation: z.enum(["transfer", "reissuance"]),
   txid: hash,
   amount: z.string().regex(/^[1-9][0-9]*$/),
@@ -34,11 +35,13 @@ export function createOperationReceipt(input: {
   operation: ReceiptOperation;
   txid: string;
   amount: string;
+  signerProfileId: string;
   now?: () => string;
 }) {
   return operationReceiptSchema.parse({
-    schema: "simplicity-amp-operation-receipt-v1",
+    schema: "simplicity-amp-operation-receipt-v3",
     deploymentId: input.deployment.deploymentId,
+    signerProfileId: input.signerProfileId,
     operation: input.operation,
     txid: input.txid,
     amount: input.amount,
@@ -49,21 +52,21 @@ export function createOperationReceipt(input: {
 
 export async function saveOperationReceipt(receipt: OperationReceipt) {
   const validated = operationReceiptSchema.parse(receipt);
-  await putTxidKeyedReceipt(validated.deploymentId, validated.operation, validated);
+  await putTxidKeyedReceipt(validated.deploymentId, validated.operation, validated.signerProfileId, validated);
   return validated;
 }
 
-export async function loadOperationReceipt(deploymentId: string, operation: ReceiptOperation) {
-  const stored = await getLatestReceipt<unknown>(deploymentId, operation);
+export async function loadOperationReceipt(deploymentId: string, operation: ReceiptOperation, signerProfileId: string) {
+  const stored = await getLatestReceipt<unknown>(deploymentId, operation, signerProfileId);
   return stored === undefined ? undefined : operationReceiptSchema.parse(stored);
 }
 
-export async function dismissOperationReceipt(deploymentId: string, operation: ReceiptOperation) {
-  await clearLatestReceipt(deploymentId, operation);
+export async function dismissOperationReceipt(deploymentId: string, operation: ReceiptOperation, signerProfileId: string) {
+  await clearLatestReceipt(deploymentId, operation, signerProfileId);
 }
 
-export function operationReceiptQueryKey(deploymentId: string | undefined, operation: ReceiptOperation) {
-  return ["operation-receipt", deploymentId ?? "none", operation] as const;
+export function operationReceiptQueryKey(deploymentId: string | undefined, operation: ReceiptOperation, signerProfileId?: string) {
+  return ["operation-receipt", deploymentId ?? "none", operation, signerProfileId ?? "locked"] as const;
 }
 
 export function transactionExplorerUrl(network: Deployment["network"], txid: string) {

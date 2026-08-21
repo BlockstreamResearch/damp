@@ -22,6 +22,7 @@ import { walletDiscoverySource } from "./wallet-source";
 
 const txid = "ab".repeat(32);
 const blockHash = "cd".repeat(32);
+const profileId = `liquid-testnet:${"aa".repeat(32)}`;
 
 function fixtureAddress(): { address: WalletSyncAddress; unconfidential: string } {
   const unconfidential = liquidAddress.toBech32(Buffer.alloc(20, 7), 0, networks.testnet.bech32);
@@ -411,7 +412,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
     });
 
     await expect(discoverWalletSnapshot({
-      fingerprint: "aabbccdd",
+      profileId,
       network: "liquid-testnet",
       scope: "base",
       source,
@@ -451,7 +452,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     }));
     const discovery = discoverWalletSnapshot({
-      fingerprint: "aabbccdd",
+      profileId,
       network: "liquid-testnet",
       scope: "base",
       source,
@@ -476,7 +477,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
     });
 
     await expect(discoverWalletSnapshot({
-      fingerprint: "aabbccdd",
+      profileId,
       network: "liquid-testnet",
       scope: "base",
       source,

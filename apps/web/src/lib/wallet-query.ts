@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import type { SignerNetwork } from "./amp-signer";
+import { markSignerWalletReady, type SignerNetwork } from "./amp-signer";
 import type { Deployment } from "./domain";
 import {
   loadWalletSyncSnapshot,
@@ -11,9 +11,9 @@ import {
 
 export const walletSyncQueryKeys = {
   all: ["wallet-sync"] as const,
-  wallet: (fingerprint: string, network: SignerNetwork) => ["wallet-sync", fingerprint, network] as const,
-  snapshot: (fingerprint: string, network: SignerNetwork, scope: string) => ["wallet-sync", fingerprint, network, scope] as const,
-  persisted: (fingerprint: string, network: SignerNetwork, scope: string) => ["wallet-sync-persisted", fingerprint, network, scope] as const,
+  wallet: (profileId: string, network: SignerNetwork) => ["wallet-sync", profileId, network] as const,
+  snapshot: (profileId: string, network: SignerNetwork, scope: string) => ["wallet-sync", profileId, network, scope] as const,
+  persisted: (profileId: string, network: SignerNetwork, scope: string) => ["wallet-sync-persisted", profileId, network, scope] as const,
 };
 
 export type WalletSyncResult = { snapshot: WalletSyncSnapshot; syncError?: string };
@@ -51,23 +51,23 @@ export function walletSyncPresentation(input: {
   return { state: "synced", hasSnapshot: true };
 }
 
-export function useDeploymentWalletSync(deployment: Deployment | null | undefined, fingerprint?: string) {
-  const enabled = Boolean(deployment && fingerprint);
+export function useDeploymentWalletSync(deployment: Deployment | null | undefined, profileId?: string) {
+  const enabled = Boolean(deployment && profileId);
   const network = deployment?.network ?? "liquid-testnet";
   const scope = deployment?.deploymentId ?? "none";
   const persisted = useQuery({
-    queryKey: walletSyncQueryKeys.persisted(fingerprint ?? "disconnected", network, scope),
+    queryKey: walletSyncQueryKeys.persisted(profileId ?? "disconnected", network, scope),
     enabled,
     // React Query reserves `undefined` for a missing query result. IndexedDB
     // legitimately returns no snapshot on a first connection, so represent the
     // cache miss as null and let the live synchronization start normally.
-    queryFn: async () => (await loadWalletSyncSnapshot(fingerprint!, network, scope)) ?? null,
+    queryFn: async () => (await loadWalletSyncSnapshot(profileId!, network, scope)) ?? null,
     staleTime: Number.POSITIVE_INFINITY,
   });
   return useQuery({
-    queryKey: walletSyncQueryKeys.snapshot(fingerprint ?? "disconnected", network, scope),
+    queryKey: walletSyncQueryKeys.snapshot(profileId ?? "disconnected", network, scope),
     enabled: enabled && persisted.isFetched,
-    queryFn: ({ signal }) => refreshDeploymentWallet(deployment!, fingerprint!, signal),
+    queryFn: ({ signal }) => refreshDeploymentWallet(deployment!, profileId!, signal),
     placeholderData: persisted.data ? { snapshot: persisted.data } : undefined,
     refetchInterval: refetchInterval,
     refetchOnWindowFocus: true,
@@ -75,24 +75,24 @@ export function useDeploymentWalletSync(deployment: Deployment | null | undefine
 }
 
 export function useBaseWalletSync(input: {
-  fingerprint?: string;
+  profileId?: string;
   network?: SignerNetwork;
   enabled?: boolean;
 }) {
-  const enabled = Boolean(input.enabled !== false && input.fingerprint && input.network);
-  const fingerprint = input.fingerprint ?? "disconnected";
+  const enabled = Boolean(input.enabled !== false && input.profileId && input.network);
+  const profileId = input.profileId ?? "disconnected";
   const network = input.network ?? "liquid-testnet";
   const persisted = useQuery({
-    queryKey: walletSyncQueryKeys.persisted(fingerprint, network, "base"),
+    queryKey: walletSyncQueryKeys.persisted(profileId, network, "base"),
     enabled,
-    queryFn: async () => (await loadWalletSyncSnapshot(fingerprint, network, "base")) ?? null,
+    queryFn: async () => (await loadWalletSyncSnapshot(profileId, network, "base")) ?? null,
     staleTime: Number.POSITIVE_INFINITY,
   });
   return useQuery({
-    queryKey: walletSyncQueryKeys.snapshot(fingerprint, network, "base"),
+    queryKey: walletSyncQueryKeys.snapshot(profileId, network, "base"),
     enabled: enabled && persisted.isFetched,
     queryFn: ({ signal }) => refreshBaseWallet({
-      fingerprint,
+      profileId,
       network,
     }, signal),
     placeholderData: persisted.data ? { snapshot: persisted.data } : undefined,
@@ -103,12 +103,14 @@ export function useBaseWalletSync(input: {
 
 export async function refreshDeploymentWallet(
   deployment: Deployment,
-  fingerprint: string,
+  profileId: string,
   signal?: AbortSignal,
 ): Promise<WalletSyncResult> {
-  const previous = await loadWalletSyncSnapshot(fingerprint, deployment.network, deployment.deploymentId);
+  const previous = await loadWalletSyncSnapshot(profileId, deployment.network, deployment.deploymentId);
   try {
-    return { snapshot: await synchronizeDeploymentWallet(deployment, fingerprint, { signal }) };
+    const snapshot = await synchronizeDeploymentWallet(deployment, profileId, { signal });
+    markSignerWalletReady(profileId, deployment.network);
+    return { snapshot };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     if (error instanceof Error && error.name === "AbortError") throw error;
@@ -118,12 +120,14 @@ export async function refreshDeploymentWallet(
 }
 
 export async function refreshBaseWallet(input: {
-  fingerprint: string;
+  profileId: string;
   network: SignerNetwork;
 }, signal?: AbortSignal): Promise<WalletSyncResult> {
-  const previous = await loadWalletSyncSnapshot(input.fingerprint, input.network, "base");
+  const previous = await loadWalletSyncSnapshot(input.profileId, input.network, "base");
   try {
-    return { snapshot: await synchronizeBaseWallet({ ...input, signal }) };
+    const snapshot = await synchronizeBaseWallet({ ...input, signal });
+    markSignerWalletReady(input.profileId, input.network);
+    return { snapshot };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     if (error instanceof Error && error.name === "AbortError") throw error;

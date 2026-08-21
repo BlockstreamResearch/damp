@@ -16,6 +16,7 @@ import {
   TechnicalDetails,
   VerifiedLabel,
 } from "../components/ui";
+import { OperationReceiptPanel } from "../components/operation-receipt";
 import {
   signTransfer,
   signerSnapshot,
@@ -59,9 +60,9 @@ import {
   loadOperationReceipt,
   operationReceiptQueryKey,
   saveOperationReceipt,
-  transactionExplorerUrl,
   tryBeginOperation,
 } from "../lib/operation-receipt";
+import { setSignerOperationPending } from "../lib/signer-operation-state";
 import {
   assetBalances,
   ensureSignerReceiveRecord,
@@ -78,7 +79,7 @@ export function WalletDashboard() {
   const signerMatchesDeployment = !deployment.data || signer.network === deployment.data.network;
   const wallet = useDeploymentWalletSync(
     deployment.data,
-    signer.connected && signerMatchesDeployment ? signer.fingerprint : undefined,
+    signer.connected && signerMatchesDeployment ? signer.profileId : undefined,
   );
   const [feeMessage, setFeeMessage] = useState<string>();
   const snapshot = wallet.data?.snapshot;
@@ -153,7 +154,7 @@ export function WalletDashboard() {
             </Panel>
             <Panel className="activity-card">
               <SectionHeading label="Wallet inventory" title="Assets" aside={<Pill tone={presentation.state === "error" || presentation.state === "stale" ? "warn" : presentation.state === "loading" || presentation.state === "syncing" ? "blue" : presentation.state === "synced" ? "good" : "neutral"}>{presentation.state === "stale" ? "Last good state" : presentation.state === "error" ? "Sync error" : presentation.state === "loading" ? "Loading" : presentation.state === "syncing" ? "Syncing" : presentation.state === "synced" ? "Synced" : "Disconnected"}</Pill>} />
-              {presentation.state === "disconnected" ? <p>Connect the signer to restore the wallet identified by its fingerprint.</p> : presentation.state === "error" ? <div className="wallet-sync-error" role="alert"><p>Wallet balance is unknown because no verified snapshot is available.</p><small>{presentation.message}</small><button className="button secondary" type="button" onClick={() => void wallet.refetch()}>Retry synchronization</button></div> : balances.length === 0 && !snapshot ? <p>Discovering wallet addresses and outputs…</p> : balances.length === 0 ? <p>No wallet assets found.</p> : <div className="asset-list">{balances.map((balance) => <AssetRow key={balance.assetId} balance={balance} deployment={deployment.data!} />)}</div>}
+              {presentation.state === "disconnected" ? <p>Connect the signer to restore the wallet identified by its collision-resistant public account identity.</p> : presentation.state === "error" ? <div className="wallet-sync-error" role="alert"><p>Wallet balance is unknown because no verified snapshot is available.</p><small>{presentation.message}</small><button className="button secondary" type="button" onClick={() => void wallet.refetch()}>Retry synchronization</button></div> : balances.length === 0 && !snapshot ? <p>Discovering wallet addresses and outputs…</p> : balances.length === 0 ? <p>No wallet assets found.</p> : <div className="asset-list">{balances.map((balance) => <AssetRow key={balance.assetId} balance={balance} deployment={deployment.data!} />)}</div>}
               {snapshot && <small className="sync-time">Last successful sync {new Date(snapshot.syncedAt).toLocaleTimeString()} · through external #{snapshot.scannedThrough.external} and change #{snapshot.scannedThrough.change}</small>}
             </Panel>
           </div>
@@ -246,17 +247,18 @@ async function resolveReceiveRecord(value: string, deployment: Deployment): Prom
 
 export function WalletSend() {
   const deployment = useActiveDeployment();
+  const signerState = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
   const queryClient = useQueryClient();
   const [review, setReview] = useState<SendReview>();
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const form = useForm<SendForm>({ resolver: zodResolver(sendSchema) });
-  const receiptKey = operationReceiptQueryKey(deployment.data?.deploymentId, "transfer");
+  const receiptKey = operationReceiptQueryKey(deployment.data?.deploymentId, "transfer", signerState.profileId);
   const receiptQuery = useQuery({
     queryKey: receiptKey,
-    enabled: Boolean(deployment.data),
-    queryFn: async () => (await loadOperationReceipt(deployment.data!.deploymentId, "transfer")) ?? null,
+    enabled: Boolean(deployment.data && signerState.connected && signerState.profileId),
+    queryFn: async () => (await loadOperationReceipt(deployment.data!.deploymentId, "transfer", signerState.profileId!)) ?? null,
     staleTime: Number.POSITIVE_INFINITY,
   });
   const receipt = receiptQuery.data ?? undefined;
@@ -268,11 +270,18 @@ export function WalletSend() {
     setReview(undefined);
     setMessage(undefined);
     form.reset({ recipient: "", amount: "" });
-  }, [deployment.data?.deploymentId, form]);
+  }, [deployment.data?.deploymentId, form, signerState.profileId]);
+
+  useEffect(() => {
+    const key = `transfer:${deployment.data?.deploymentId ?? "none"}:${signerState.profileId ?? "locked"}`;
+    setSignerOperationPending(key, Boolean(review || reviewBusy || busy));
+    return () => setSignerOperationPending(key, false);
+  }, [busy, deployment.data?.deploymentId, review, reviewBusy, signerState.profileId]);
 
   async function reviewTransfer(values: SendForm) {
     setReviewBusy(true);
     setMessage(undefined);
+    const reviewProfileId = signerState.profileId;
     try {
       const selected = requirePublishedDeployment(deployment.data);
       let amount: bigint;
@@ -289,6 +298,9 @@ export function WalletSend() {
       } catch (error) {
         form.setError("recipient", { message: userFacingError(error) }, { shouldFocus: true });
         return;
+      }
+      if (signerSnapshot().profileId !== reviewProfileId) {
+        throw new Error("The active signer profile changed while validating the recipient. Review again.");
       }
       setReview({ ...values, recipientRecord });
     } catch (error) {
@@ -315,10 +327,10 @@ export function WalletSend() {
       await validateReceiveRecord(publicManifest(selected), recipient);
       const esplora = esploraUrlForDeployment(selected);
       const signer = signerSnapshot();
-      if (!signer.connected || !signer.fingerprint) throw new Error("Connect the AMP signer first.");
+      if (!signer.connected || !signer.profileId) throw new Error("Connect the AMP signer first.");
       const [anchor, wallet] = await Promise.all([
         traverseLiveAnchor(selected, esplora),
-        synchronizeDeploymentWallet(selected, signer.fingerprint),
+        synchronizeDeploymentWallet(selected, signer.profileId),
       ]);
       if (anchor.live.confirmations < 1) throw new Error("The live verifier anchor is not confirmed.");
       const policy = await resolvePolicySnapshot(selected, anchor.live.scriptPubkey);
@@ -337,6 +349,9 @@ export function WalletSend() {
         amount: amount.toString(),
         fee: fee.toString(),
       });
+      if (signerSnapshot().profileId !== signer.profileId) {
+        throw new Error("The active signer profile changed before broadcast. Review the transfer again.");
+      }
       if (activeDeploymentId.current !== selected.deploymentId) {
         throw new Error("The active deployment changed before broadcast. Review the transfer again.");
       }
@@ -347,6 +362,7 @@ export function WalletSend() {
         operation: "transfer",
         txid: result.txid,
         amount: amount.toString(),
+        signerProfileId: signer.profileId,
       });
       // Enter the terminal in-memory state before durable persistence. A local
       // storage failure must never re-enable the just-broadcast action.
@@ -358,7 +374,7 @@ export function WalletSend() {
         receiptWarning = ` The receipt could not be saved for reload: ${userFacingError(error)}`;
       }
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.fingerprint, selected.network) }),
+        queryClient.invalidateQueries({ queryKey: walletSyncQueryKeys.wallet(signer.profileId, selected.network) }),
         queryClient.invalidateQueries({ queryKey: ["anchor", selected.deploymentId] }),
         queryClient.invalidateQueries({ queryKey: ["policy", selected.deploymentId] }),
         queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.all }),
@@ -375,7 +391,8 @@ export function WalletSend() {
 
   async function startNewTransfer() {
     const selected = requireDeployment(deployment.data);
-    await dismissOperationReceipt(selected.deploymentId, "transfer");
+    if (!signerState.profileId) throw new Error("Connect the signer profile that created this receipt.");
+    await dismissOperationReceipt(selected.deploymentId, "transfer", signerState.profileId);
     queryClient.setQueryData(receiptKey, null);
     setReview(undefined);
     setMessage(undefined);
@@ -388,7 +405,7 @@ export function WalletSend() {
       <div className="flow-layout">
         <Panel className="flow-main">
           <SectionHeading label={receipt ? "Receipt" : review ? "Review" : "Recipient and amount"} title={receipt ? "Transfer broadcast" : review ? "Confirm transfer details" : "Who are you paying?"} />
-          {!deployment.data ? <p>Import or select a deployment first.</p> : deployment.data.publication !== "published" ? <div className="generate-record"><ShieldCheck size={26} /><p>This deployment is confirmed, but canonical registry publication is still pending. Transfers remain disabled until its manifest and live D4 policy are byte-identical on the registry default branch.</p><Link className="button primary" to="/admin/setup">Finish registry publication</Link></div> : receipt ? <div className="operation-receipt" role="status"><Check size={26} /><h3>Broadcast accepted</h3><p>This terminal receipt prevents the reviewed transfer from being signed or broadcast again.</p><dl><div><dt>Transaction</dt><dd><code title={receipt.txid}>{shortHash(receipt.txid, 12, 10)}</code></dd></div><div><dt>Amount</dt><dd>{formatUnits(receipt.amount, deployment.data.asset.precision)} {receipt.ticker}</dd></div></dl>{transactionExplorerUrl(deployment.data.network, receipt.txid) && <a className="button secondary wide" href={transactionExplorerUrl(deployment.data.network, receipt.txid)} target="_blank" rel="noreferrer">View transaction <ExternalLink size={14} /></a>}<button className="button primary wide" type="button" onClick={() => void startNewTransfer()}>Start a new transfer</button></div> : !review ? (
+          {!deployment.data ? <p>Import or select a deployment first.</p> : deployment.data.publication !== "published" ? <div className="generate-record"><ShieldCheck size={26} /><p>This deployment is confirmed, but canonical registry publication is still pending. Transfers remain disabled until its manifest and live D4 policy are byte-identical on the registry default branch.</p><Link className="button primary" to="/admin/setup">Finish registry publication</Link></div> : receipt ? <OperationReceiptPanel receipt={receipt} network={deployment.data.network} amountLabel={`${formatUnits(receipt.amount, deployment.data.asset.precision)} ${receipt.ticker}`} resetLabel="Start a new transfer" tone="holder" onReset={() => void startNewTransfer()} /> : !review ? (
             <form onSubmit={form.handleSubmit(reviewTransfer)} className="form-stack">
               <label>Receive record JSON or HTTPS URL<textarea aria-invalid={Boolean(form.formState.errors.recipient)} aria-describedby={form.formState.errors.recipient ? "send-recipient-error" : "send-recipient-help"} rows={5} {...form.register("recipient")} />{form.formState.errors.recipient ? <small id="send-recipient-error" className="field-error">{form.formState.errors.recipient.message}</small> : <small id="send-recipient-help">The record is validated and pinned before review.</small>}</label>
               <label>Amount<div className="amount-input"><input aria-invalid={Boolean(form.formState.errors.amount)} aria-describedby={form.formState.errors.amount ? "send-amount-error" : undefined} inputMode="decimal" {...form.register("amount")} /><span>{deployment.data.asset.ticker}</span></div>{form.formState.errors.amount && <small id="send-amount-error" className="field-error">{form.formState.errors.amount.message}</small>}</label>
@@ -400,7 +417,7 @@ export function WalletSend() {
               <ReviewRow label="Amount" value={`${review.amount} ${deployment.data.asset.ticker}`} />
               <ReviewRow label="Asset ID" value={shortHash(deployment.data.regulatedAsset, 12, 10)} />
               <ReviewRow label="Policy" value="Canonical live blacklist" good />
-              <div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReview(undefined)}>Edit</button><button className="button primary" disabled={busy || receiptQuery.isPending} type="button" onClick={send}>{busy ? "Building…" : "Sign locally"} <ArrowRight size={16} /></button></div>
+              <div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReview(undefined)}>Edit</button><button className="button primary" disabled={busy || receiptQuery.isPending || !signerState.walletReady} type="button" onClick={send}>{busy ? "Building…" : !signerState.walletReady ? "Sync wallet before signing" : "Sign locally"} <ArrowRight size={16} /></button></div>
             </div>
           )}
           {message && <p className="inline-message" role="status">{message}</p>}
@@ -423,9 +440,9 @@ export function WalletReceive() {
   const [message, setMessage] = useState<string>();
   const [copying, setCopying] = useState(false);
   const storedRecords = useQuery({
-    queryKey: ["receive-record", deployment.data?.deploymentId, signer.fingerprint],
-    enabled: Boolean(deployment.data && signer.connected && signer.fingerprint),
-    queryFn: () => ensureSignerReceiveRecord(requireDeployment(deployment.data), signer.fingerprint!),
+    queryKey: ["receive-record", deployment.data?.deploymentId, signer.profileId],
+    enabled: Boolean(deployment.data && signer.connected && signer.profileId),
+    queryFn: () => ensureSignerReceiveRecord(requireDeployment(deployment.data), signer.profileId!),
   });
   const record = storedRecords.data?.record;
   const encoded = useMemo(() => record ? JSON.stringify(record) : "", [record]);
@@ -446,9 +463,9 @@ export function WalletReceive() {
   async function generate() {
     try {
       const selected = requireDeployment(deployment.data);
-      if (!signer.connected || !signer.fingerprint) throw new Error("Connect the AMP signer first.");
-      const created = await ensureSignerReceiveRecord(selected, signer.fingerprint);
-      queryClient.setQueryData(["receive-record", selected.deploymentId, signer.fingerprint], created);
+      if (!signer.connected || !signer.profileId) throw new Error("Connect the AMP signer first.");
+      const created = await ensureSignerReceiveRecord(selected, signer.profileId);
+      queryClient.setQueryData(["receive-record", selected.deploymentId, signer.profileId], created);
     } catch (error) {
       setMessage(userFacingError(error));
     }

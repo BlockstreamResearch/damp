@@ -14,11 +14,15 @@ describe("blacklist workspace scoping", () => {
     const deploymentB = "bb".repeat(32);
     const rootOne = "11".repeat(32);
     const rootTwo = "22".repeat(32);
+    const signerA = "aabbccdd";
+    const signerB = "11223344";
 
-    expect(blacklistScope(deploymentA, rootOne)).not.toBe(blacklistScope(deploymentB, rootOne));
-    expect(blacklistScope(deploymentA, rootOne)).not.toBe(blacklistScope(deploymentA, rootTwo));
-    expect(blacklistDraftName(rootOne)).not.toBe(blacklistDraftName(rootTwo));
-    expect(pendingPolicyDraftName(rootOne)).not.toBe(pendingPolicyDraftName(rootTwo));
+    expect(blacklistScope(deploymentA, rootOne, signerA)).not.toBe(blacklistScope(deploymentB, rootOne, signerA));
+    expect(blacklistScope(deploymentA, rootOne, signerA)).not.toBe(blacklistScope(deploymentA, rootTwo, signerA));
+    expect(blacklistScope(deploymentA, rootOne, signerA)).not.toBe(blacklistScope(deploymentA, rootOne, signerB));
+    expect(blacklistDraftName(rootOne, signerA)).not.toBe(blacklistDraftName(rootTwo, signerA));
+    expect(blacklistDraftName(rootOne, signerA)).not.toBe(blacklistDraftName(rootOne, signerB));
+    expect(pendingPolicyDraftName(rootOne, signerA)).not.toBe(pendingPolicyDraftName(rootTwo, signerA));
   });
 
   it("rejects a stale async completion after a rapid scope switch", async () => {

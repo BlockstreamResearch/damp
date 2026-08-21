@@ -1,0 +1,39 @@
+// Depth-5 blacklist verifier.
+
+use std::lib::asserts::assert_eq_256;
+use std::lib::binary::not;
+use std::lib::u32::safe_add_32;
+
+use crate::lib::assets::explicit_input_asset;
+use crate::lib::policy_d5::{NonMembershipProof, outpoint_key, verify_non_membership};
+use crate::verifier::core::ProofState;
+
+type ProofEntry = (u32, NonMembershipProof);
+
+pub fn verify_policy_proof(entry: Option<ProofEntry>, state: ProofState) -> ProofState {
+    let (regulated_count, verified_count, previous_index, finished): ProofState = state;
+    match entry {
+        None => (regulated_count, verified_count, previous_index, true),
+        Some(payload: ProofEntry) => {
+            assert!(not(finished));
+            let (input_index, proof): ProofEntry = payload;
+            match previous_index {
+                None => (),
+                Some(previous: u32) => assert!(jet::lt_32(previous, input_index)),
+            };
+            assert_eq_256(explicit_input_asset(input_index), param::REGULATED_ASSET_ID);
+            verify_non_membership(
+                param::BLACKLIST_ROOT,
+                param::BLACKLIST_COUNT,
+                outpoint_key(unwrap(jet::input_prev_outpoint(input_index))),
+                proof,
+            );
+            (
+                regulated_count,
+                safe_add_32(verified_count, 1),
+                Some(input_index),
+                false,
+            )
+        },
+    }
+}
