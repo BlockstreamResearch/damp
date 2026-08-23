@@ -10,15 +10,16 @@ import type {
   TreeDepth,
 } from "./domain";
 import {
-  loadSignerProfileMetadata,
   deriveSignerPublicIdentity,
-  removeSignerProfileMetadata,
-  renameSignerProfileMetadata,
-  saveSignerProfileMetadata,
+  loadDebugSignerProfiles,
+  normalizeDebugSignerMnemonic,
+  removeDebugSignerProfile,
+  renameDebugSignerProfile,
+  saveDebugSignerProfiles,
   signerProfileId,
-  upsertSignerProfileMetadata,
+  upsertDebugSignerProfile,
   type SignerProfile,
-  type SignerProfileMetadata,
+  type StoredDebugSignerProfile,
 } from "./signer-profiles";
 export type { SignerProfile } from "./signer-profiles";
 
@@ -110,39 +111,12 @@ export type SignerState = {
 let modulePromise: Promise<SignerModule> | undefined;
 let signer: WasmAmpSigner | undefined;
 const signerSessions = new Map<string, WasmAmpSigner>();
-let rememberedProfiles: SignerProfileMetadata[] = loadSignerProfileMetadata();
+let debugProfiles: StoredDebugSignerProfile[] = loadDebugSignerProfiles();
 let activeProfileId: string | undefined;
 let state: SignerState = { connected: false, walletReady: false, profiles: profileSnapshot() };
 let signerRevision = 0;
+let activationRevision = 0;
 const listeners = new Set<() => void>();
-const debugMnemonicKey = "simplicity-amp:debug-mnemonic:v1";
-
-function normalizeMnemonic(mnemonic: string) {
-  return mnemonic.trim().replace(/\s+/g, " ");
-}
-
-export function saveDebugMnemonic(mnemonic: string) {
-  const normalized = normalizeMnemonic(mnemonic);
-  if (!normalized) throw new Error("Cannot save an empty recovery phrase.");
-  try {
-    localStorage.setItem(debugMnemonicKey, JSON.stringify({ version: 1, mnemonic: normalized }));
-  } catch {
-    throw new Error("The generated recovery phrase could not be saved in local storage.");
-  }
-}
-
-export function loadDebugMnemonic(): string | undefined {
-  try {
-    const stored = localStorage.getItem(debugMnemonicKey);
-    if (!stored) return undefined;
-    const parsed = JSON.parse(stored) as { version?: unknown; mnemonic?: unknown };
-    if (parsed.version !== 1 || typeof parsed.mnemonic !== "string") return undefined;
-    const normalized = normalizeMnemonic(parsed.mnemonic);
-    return normalized || undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 async function loadModule() {
   modulePromise ??= import("../generated/amp-signer/simplicity_amp_signer").then(async (module) => {
@@ -153,18 +127,21 @@ async function loadModule() {
 }
 
 function profileSnapshot(): SignerProfile[] {
-  return rememberedProfiles.map((profile) => ({
-    ...profile,
-    unlocked: signerSessions.has(profile.id),
+  return debugProfiles.map((profile) => ({
+    id: profile.id,
+    publicIdentity: profile.publicIdentity,
+    fingerprint: profile.fingerprint,
+    network: profile.network,
+    label: profile.label,
     active: profile.id === activeProfileId,
   }));
 }
 
-function persistProfiles(profiles: SignerProfileMetadata[]) {
+function persistProfiles(profiles: StoredDebugSignerProfile[]) {
   try {
-    saveSignerProfileMetadata(profiles);
+    saveDebugSignerProfiles(profiles);
   } catch {
-    throw new Error("Signer profile metadata could not be saved in this browser.");
+    throw new Error("The test-only debug signer profiles could not be saved in this browser.");
   }
 }
 
@@ -187,43 +164,50 @@ export function subscribeSigner(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-export async function connectSigner(
-  mnemonic: string,
-  network: SignerNetwork,
-  options: { expectedProfileId?: string; label?: string } = {},
-) {
-  const words = normalizeMnemonic(mnemonic);
+async function createDebugSignerCandidate(mnemonic: string, network: SignerNetwork) {
+  const words = normalizeDebugSignerMnemonic(mnemonic);
   if (!words) throw new Error("Enter a BIP39 recovery phrase.");
   const module = await loadModule();
   const candidate = new module.AmpSigner(words, network);
   let info: { fingerprint: string };
   try {
     info = candidate.info() as { fingerprint: string };
-  } catch (error) {
-    candidate.free();
-    throw error;
-  }
-  let publicIdentity: string;
-  try {
     const identityAddress = candidate.deriveWalletAddress(0, 0) as DerivedWalletAddress;
-    publicIdentity = await deriveSignerPublicIdentity(identityAddress.scriptPubkey, network);
+    const publicIdentity = await deriveSignerPublicIdentity(identityAddress.scriptPubkey, network);
+    return {
+      candidate,
+      debugMnemonic: words,
+      id: signerProfileId(publicIdentity, network),
+      info,
+      publicIdentity,
+    };
   } catch (error) {
     candidate.free();
     throw error;
   }
-  const id = signerProfileId(publicIdentity, network);
-  if (options.expectedProfileId && options.expectedProfileId !== id) {
+}
+
+export async function connectSigner(
+  mnemonic: string,
+  network: SignerNetwork,
+  options: { label?: string } = {},
+) {
+  const request = ++activationRevision;
+  const created = await createDebugSignerCandidate(mnemonic, network);
+  const { candidate, debugMnemonic, id, info, publicIdentity } = created;
+  if (request !== activationRevision) {
     candidate.free();
-    throw new Error("That recovery phrase does not unlock the selected signer profile.");
+    throw new Error("Another signer profile selection replaced this request.");
   }
-  let nextProfiles: SignerProfileMetadata[];
+  let nextProfiles: StoredDebugSignerProfile[];
   try {
-    nextProfiles = upsertSignerProfileMetadata(rememberedProfiles, {
+    nextProfiles = upsertDebugSignerProfile(debugProfiles, {
       id,
       publicIdentity,
       fingerprint: info.fingerprint,
       network,
       label: options.label,
+      debugMnemonic,
     });
   } catch (error) {
     candidate.free();
@@ -241,7 +225,7 @@ export async function connectSigner(
     }
     throw error;
   }
-  rememberedProfiles = nextProfiles;
+  debugProfiles = nextProfiles;
   activeProfileId = id;
   signer = signerSessions.get(id);
   publish({ connected: true, fingerprint: info.fingerprint, network, profileId: id, walletReady: false });
@@ -249,6 +233,7 @@ export async function connectSigner(
 }
 
 export function disconnectSigner() {
+  activationRevision += 1;
   for (const session of signerSessions.values()) session.free();
   signerSessions.clear();
   signer = undefined;
@@ -256,14 +241,31 @@ export function disconnectSigner() {
   publish({ connected: false, walletReady: false });
 }
 
-export function switchSignerProfile(id: string, requiredNetwork?: SignerNetwork) {
-  const profile = rememberedProfiles.find((candidate) => candidate.id === id);
+export async function switchSignerProfile(id: string, requiredNetwork?: SignerNetwork) {
+  const request = ++activationRevision;
+  const profile = debugProfiles.find((candidate) => candidate.id === id);
   if (!profile) throw new Error("Unknown signer profile.");
   if (requiredNetwork && profile.network !== requiredNetwork) {
     throw new Error(`This deployment requires ${requiredNetwork}; the selected profile uses ${profile.network}.`);
   }
-  const next = signerSessions.get(id);
-  if (!next) throw new Error("That signer profile is locked. Enter its recovery phrase to unlock it.");
+  let next = signerSessions.get(id);
+  if (!next) {
+    const restored = await createDebugSignerCandidate(profile.debugMnemonic, profile.network);
+    if (request !== activationRevision) {
+      restored.candidate.free();
+      throw new Error("Another signer profile selection replaced this request.");
+    }
+    if (
+      restored.id !== profile.id
+      || restored.publicIdentity !== profile.publicIdentity
+      || restored.info.fingerprint !== profile.fingerprint
+    ) {
+      restored.candidate.free();
+      throw new Error("Stored debug signer material does not match its profile identity.");
+    }
+    signerSessions.set(id, restored.candidate);
+    next = restored.candidate;
+  }
   if (activeProfileId === id && signer === next) return profile;
   activeProfileId = id;
   signer = next;
@@ -272,17 +274,18 @@ export function switchSignerProfile(id: string, requiredNetwork?: SignerNetwork)
 }
 
 export function renameSignerProfile(id: string, label: string) {
-  const nextProfiles = renameSignerProfileMetadata(rememberedProfiles, id, label);
+  const nextProfiles = renameDebugSignerProfile(debugProfiles, id, label);
   persistProfiles(nextProfiles);
-  rememberedProfiles = nextProfiles;
+  debugProfiles = nextProfiles;
   const { profiles: _profiles, ...current } = state;
   publish(current, false);
 }
 
 export function removeSignerProfile(id: string) {
-  const nextProfiles = removeSignerProfileMetadata(rememberedProfiles, id);
+  activationRevision += 1;
+  const nextProfiles = removeDebugSignerProfile(debugProfiles, id);
   persistProfiles(nextProfiles);
-  rememberedProfiles = nextProfiles;
+  debugProfiles = nextProfiles;
   const removed = signerSessions.get(id);
   removed?.free();
   signerSessions.delete(id);

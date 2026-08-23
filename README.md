@@ -37,9 +37,12 @@ The web app persists public deployments locally and scopes anchor, policy, UTXO,
 draft, and receive-record data by the selected deployment ID. A standalone Rust
 AMP Signer SDK owns bootstrap, receive, transfer, policy-update, and reissuance
 validation. It uses LWK for mnemonic derivation, SLIP77, and ordinary wallet
-signing and compiles to WebAssembly. Manually entered recovery phrases remain
-in memory; the explicit `NEW` debug flow stores its generated phrase unencrypted
-in versioned browser local storage. The browser supplies chain data through
+signing and compiles to WebAssembly. Every signer profile in the v0.1 web app is
+an explicitly disposable **debug/test profile**: its recovery phrase is stored
+unencrypted in versioned browser local storage so profiles can switch directly
+and survive reloads without an unlock prompt. Never enter a production or
+mainnet recovery phrase, and never use these profiles for custody. Liquid mainnet
+remains unsupported. The browser supplies chain data through
 Waterfalls and Esplora but never executable Simplicity source.
 
 Liquid testnet wallet discovery is pinned to the public Waterfalls v4 testing

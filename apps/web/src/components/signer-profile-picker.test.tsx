@@ -8,7 +8,6 @@ const profileA = {
   fingerprint: "aabbccdd",
   label: "QA Alice with a deliberately long but recognizable profile name",
   network: "liquid-testnet" as const,
-  unlocked: true,
 };
 
 const profileB = {
@@ -16,7 +15,6 @@ const profileB = {
   fingerprint: "11223344",
   label: "Signer 11223344",
   network: "liquid-testnet" as const,
-  unlocked: false,
 };
 
 afterEach(cleanup);
@@ -24,7 +22,7 @@ afterEach(cleanup);
 describe("SignerProfilePicker", () => {
   it("renders one profile as a compact non-interactive identity", () => {
     render(<SignerProfilePicker label="Active signer profile" profiles={[profileB]} selectedId={profileB.id} onSelect={vi.fn()} />);
-    expect(screen.getByLabelText("Active signer profile")).toHaveTextContent(/Signer profile.*11223344.*Locked/);
+    expect(screen.getByLabelText("Active signer profile")).toHaveTextContent(/Signer profile.*11223344/);
     expect(screen.queryByRole("button", { name: "Active signer profile" })).not.toBeInTheDocument();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
@@ -35,7 +33,7 @@ describe("SignerProfilePicker", () => {
     const trigger = screen.getByRole("button", { name: "Active signer profile" });
     fireEvent.keyDown(trigger, { key: "ArrowDown" });
     const alice = await screen.findByRole("option", { name: /QA Alice.*aabbccdd.*Liquid testnet/ });
-    const bob = screen.getByRole("option", { name: /Signer profile.*11223344.*Liquid testnet.*Locked/ });
+    const bob = screen.getByRole("option", { name: /Signer profile.*11223344.*Liquid testnet/ });
     await waitFor(() => expect(alice).toHaveFocus());
     expect(alice).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(alice, { key: "ArrowDown" });

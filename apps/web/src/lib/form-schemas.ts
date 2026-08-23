@@ -14,8 +14,10 @@ export const reissueSchema = z.object({
 });
 
 export const sendSchema = z.object({
-  recipient: z.string().trim().min(1, "Paste a receive-record JSON or URL"),
-  amount: z.string().trim().regex(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/, "Enter a positive decimal amount"),
+  recipient: z.string().trim().min(1, "Paste a signed AMP ReceiveRecord JSON or HTTPS URL"),
+  amount: z.string().trim()
+    .min(1, "Enter an amount")
+    .regex(/^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)$/, "Enter an amount greater than zero without signs or exponent notation"),
 });
 
 export type SetupForm = z.infer<typeof setupSchema>;

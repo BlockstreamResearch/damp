@@ -1,10 +1,10 @@
-import { Check, ChevronDown, LockKeyhole } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 
 import type { SignerProfile } from "../lib/amp-signer";
 import { networkLabel } from "../lib/domain";
 
-type ProfileSummary = Pick<SignerProfile, "id" | "fingerprint" | "label" | "network" | "unlocked">;
+type ProfileSummary = Pick<SignerProfile, "id" | "fingerprint" | "label" | "network">;
 
 function displayLabel(profile: ProfileSummary) {
   const label = profile.label.trim();
@@ -20,7 +20,6 @@ function ProfileIdentity({ profile, compact = false }: { profile: ProfileSummary
       <small>
         <span>{profile.fingerprint}</span>
         {!compact && <><span aria-hidden="true">·</span><span>{networkLabel(profile.network)}</span></>}
-        {!profile.unlocked && <><span aria-hidden="true">·</span><span className="wallet-profile-lock"><LockKeyhole size={10} /> Locked</span></>}
       </small>
     </span>
   );

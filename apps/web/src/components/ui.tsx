@@ -25,10 +25,8 @@ import {
   connectSigner,
   disconnectSigner,
   generateMnemonic,
-  loadDebugMnemonic,
   removeSignerProfile,
   renameSignerProfile,
-  saveDebugMnemonic,
   signerSnapshot,
   subscribeSigner,
   switchSignerProfile,
@@ -43,10 +41,11 @@ import {
 import { activeNavigationTarget, appRoleForPath, contextualDocumentTitle, roleSwitchNavigation } from "../lib/navigation";
 import { formatUnits, networkLabel, shortHash } from "../lib/domain";
 import { useBaseWalletSync, useDeploymentWalletSync, walletSyncPresentation } from "../lib/wallet-query";
-import { assetBalances, feeFundingState, nextFundingAddress } from "../lib/wallet-sync";
+import { assetBalances, nextFundingAddress } from "../lib/wallet-sync";
 import { liquidTestnetFaucetUrl, nativeFeeAssetId } from "../lib/faucet";
 import { hasPendingSignerOperation } from "../lib/signer-operation-state";
 import { DeploymentControl } from "./deployment-control";
+import { CopyableAddress } from "./copyable-address";
 import { SignerProfilePicker } from "./signer-profile-picker";
 
 export function Brand({ tone, network }: { tone: "holder" | "issuer"; network: string }) {
@@ -193,9 +192,8 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
     deployment.data?.network ?? "liquid-testnet",
   );
   const [mnemonicInput, setMnemonicInput] = useState("");
-  const [savedDebugSignerAvailable, setSavedDebugSignerAvailable] = useState(false);
   const [selectedProfileId, setSelectedProfileId] = useState<string>();
-  const [profileAction, setProfileAction] = useState<"add" | "unlock" | "rename" | "remove">();
+  const [profileAction, setProfileAction] = useState<"add" | "rename" | "remove">();
   const [profileLabelInput, setProfileLabelInput] = useState("");
   const [pendingProfileSwitch, setPendingProfileSwitch] = useState<string>();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -234,13 +232,6 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
       syncError: wallet.data?.syncError,
     });
     const funding = nextFundingAddress(snapshot);
-    const fundingState = feeAsset ? feeFundingState({
-      snapshot,
-      assetId: feeAsset,
-      minimum: 1_500n,
-      syncing: wallet.isFetching || wallet.isPending,
-      syncError,
-    }) : "loading";
     const activeProfile = profiles.find((profile) => profile.id === signer.profileId);
     const syncState = signer.walletReady === false
       ? presentation.hasSnapshot ? "syncing" : "loading"
@@ -277,12 +268,15 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
           status: utxo.status,
           amount: utxo.assetId === feeAsset ? `${formatUnits(utxo.amount, 8)} L-BTC` : `${utxo.amount} units`,
         })),
-      receiveIndicator: funding
-        ? `External #${funding.index} · ${shortHash(funding.confidentialAddress, 11, 7)}`
+      receiveAddress: funding && signer.profileId && signer.network
+        ? {
+            address: funding.confidentialAddress,
+            index: funding.index,
+            resetKey: `${signer.profileId}:${signer.network}:0:${funding.index}`,
+          }
         : undefined,
       faucetUrl: signer.network === "liquid-testnet"
-        && presentation.state === "synced"
-        && fundingState === "unfunded"
+        && syncState === "synced"
         && funding
         ? liquidTestnetFaucetUrl(funding.confidentialAddress)
         : undefined,
@@ -301,6 +295,17 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
       return;
     }
   }, [signer.connected, signer.profileId]);
+
+  useEffect(() => {
+    if (
+      signer.connected
+      && signer.walletReady
+      && connectionNotice?.tone === "progress"
+      && connectionNotice.message.includes("Fresh wallet synchronization is required")
+    ) {
+      setConnectionNotice({ tone: "success", message: "Signer profile switched and wallet synchronization completed." });
+    }
+  }, [connectionNotice, signer.connected, signer.walletReady]);
 
   useEffect(() => {
     if (!open) return;
@@ -348,17 +353,9 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open || signer.connected) return;
-    // Keep the saved debug phrase out of React state and the rendered DOM.
-    // Only its availability is exposed; the phrase is read at click time.
-    setSavedDebugSignerAvailable(Boolean(loadDebugMnemonic()));
-  }, [open, signer.connected]);
-
   async function connect(
     input: string,
     network: "liquid-testnet" | "elements-regtest",
-    expectedProfileId?: string,
   ) {
     if (deployment.data && deployment.data.network !== network) {
       throw new Error(`This deployment requires ${networkLabel(deployment.data.network)}.`);
@@ -368,10 +365,8 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
     let mnemonic = normalized;
     if (input.trim().toUpperCase() === "NEW") {
       mnemonic = await generateMnemonic();
-      saveDebugMnemonic(mnemonic);
     }
-    if (expectedProfileId) await connectSigner(mnemonic, network, { expectedProfileId });
-    else await connectSigner(mnemonic, network);
+    await connectSigner(mnemonic, network);
     return normalized.toUpperCase() === "NEW";
   }
 
@@ -379,16 +374,12 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
     setConnecting(true);
     setConnectionNotice({ tone: "progress", message: `Opening the local ${networkLabel(connectionNetwork)} signer…` });
     try {
-      const expectedProfileId = profileAction === "unlock" || (!signer.connected && selectedProfileId)
-        ? selectedProfileId
-        : undefined;
-      const generated = await connect(input, connectionNetwork, expectedProfileId);
+      const generated = await connect(input, connectionNetwork);
       setMnemonicInput("");
       setProfileAction(undefined);
-      if (generated) setSavedDebugSignerAvailable(true);
       setConnectionNotice(generated
-        ? { tone: "success", message: "A new debug signer was generated and saved unencrypted in this browser." }
-        : { tone: "success", message: "Signer connected. Wallet discovery has started." });
+        ? { tone: "success", message: "A new test-only debug signer was generated and saved unencrypted in this browser." }
+        : { tone: "success", message: "Test-only debug signer saved and connected. Wallet discovery has started." });
     } catch (error) {
       setConnectionNotice({ tone: "error", message: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -396,47 +387,20 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
     }
   }
 
-  async function connectSavedDebugSigner() {
-    const saved = loadDebugMnemonic();
-    if (!saved) {
-      setSavedDebugSignerAvailable(false);
-      setConnectionNotice({ tone: "error", message: "No saved debug signer is available in this browser." });
-      return;
-    }
-    setSelectedProfileId(undefined);
-    setProfileAction("add");
+  async function performProfileSwitch(id: string) {
     setConnecting(true);
-    setConnectionNotice({ tone: "progress", message: `Opening the saved debug signer on ${networkLabel(connectionNetwork)}…` });
-    try {
-      await connect(saved, connectionNetwork);
-      setProfileAction(undefined);
-      setSavedDebugSignerAvailable(true);
-      setConnectionNotice({ tone: "success", message: "Saved debug signer connected. Wallet discovery has started." });
-    } catch (error) {
-      setConnectionNotice({ tone: "error", message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setConnecting(false);
-    }
-  }
-
-  function performProfileSwitch(id: string) {
     try {
       const profile = profiles.find((candidate) => candidate.id === id);
       if (!profile) throw new Error("Unknown signer profile.");
-      if (!profile.unlocked) {
-        setSelectedProfileId(id);
-        setConnectionNetwork(profile.network);
-        setProfileAction("unlock");
-        setMnemonicInput("");
-        setConnectionNotice({ tone: "neutral", message: `Enter the recovery phrase for ${profile.label}. It remains in signer memory only.` });
-        return;
-      }
-      switchSignerProfile(id, deployment.data?.network);
+      setConnectionNotice({ tone: "progress", message: `Switching to ${profile.label} and starting a fresh wallet synchronization…` });
+      await switchSignerProfile(id, deployment.data?.network);
       setSelectedProfileId(id);
       setProfileAction(undefined);
       setConnectionNotice({ tone: "progress", message: `${profile.label} is active. Fresh wallet synchronization is required before signing.` });
     } catch (error) {
       setConnectionNotice({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setConnecting(false);
     }
   }
 
@@ -452,7 +416,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
       setPendingProfileSwitch(id);
       return;
     }
-    performProfileSwitch(id);
+    void performProfileSwitch(id);
   }
 
   function beginAddProfile() {
@@ -460,7 +424,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
     setProfileAction("add");
     setMnemonicInput("");
     setConnectionNetwork(deployment.data?.network ?? signer.network ?? "liquid-testnet");
-    setConnectionNotice({ tone: "neutral", message: "Add a different signer phrase. Existing unlocked profiles remain in memory for quick switching." });
+    setConnectionNotice({ tone: "neutral", message: "Add a disposable test signer. Its recovery phrase will be stored unencrypted in this browser for direct switching." });
   }
 
   function beginRenameProfile() {
@@ -487,7 +451,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
       removeSignerProfile(signer.profileId);
       setSelectedProfileId(undefined);
       setProfileAction(undefined);
-      setConnectionNotice({ tone: "neutral", message: "Signer profile metadata removed. No wallet or deployment records were reinterpreted." });
+      setConnectionNotice({ tone: "neutral", message: "Debug signer profile and its unencrypted recovery phrase were removed from this browser. Wallet and deployment records remain isolated under the old profile ID." });
     } catch (error) {
       setConnectionNotice({ tone: "error", message: error instanceof Error ? error.message : String(error) });
     }
@@ -519,9 +483,8 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
           connecting={connecting}
           connectionNotice={connectionNotice}
           connectionNetwork={connectionNetwork}
-          connectionNetworkLocked={Boolean(deployment.data || selectedProfileId)}
+          connectionNetworkLocked={Boolean(deployment.data)}
           mnemonicInput={mnemonicInput}
-          savedDebugSignerAvailable={savedDebugSignerAvailable}
           profiles={profiles}
           activeProfileId={signer.profileId}
           selectedProfileId={selectedProfileId}
@@ -532,11 +495,6 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
           onConnectionNetwork={setConnectionNetwork}
           onProfileSelect={(id) => {
             setSelectedProfileId(id || undefined);
-            if (!signer.connected) {
-              const profile = profiles.find((candidate) => candidate.id === id);
-              if (profile) setConnectionNetwork(profile.network);
-              return;
-            }
             requestProfileSwitch(id);
           }}
           onUseDifferentProfile={() => {
@@ -558,18 +516,18 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
           onConfirmProfileSwitch={() => {
             const id = pendingProfileSwitch;
             setPendingProfileSwitch(undefined);
-            if (id) performProfileSwitch(id);
+            if (id) void performProfileSwitch(id);
           }}
           onCancelProfileSwitch={() => setPendingProfileSwitch(undefined)}
           onConnect={(input) => void connectFromPopover(input)}
-          onConnectSaved={() => void connectSavedDebugSigner()}
           onRefresh={() => {
             if (signerMatchesDeployment) void wallet.refetch();
             else setConnectionNotice({ tone: "error", message: `Reconnect the AMP signer for ${networkLabel(deployment.data!.network)}.` });
           }}
+          onAddressCopyNotice={setConnectionNotice}
           onFaucetOpened={() => setConnectionNotice({
             tone: "neutral",
-            message: "Liquid testnet faucet opened. Refresh after funding arrives.",
+            message: "Liquid testnet faucet opened. Refresh to check whether new test funds arrived.",
           })}
           onDisconnect={() => {
             disconnectSigner();
@@ -599,7 +557,7 @@ export type WalletPopoverModel = {
   otherAssets: Array<{ assetId: string; label: string; amount: string; pending: string }>;
   utxoCount: number;
   utxos: Array<{ outpoint: string; status: "confirmed" | "unconfirmed" | "spent" | "orphaned"; amount: string }>;
-  receiveIndicator?: string;
+  receiveAddress?: { address: string; index: number; resetKey: string };
   faucetUrl?: string;
 };
 
@@ -620,7 +578,6 @@ export function WalletPopoverContent({
   connectionNetwork = "liquid-testnet",
   connectionNetworkLocked = false,
   mnemonicInput = "",
-  savedDebugSignerAvailable = false,
   profiles = [],
   activeProfileId,
   selectedProfileId,
@@ -640,7 +597,7 @@ export function WalletPopoverContent({
   onConfirmRemoveProfile = () => undefined,
   onConfirmProfileSwitch = () => undefined,
   onCancelProfileSwitch = () => undefined,
-  onConnectSaved = () => undefined,
+  onAddressCopyNotice = () => undefined,
   onFaucetOpened = () => undefined,
 }: {
   panelRef?: RefObject<HTMLDivElement | null>;
@@ -654,11 +611,10 @@ export function WalletPopoverContent({
   connectionNetwork?: "liquid-testnet" | "elements-regtest";
   connectionNetworkLocked?: boolean;
   mnemonicInput?: string;
-  savedDebugSignerAvailable?: boolean;
   profiles?: SignerProfile[];
   activeProfileId?: string;
   selectedProfileId?: string;
-  profileAction?: "add" | "unlock" | "rename" | "remove";
+  profileAction?: "add" | "rename" | "remove";
   profileLabelInput?: string;
   pendingProfileSwitch?: string;
   onMnemonicInput?: (value: string) => void;
@@ -674,7 +630,7 @@ export function WalletPopoverContent({
   onConfirmRemoveProfile?: () => void;
   onConfirmProfileSwitch?: () => void;
   onCancelProfileSwitch?: () => void;
-  onConnectSaved?: () => void;
+  onAddressCopyNotice?: (notice: WalletPopoverNotice) => void;
   onFaucetOpened?: () => void;
 }) {
   const [profileManagementOpen, setProfileManagementOpen] = useState(false);
@@ -685,15 +641,14 @@ export function WalletPopoverContent({
       <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="AMP signer wallet" tabIndex={-1} ref={panelRef}>
         <span className="overline">AMP Signer SDK</span>
         <h2>No signer connected</h2>
-        <p>Choose the intended test network, then connect a recovery phrase to discover its wallet balances.</p>
+        <p>Choose a saved disposable debug profile, or add another test-only recovery phrase.</p>
         <form className="wallet-connect-form" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}>
-          {profiles.length > 0 && <div className="wallet-profile-remembered"><SignerProfilePicker label="Remembered signer profile" profiles={profiles} selectedId={selectedProfileId} onSelect={onProfileSelect} onUseDifferentProfile={onUseDifferentProfile} /><small>Only public labels, account identities, fingerprints, and networks survive reload. Recovery phrases are not stored here.</small></div>}
+          {profiles.length > 0 && <div className="wallet-profile-remembered"><SignerProfilePicker label="Saved debug profile" profiles={profiles} selectedId={selectedProfileId} onSelect={onProfileSelect} onUseDifferentProfile={onUseDifferentProfile} /><small>Choosing a saved profile switches directly. Its test-only recovery phrase is stored unencrypted in this browser.</small></div>}
           <label>Network<select aria-label="Signer network" disabled={connecting || connectionNetworkLocked} value={connectionNetwork} onChange={(event) => onConnectionNetwork(event.target.value as "liquid-testnet" | "elements-regtest")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label>
-          {connectionNetworkLocked && <small>The selected deployment or remembered profile locks the signer network to {networkLabel(connectionNetwork)}.</small>}
+          {connectionNetworkLocked && <small>The selected deployment locks the signer network to {networkLabel(connectionNetwork)}.</small>}
           <label>Recovery phrase or NEW<input aria-describedby="wallet-connect-help" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label>
-          <small id="wallet-connect-help">Existing phrases stay in signer memory only. NEW is saved unencrypted for explicit local debugging. Profiles represent different signer phrases, not BIP account indexes.</small>
-          <button className="button primary wide" type="submit" disabled={connecting}>{connecting ? "Connecting…" : selectedProfileId ? "Unlock signer profile" : "Connect signer"}</button>
-          {savedDebugSignerAvailable && <button className="button secondary wide" type="button" disabled={connecting} onClick={onConnectSaved}>Connect saved debug signer</button>}
+          <small id="wallet-connect-help"><strong>Debug only:</strong> every profile phrase is saved unencrypted for direct switching and reload testing. Never use a profile that controls real funds. Profiles are different signer phrases, not BIP account indexes.</small>
+          <button className="button primary wide" type="submit" disabled={connecting}>{connecting ? "Connecting…" : "Connect and save debug signer"}</button>
         </form>
         {connectionNotice && <p className={`wallet-popover-status ${connectionNotice.tone}`} role="status" aria-live="polite">{connectionNotice.message}</p>}
       </div>
@@ -713,7 +668,6 @@ export function WalletPopoverContent({
     fingerprint: model.fingerprint,
     label: model.profileLabel ?? `Signer ${model.fingerprint}`,
     network: connectionNetwork,
-    unlocked: true,
   }];
   const displayedActiveProfileId = activeProfileId ?? activeProfiles[0]?.id;
 
@@ -744,10 +698,10 @@ export function WalletPopoverContent({
           <Settings2 size={13} /> Manage profiles
         </button>
       </div>
-      {profileManagementOpen && <div id="wallet-profile-management" className="wallet-profile-management" onKeyDown={(event) => { if (event.key !== "Escape") return; event.preventDefault(); event.stopPropagation(); setProfileManagementOpen(false); profileManagementTriggerRef.current?.focus(); }}><p>Each profile represents a different signer phrase, not a BIP derivation account.</p><div className="wallet-profile-actions"><button aria-label="Add signer profile" className="text-button" type="button" onClick={() => beginProfileManagementAction(onAddProfile)}><Plus size={13} /> Add</button><button aria-label="Rename signer profile" className="text-button" type="button" onClick={() => beginProfileManagementAction(onRenameProfile)}><Pencil size={13} /> Rename</button><button aria-label="Remove signer profile" className="text-button danger" type="button" onClick={() => beginProfileManagementAction(onRemoveProfile)}><Trash2 size={13} /> Remove</button></div></div>}
-      {(profileAction === "add" || profileAction === "unlock") && <form className="wallet-profile-editor" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}><strong>{profileAction === "unlock" ? "Unlock remembered profile" : "Add signer profile"}</strong><label>Network<select aria-label="Profile network" disabled={connecting || connectionNetworkLocked} value={connectionNetwork} onChange={(event) => onConnectionNetwork(event.target.value as "liquid-testnet" | "elements-regtest")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label><label>Recovery phrase or NEW<input aria-label="Profile recovery phrase or NEW" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label><small>The phrase is kept in memory only, except the existing explicit NEW debug behavior.</small><div><button className="button secondary" type="button" disabled={connecting} onClick={onCancelProfileAction}>Cancel</button><button className="button primary" type="submit" disabled={connecting}>{connecting ? "Connecting…" : profileAction === "unlock" ? "Unlock and switch" : "Add and switch"}</button></div></form>}
+      {profileManagementOpen && <div id="wallet-profile-management" className="wallet-profile-management" onKeyDown={(event) => { if (event.key !== "Escape") return; event.preventDefault(); event.stopPropagation(); setProfileManagementOpen(false); profileManagementTriggerRef.current?.focus(); }}><p>Disposable debug profiles represent different signer phrases, not BIP derivation accounts. Their phrases are stored unencrypted for testing.</p><div className="wallet-profile-actions"><button aria-label="Add signer profile" className="text-button" type="button" onClick={() => beginProfileManagementAction(onAddProfile)}><Plus size={13} /> Add</button><button aria-label="Rename signer profile" className="text-button" type="button" onClick={() => beginProfileManagementAction(onRenameProfile)}><Pencil size={13} /> Rename</button><button aria-label="Remove signer profile" className="text-button danger" type="button" onClick={() => beginProfileManagementAction(onRemoveProfile)}><Trash2 size={13} /> Remove</button></div></div>}
+      {profileAction === "add" && <form className="wallet-profile-editor" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}><strong>Add test-only debug profile</strong><label>Network<select aria-label="Profile network" disabled={connecting || connectionNetworkLocked} value={connectionNetwork} onChange={(event) => onConnectionNetwork(event.target.value as "liquid-testnet" | "elements-regtest")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label><label>Recovery phrase or NEW<input aria-label="Profile recovery phrase or NEW" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label><small>Stored unencrypted in this browser for disposable testnet/regtest use. Never use a phrase that controls real funds.</small><div><button className="button secondary" type="button" disabled={connecting} onClick={onCancelProfileAction}>Cancel</button><button className="button primary" type="submit" disabled={connecting}>{connecting ? "Connecting…" : "Add and switch"}</button></div></form>}
       {profileAction === "rename" && <form className="wallet-profile-editor" onSubmit={(event) => { event.preventDefault(); onSaveProfileLabel(); }}><strong>Rename signer profile</strong><label>Profile label<input aria-label="Signer profile label" maxLength={32} value={profileLabelInput} onChange={(event) => onProfileLabelInput(event.target.value)} /></label><div><button className="button secondary" type="button" onClick={onCancelProfileAction}>Cancel</button><button className="button primary" type="submit">Save label</button></div></form>}
-      {profileAction === "remove" && <div className="wallet-profile-confirm" role="alert"><strong>Remove this profile?</strong><p>Public profile metadata is removed and its in-memory signer is locked. Wallet records remain partitioned by a collision-resistant public account identity.</p><div><button className="button secondary" type="button" onClick={onCancelProfileAction}>Cancel</button><button className="button danger-button" type="button" onClick={onConfirmRemoveProfile}>Remove profile</button></div></div>}
+      {profileAction === "remove" && <div className="wallet-profile-confirm" role="alert"><strong>Remove this profile?</strong><p>The unencrypted debug recovery phrase and profile label will be removed from this browser. Wallet records remain partitioned by the collision-resistant public profile ID.</p><div><button className="button secondary" type="button" onClick={onCancelProfileAction}>Cancel</button><button className="button danger-button" type="button" onClick={onConfirmRemoveProfile}>Remove profile</button></div></div>}
       {pendingProfileSwitch && <div className="wallet-profile-confirm" role="alertdialog" aria-label="Confirm signer profile switch"><strong>A reviewed operation is still open</strong><p>Switching profiles clears the current review context and requires a fresh wallet sync. Continue?</p><div><button className="button secondary" type="button" onClick={onCancelProfileSwitch}>Stay here</button><button className="button primary" type="button" onClick={onConfirmProfileSwitch}>Switch profile</button></div></div>}
       <dl className="wallet-popover-meta">
         <div><dt>Network</dt><dd>{model.network}</dd></div>
@@ -769,12 +723,12 @@ export function WalletPopoverContent({
               {model.otherAssets.length > 3 && <small>+{model.otherAssets.length - 3} more assets</small>}
             </div>
           )}
-          {model.receiveIndicator && <p className="wallet-receive-indicator">Receive · {model.receiveIndicator}</p>}
+          {model.receiveAddress && <CopyableAddress address={model.receiveAddress.address} resetKey={model.receiveAddress.resetKey} accessibleLabel={`Copy external receive address ${model.receiveAddress.index}`} display={`External #${model.receiveAddress.index} · ${shortHash(model.receiveAddress.address, 11, 7)}`} className="wallet-receive-indicator" onNotice={onAddressCopyNotice} />}
           {model.utxos.length > 0 && <details className="wallet-popover-utxos"><summary>Current outputs ({model.utxoCount})</summary><div>{model.utxos.map((utxo) => <p key={utxo.outpoint}><code title={utxo.outpoint}>{shortHash(utxo.outpoint, 9, 5)}</code><span>{utxo.status}</span><strong>{utxo.amount}</strong></p>)}</div></details>}
           {!model.deploymentSelected && <p>Base wallet synchronized. Select or create a deployment to discover deployment-bound assets.</p>}
       </>
       {model.syncError && <p className="wallet-popover-error" role="status">{model.syncError}</p>}
-      {model.faucetUrl && <div className="wallet-popover-faucet"><p>The public testnet receive address will be sent to liquidtestnet.com.</p><a className="button secondary wide" href={model.faucetUrl} target="_blank" rel="noreferrer" onClick={onFaucetOpened}>Get testnet L-BTC <ExternalLink size={14} /></a></div>}
+      {model.faucetUrl && <div className="wallet-popover-faucet"><p>The active profile's public testnet receive address will be sent to liquidtestnet.com. Opening the faucet does not confirm funding.</p><a className="button secondary wide" href={model.faucetUrl} target="_blank" rel="noreferrer" onClick={onFaucetOpened}>Request test funds <ExternalLink size={14} /></a></div>}
       {connectionNotice && <p className={`wallet-popover-status ${connectionNotice.tone}`} role="status" aria-live="polite">{connectionNotice.message}</p>}
       <div className="wallet-popover-actions">
         <button className="button secondary" type="button" onClick={onRefresh} disabled={model.syncState === "loading" || model.syncState === "syncing"}>

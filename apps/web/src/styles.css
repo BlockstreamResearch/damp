@@ -101,8 +101,6 @@ button { color: inherit; }
 .wallet-profile-identity strong { min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .wallet-profile-identity small { min-width: 0; display: flex; align-items: center; gap: var(--space-compact); overflow: hidden; color: var(--muted); font-size: 8px; line-height: 1.3; }
 .wallet-profile-identity small > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wallet-profile-lock { display: inline-flex; align-items: center; gap: 3px; }
-.wallet-profile-lock svg { flex: 0 0 auto; }
 .wallet-profile-listbox { position: absolute; z-index: 8; top: calc(100% + var(--space-compact)); right: 0; left: 0; max-height: 230px; padding: var(--space-compact); display: grid; gap: 2px; overflow: auto; border: 1px solid #cbc7bd; border-radius: 10px; background: var(--paper); box-shadow: 0 14px 30px rgba(20,27,27,.17); }
 .wallet-profile-option { min-width: 0; min-height: 50px; padding: var(--space-tight); display: flex; align-items: center; justify-content: space-between; gap: var(--space-tight); border: 0; border-radius: 7px; background: transparent; text-align: left; cursor: pointer; }
 .wallet-profile-option:hover, .wallet-profile-option[aria-selected="true"] { background: #eef2f3; }
@@ -146,7 +144,7 @@ button { color: inherit; }
 .wallet-popover-assets > div { padding: 8px 1px; display: flex; justify-content: space-between; gap: 14px; border-bottom: 1px solid #e8e5de; font-size: 9px; }
 .wallet-popover-assets > div strong { max-width: 58%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wallet-popover-assets > small { padding-top: 7px; color: var(--muted); font-size: 8px; }
-.wallet-receive-indicator { padding: 9px 10px; border-radius: 8px; overflow: hidden; background: #eef2f3; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.wallet-receive-indicator { margin-top: 10px; padding: 7px 8px; border-radius: 8px; background: #eef2f3; }
 .wallet-popover-utxos { margin-top: 10px; border-top: 1px solid #e8e5de; }
 .wallet-popover-utxos summary { padding: 10px 1px; color: var(--muted); font-size: 9px; cursor: pointer; }
 .wallet-popover-utxos p { margin: 0; padding: 7px 1px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; border-top: 1px solid #efede8; align-items: center; font-size: 8px; }
@@ -178,6 +176,13 @@ button { color: inherit; }
 .button.secondary { border-color: #cdd1cf; background: #fff; }
 .button.secondary:hover { border-color: #aab0ae; }
 .button.issuer-primary { color: #fff; background: var(--amber-dark); }
+.copyable-address { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-tight); }
+.copyable-address code { min-width: 0; display: block; overflow: hidden; color: inherit; font-family: ui-monospace, monospace; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+.copy-action { min-height: 36px; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #cdd1cf; border-radius: 8px; color: var(--ink); background: #fff; font-size: 9px; font-weight: 750; cursor: pointer; }
+.clipboard-copy-button { min-height: 44px; }
+.copy-action:hover:not(:disabled) { border-color: #aab0ae; }
+.copy-action:disabled { opacity: .55; cursor: progress; }
+.copy-action svg { flex: 0 0 auto; }
 .button.issuer-primary:hover { background: #7d4900; }
 .button.wide { width: 100%; }
 .text-button { padding: 0; border: 0; color: var(--blue); background: none; font-size: 11px; cursor: pointer; }
@@ -284,10 +289,18 @@ input:focus, textarea:focus, select:focus { border-color: #7e9bb3; box-shadow: 0
 .check-list svg { color: var(--green); }
 .review-stack { margin-top: 22px; border-top: 1px solid var(--line); }
 .review-row { padding: 15px 0; display: flex; justify-content: space-between; gap: 30px; border-bottom: 1px solid #e7e4dc; font-size: 11px; }
-.review-row span { color: var(--muted); }
-.review-row strong { display: inline-flex; align-items: center; gap: 5px; text-align: right; }
+.review-row > span { flex: 0 0 auto; color: var(--muted); }
+.review-row-value { min-width: 0; display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; text-align: right; font-weight: 700; overflow-wrap: anywhere; }
+.review-row-value .copyable-address { width: min(100%, 360px); }
 .review-row svg { color: var(--green); }
 .review-buttons { margin-top: 24px; display: grid; grid-template-columns: 1fr 2fr; gap: 9px; }
+.transfer-readiness { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-tight); }
+.transfer-readiness > div { min-width: 0; padding: var(--space-tight); display: flex; align-items: center; justify-content: space-between; gap: var(--space-tight); border: 1px solid var(--line); border-radius: 9px; background: #faf9f6; }
+.transfer-readiness > div > span { color: var(--muted); font-size: 9px; font-weight: 650; }
+.transfer-error-summary { padding: var(--space-control); display: grid; gap: var(--space-tight); border: 1px solid #e5b9b1; border-radius: 9px; background: #fff6f4; }
+.transfer-error-summary strong { color: #7f3027; font-size: 11px; }
+.transfer-error-summary p { margin: 0; color: #855149; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.transfer-error-summary > div { display: flex; flex-wrap: wrap; gap: var(--space-tight); }
 .inline-message { margin: 12px 0 0; padding: 10px 12px; border-left: 2px solid #6986a0; background: #edf2f4; color: #4e5a60; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .wallet-sync-error { margin-top: 14px; padding: 13px; border: 1px solid #e5b9b1; border-radius: 9px; background: #fff6f4; }
 .wallet-sync-error p { margin: 0 0 5px; color: #7f3027; font-weight: 700; }
@@ -307,7 +320,8 @@ input:focus, textarea:focus, select:focus { border-color: #7e9bb3; box-shadow: 0
 .receive-layout { display: grid; grid-template-columns: minmax(400px, .9fr) minmax(0, .7fr); gap: 20px; align-items: start; }
 .receive-card { padding: 34px; }
 .qr-wrap { width: 230px; height: 230px; margin: 27px auto 18px; display: grid; place-items: center; border: 1px solid var(--line); background: #fff; box-shadow: 0 8px 24px rgba(20,25,20,.05); }
-.receive-address { margin: 0 auto 20px; max-width: 440px; overflow-wrap: anywhere; text-align: center; color: #5b6361; font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.6; }
+.receive-address { margin: 0 auto 20px; width: min(100%, 520px); color: #5b6361; }
+.receive-address code { overflow: visible; font-size: 10px; line-height: 1.6; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .generate-record { padding: 50px 20px 20px; display: grid; justify-items: center; text-align: center; }
 .generate-record p { max-width: 480px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .info-line { padding: 2px 4px; display: flex; align-items: flex-start; gap: 7px; color: var(--muted); font-size: 10px; line-height: 1.5; }
@@ -387,6 +401,7 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
 .funding-list > div { padding: 13px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; border: 1px solid #dfdcd4; border-radius: 9px; background: #faf9f6; }
 .funding-list span { display: flex; align-items: center; gap: 7px; color: var(--amber-dark); font-size: 10px; font-weight: 700; }
 .funding-list code { grid-column: 1; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; }
+.funding-list .copyable-address { grid-column: 1; }
 .funding-list .button, .funding-list small { grid-column: 2; grid-row: 1 / 3; }
 .funding-status { margin: 16px 0; padding: 12px 13px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #dfdcd4; border-radius: 9px; background: #faf9f6; }
 .funding-status > span { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
@@ -399,7 +414,8 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
 .publish-steps > div > .publish-step-actions { grid-column: 1 / -1; display: flex; grid-template-columns: none; gap: 8px; }
 .publish-step-actions .button { flex: 1 1 0; }
 .registry-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.fee-actions { display: flex; align-items: center; gap: 8px; }
+.fee-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.fee-funding-address { flex: 1 1 230px; max-width: 360px; }
 .issuance-summary { margin: 22px 0; display: grid; gap: 9px; }
 .issuance-summary > div { padding: 13px; display: flex; gap: 10px; align-items: center; border: 1px solid #dfdcd4; border-radius: 9px; }
 .issuance-summary > div > span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: var(--amber-dark); font-family: Georgia, serif; }
@@ -461,7 +477,7 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
   .wallet-status > span:last-child { display: none; }
   .wallet-popover { position: fixed; top: 78px; right: 16px; left: 16px; width: auto; max-height: calc(100vh - 160px); }
   .wallet-profile-actions .text-button, .wallet-profile-manage-trigger, .back-link, .setup-chooser-return { min-height: 44px; }
-  .wallet-popover-actions .button, .wallet-profile-editor .button, .wallet-profile-confirm .button { min-height: 44px; }
+  .wallet-popover-actions .button, .wallet-profile-editor .button, .wallet-profile-confirm .button, .copy-action { min-height: 44px; }
   .publish-steps .button { min-height: 44px; }
   .icon-button { width: 44px; height: 44px; }
   .page-body { padding: 22px 16px 50px; }
@@ -472,10 +488,19 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
   .balance-value { font-size: 35px; overflow: hidden; text-overflow: ellipsis; }
   .stat-row { grid-template-columns: 1fr; }
   .fee-panel { align-items: stretch; flex-direction: column; }
+  .fee-actions { justify-content: stretch; }
+  .fee-actions > .button, .fee-funding-address { width: 100%; max-width: none; }
   .summary-strip { align-items: flex-start; }
   .detail-grid, .form-grid-two, .policy-sidebar { grid-template-columns: 1fr; }
   .admin-status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .inline-add-form { grid-template-columns: 1fr; }
+  .transfer-readiness { grid-template-columns: 1fr; }
+  .review-row { align-items: flex-start; flex-direction: column; gap: var(--space-tight); }
+  .review-row-value { width: 100%; justify-content: flex-start; text-align: left; }
+  .review-row-value .copyable-address { width: 100%; }
+  .review-buttons { grid-template-columns: 1fr; }
+  .funding-list > div { grid-template-columns: 1fr; }
+  .funding-list .copyable-address, .funding-list .button, .funding-list small { grid-column: 1; grid-row: auto; }
   .blacklist-table { border: 0; overflow: visible; }
   .blacklist-table table, .blacklist-table tbody { display: block; }
   .blacklist-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }

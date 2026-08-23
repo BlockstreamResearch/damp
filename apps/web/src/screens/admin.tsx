@@ -10,6 +10,7 @@ import { AppShell, BackLink, Panel, Pill, SafetyNote, SectionHeading, TechnicalD
 import { BlacklistTable } from "../components/blacklist-table";
 import { AdminStatusStrip } from "../components/admin-status-strip";
 import { BootstrapRegistryState } from "../components/bootstrap-registry-state";
+import { CopyableAddress } from "../components/copyable-address";
 import { OperationReceiptPanel } from "../components/operation-receipt";
 import {
   bootstrap as bootstrapDeployment,
@@ -837,7 +838,7 @@ export function AdminSetup() {
                   {unusedFundingAddresses.map((address, index) => (
                     <div key={address.confidentialAddress}>
                       <span><Fuel size={15} /> Needed funding output {index + 1}</span>
-                      <code>{address.confidentialAddress}</code>
+                      <CopyableAddress address={address.confidentialAddress} resetKey={`${signer.profileId}:${configuration.network}:issuance:${index}:${address.confidentialAddress}`} accessibleLabel={`Copy issuance funding address ${index + 1}`} display={address.confidentialAddress} onNotice={(notice) => setMessage(notice.message)} />
                       {configuration.network === "liquid-testnet" ? <a className="button secondary" href={liquidTestnetFaucetUrl(address.confidentialAddress)} target="_blank" rel="noreferrer">Request testnet L-BTC <ExternalLink size={14} /></a> : <small>Fund this address from the local Elements node.</small>}
                     </div>
                   ))}

@@ -18,8 +18,9 @@ describe("workflow field validation", () => {
     const result = sendSchema.safeParse({ recipient: "", amount: "1,000" });
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error.flatten().fieldErrors).toMatchObject({
-      recipient: ["Paste a receive-record JSON or URL"],
-      amount: ["Enter a positive decimal amount"],
+      recipient: ["Paste a signed AMP ReceiveRecord JSON or HTTPS URL"],
+      amount: ["Enter an amount greater than zero without signs or exponent notation"],
     });
+    expect(sendSchema.safeParse({ recipient: "signed-record", amount: "3.00" }).success).toBe(true);
   });
 });

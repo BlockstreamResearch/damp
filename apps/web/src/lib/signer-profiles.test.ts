@@ -1,47 +1,69 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
-  loadSignerProfileMetadata,
+  debugSignerProfilesStorageKey,
   deriveSignerPublicIdentity,
-  removeSignerProfileMetadata,
-  renameSignerProfileMetadata,
-  saveSignerProfileMetadata,
+  loadDebugSignerProfiles,
+  removeDebugSignerProfile,
+  renameDebugSignerProfile,
+  saveDebugSignerProfiles,
   signerProfileId,
-  signerProfilesStorageKey,
-  upsertSignerProfileMetadata,
+  upsertDebugSignerProfile,
 } from "./signer-profiles";
 
-describe("signer profile metadata", () => {
+describe("test-only debug signer profiles", () => {
   beforeEach(() => localStorage.clear());
 
-  it("persists stable public identities without any mnemonic material", () => {
+  it("persists normalized debug signer material in the explicit unencrypted storage boundary", () => {
     const publicIdentity = "11".repeat(32);
     const id = signerProfileId(publicIdentity, "liquid-testnet");
-    const profiles = upsertSignerProfileMetadata([], { id, publicIdentity, fingerprint: "aabbccdd", network: "liquid-testnet" });
-    saveSignerProfileMetadata(profiles);
-    expect(loadSignerProfileMetadata()).toEqual([{ id, publicIdentity, fingerprint: "aabbccdd", network: "liquid-testnet", label: "Signer aabbccdd" }]);
-    expect(localStorage.getItem(signerProfilesStorageKey)).not.toMatch(/mnemonic|recovery|seed|xprv/i);
+    const profiles = upsertDebugSignerProfile([], { id, publicIdentity, fingerprint: "aabbccdd", network: "liquid-testnet", debugMnemonic: "  disposable   test words  " });
+    saveDebugSignerProfiles(profiles);
+    expect(loadDebugSignerProfiles()).toEqual([{ id, publicIdentity, fingerprint: "aabbccdd", network: "liquid-testnet", label: "Signer aabbccdd", debugMnemonic: "disposable test words" }]);
+    expect(localStorage.getItem(debugSignerProfilesStorageKey)).toContain("disposable test words");
   });
 
   it("renames and removes one identity without changing its network or fingerprint", () => {
     const publicIdentity = "22".repeat(32);
     const id = signerProfileId(publicIdentity, "elements-regtest");
-    const profiles = upsertSignerProfileMetadata([], { id, publicIdentity, fingerprint: "aabbccdd", network: "elements-regtest" });
-    expect(renameSignerProfileMetadata(profiles, id, "  Regtest   QA  ")).toEqual([{ ...profiles[0], label: "Regtest QA" }]);
-    expect(removeSignerProfileMetadata(profiles, id)).toEqual([]);
+    const profiles = upsertDebugSignerProfile([], { id, publicIdentity, fingerprint: "aabbccdd", network: "elements-regtest", debugMnemonic: "regtest words" });
+    expect(renameDebugSignerProfile(profiles, id, "  Regtest   QA  ")).toEqual([{ ...profiles[0], label: "Regtest QA" }]);
+    expect(removeDebugSignerProfile(profiles, id)).toEqual([]);
   });
 
   it("fails closed on malformed, duplicate, or identity-mismatched storage", () => {
-    localStorage.setItem(signerProfilesStorageKey, JSON.stringify({ version: 2, profiles: [{ id: "wrong", publicIdentity: "11".repeat(32), fingerprint: "aabbccdd", network: "liquid-testnet", label: "Wrong" }] }));
-    expect(loadSignerProfileMetadata()).toEqual([]);
-    localStorage.setItem(signerProfilesStorageKey, "not json");
-    expect(loadSignerProfileMetadata()).toEqual([]);
+    localStorage.setItem(debugSignerProfilesStorageKey, JSON.stringify({ version: 1, profiles: [{ id: "wrong", publicIdentity: "11".repeat(32), fingerprint: "aabbccdd", network: "liquid-testnet", label: "Wrong", debugMnemonic: "words" }] }));
+    expect(loadDebugSignerProfiles()).toEqual([]);
+    localStorage.setItem(debugSignerProfilesStorageKey, "not json");
+    expect(loadDebugSignerProfiles()).toEqual([]);
     localStorage.clear();
     localStorage.setItem("simplicity-amp:signer-profiles:v1", JSON.stringify({
       version: 1,
       profiles: [{ id: "liquid-testnet:aabbccdd", fingerprint: "aabbccdd", network: "liquid-testnet", label: "Legacy" }],
     }));
-    expect(loadSignerProfileMetadata()).toEqual([]);
+    expect(loadDebugSignerProfiles()).toEqual([]);
+
+    const publicIdentity = "22".repeat(32);
+    const id = signerProfileId(publicIdentity, "liquid-testnet");
+    const duplicate = { id, publicIdentity, fingerprint: "aabbccdd", network: "liquid-testnet", label: "Duplicate", debugMnemonic: "test words" };
+    localStorage.setItem(debugSignerProfilesStorageKey, JSON.stringify({ version: 1, profiles: [duplicate, duplicate] }));
+    expect(loadDebugSignerProfiles()).toEqual([]);
+  });
+
+  it("rejects more profiles than the bounded store can reload", () => {
+    const profiles = Array.from({ length: 21 }, (_, index) => {
+      const publicIdentity = index.toString(16).padStart(64, "0");
+      return {
+        id: signerProfileId(publicIdentity, "liquid-testnet"),
+        publicIdentity,
+        fingerprint: index.toString(16).padStart(8, "0"),
+        network: "liquid-testnet" as const,
+        label: `Signer ${index}`,
+        debugMnemonic: `disposable test words ${index}`,
+      };
+    });
+    expect(() => saveDebugSignerProfiles(profiles)).toThrow();
+    expect(localStorage.getItem(debugSignerProfilesStorageKey)).toBeNull();
   });
 
   it("derives a network-bound 256-bit identity from public wallet material", async () => {
