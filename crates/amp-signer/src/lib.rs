@@ -14,7 +14,7 @@ mod transaction;
 mod transfer;
 
 const CONTRACT_BUNDLE_HASH: &str =
-    "10e5f8c6ea867a72d348ccee831babef9d9009b586b6332ce4fe6629bb3dc1ba";
+    "00a50b7658d5914170286b75b95200687b7773c7082c02e3da1dd20012401b74";
 
 use amp_core::policy::{PolicySet, TreeDepth, outpoint_key};
 use amp_core::registry::{
@@ -272,6 +272,19 @@ mod tests {
         )?;
         bootstrapped.deployment.validate()?;
         bootstrapped.initial_policy.validate()?;
+        let regulated_asset = AssetId::from_str(&bootstrapped.deployment.regulated_asset)?;
+        let bootstrap_transaction: elements::Transaction =
+            elements::encode::deserialize(&hex::decode(&bootstrapped.transaction)?)?;
+        assert_eq!(
+            bootstrap_transaction.output[1].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(bootstrap_transaction.output[1].value.explicit(), Some(999));
+        assert_eq!(
+            bootstrap_transaction.output[2].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(bootstrap_transaction.output[2].value.explicit(), Some(1));
         receive::validate_receive_record(
             network,
             ValidateReceiveRecordRequest {
@@ -327,6 +340,18 @@ mod tests {
             },
         )?;
         assert_eq!(transfer.operation, "transfer");
+        let transfer_transaction: elements::Transaction =
+            elements::encode::deserialize(&hex::decode(&transfer.transaction)?)?;
+        assert_eq!(
+            transfer_transaction.output[1].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(transfer_transaction.output[1].value.explicit(), Some(600));
+        assert_eq!(
+            transfer_transaction.output[2].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(transfer_transaction.output[2].value.explicit(), Some(399));
         let transfer_anchor = parent_utxo(&transfer.txid, 0, &transfer.transaction, None, None);
         let transfer_fee_change = parent_utxo(
             &transfer.txid,
@@ -411,6 +436,18 @@ mod tests {
             },
         )?;
         assert_eq!(reissued.operation, "reissuance");
+        let reissuance_transaction: elements::Transaction =
+            elements::encode::deserialize(&hex::decode(&reissued.transaction)?)?;
+        assert_eq!(
+            reissuance_transaction.output[1].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(reissuance_transaction.output[1].value.explicit(), Some(99));
+        assert_eq!(
+            reissuance_transaction.output[2].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(reissuance_transaction.output[2].value.explicit(), Some(1));
         Ok(())
     }
 
@@ -494,6 +531,17 @@ mod tests {
             serialized_verifier_asset.to_string(),
             bootstrapped.deployment.verifier_asset
         );
+        let regulated_asset = AssetId::from_str(&bootstrapped.deployment.regulated_asset)?;
+        assert_eq!(
+            transaction.output[1].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(transaction.output[1].value.explicit(), Some(999));
+        assert_eq!(
+            transaction.output[2].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(transaction.output[2].value.explicit(), Some(1));
         let spent_outputs = transaction
             .input
             .iter()
@@ -588,6 +636,18 @@ mod tests {
             },
         )?;
         assert_eq!(transfer.operation, "transfer");
+        let transfer_transaction: elements::Transaction =
+            elements::encode::deserialize(&hex::decode(transfer.transaction)?)?;
+        assert_eq!(
+            transfer_transaction.output[1].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(transfer_transaction.output[1].value.explicit(), Some(600));
+        assert_eq!(
+            transfer_transaction.output[2].asset.explicit(),
+            Some(regulated_asset)
+        );
+        assert_eq!(transfer_transaction.output[2].value.explicit(), Some(399));
         Ok(())
     }
 

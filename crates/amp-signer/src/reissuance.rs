@@ -123,9 +123,10 @@ pub fn reissue(
         "issuer derivation does not match deployment"
     );
     let recipient = Address::from_str(&request.recipient.confidential_address)?;
-    let recipient_blinder = recipient
-        .blinding_pubkey
-        .context("recipient is not confidential")?;
+    anyhow::ensure!(
+        recipient.blinding_pubkey.is_some(),
+        "recipient is not confidential"
+    );
     let token_locator = token.wallet_key.as_ref().expect("validated");
     let token_address = wallet_address(signer, &request.deployment, token_locator)?;
 
@@ -158,17 +159,15 @@ pub fn reissue(
         verifier_asset,
         None,
     ));
-    let mut regulated_outputs = Vec::new();
+    let mut value_only_outputs = Vec::new();
     if amount > 1 {
         for value in [amount - 1, 1] {
-            let index = pset.outputs().len();
             pset.add_output(Output::new_explicit(
                 recipient.script_pubkey(),
                 value,
                 regulated_asset,
-                Some(BitcoinPublicKey::new(recipient_blinder)),
+                None,
             ));
-            regulated_outputs.push(index);
         }
     } else {
         pset.add_output(Output::new_explicit(
@@ -211,7 +210,7 @@ pub fn reissue(
                 .transpose()?,
         ));
         if confidential_fee_funding {
-            regulated_outputs.push(index);
+            value_only_outputs.push(index);
         }
     } else if confidential_fee_funding {
         anyhow::bail!("confidential fee funding requires policy-asset change");
@@ -227,9 +226,9 @@ pub fn reissue(
         .enumerate()
         .map(|(index, utxo)| (index, utxo.secrets))
         .collect::<HashMap<usize, TxOutSecrets>>();
-    if !regulated_outputs.is_empty() {
-        blinding::blind_values(&mut pset, &secrets, &regulated_outputs)
-            .context("reissued holder-value blinding failed")?;
+    if !value_only_outputs.is_empty() {
+        blinding::blind_values(&mut pset, &secrets, &value_only_outputs)
+            .context("reissuance fee-change blinding failed")?;
     }
     blinding::blind_assets_and_values(&mut pset, &secrets, &[token_output])
         .context("reissuance-token blinding failed")?;

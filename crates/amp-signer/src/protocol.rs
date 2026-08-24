@@ -32,9 +32,9 @@ use crate::policy::IndexedInputPolicyProof;
 
 pub const MAX_REGULATED_INPUTS: usize = 10;
 pub const MAX_REGULATED_OUTPUTS: usize = 10;
-pub const D4_BUDGET_PADDING_WORDS: usize = 278;
-pub const D5_BUDGET_PADDING_WORDS: usize = 329;
-pub const D6_BUDGET_PADDING_WORDS: usize = 380;
+pub const D4_BUDGET_PADDING_WORDS: usize = 295;
+pub const D5_BUDGET_PADDING_WORDS: usize = 346;
+pub const D6_BUDGET_PADDING_WORDS: usize = 397;
 
 const USER_SOURCE: &str = include_str!("../../../src/artifacts/simf/user.simf");
 const GOVERNANCE_SOURCE: &str = include_str!("../../../src/artifacts/simf/governance.simf");
@@ -633,23 +633,23 @@ mod tests {
         })?;
         assert_eq!(
             hex::encode(protocol.user_executable_leaf_hash()),
-            "5c37ed5a5eefb6ab6f36a66a9f0cac899442464206dce885c621988ba3c03652"
+            "ec10fedbb2316896258bc6df19f638d6c8c05124ada249c7246baaa88a1ca1b4"
         );
         let expected = [
             (
                 TreeDepth::D4,
-                "87c94f056f859ef26f8b08b2b82bca13ad604c7a75cea90364d8ccd24a7395e5",
-                "512091967acb47fe20abf2fa57a93312827bf0e5133fe773db51fb74cc61860d6334",
+                "c491b3f5c2603fd9c190aa744a03d36577d6e4ee0c4609c07e83c9698adc9974",
+                "5120ec2c62bb95745ab7728da4ff3382b8bf2d4c328a1f3051187ca3b2cc5426b02e",
             ),
             (
                 TreeDepth::D5,
-                "f1b319ab406a62a64a37578d147d47bf5d8927251f7dd879e3c91e23594f288f",
-                "51200eec020c76a9dfefc87c4696029ab6c34a14eea5c71bfcbd6c32428fe05d72b1",
+                "cae1c165cefe304ae2071f27210f1be041bb079c7c99c0d83caba019632b3979",
+                "512097c1eedb59e82d368f7f5ba5dba7a299ef70d8610318ef9c441e14264e0e1ca8",
             ),
             (
                 TreeDepth::D6,
-                "3575097bdcd837d6a5dc6f38ef12d964bf41ad7af65db63da5128380dc32a059",
-                "512099d2b306030df24388e6d3dea471f609255f62269de82dd373b60c76b370e731",
+                "2738a51b6f0163be7d34cf802e5170fe2762e48169719d506b20dcf69fc8f4ee",
+                "5120b6b4a76fae70e98e1f6f8cc53d743a528917a593bb7dc0eebfc3afcd649c2b3e",
             ),
         ];
         for (depth, verifier_hash, script) in expected {

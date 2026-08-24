@@ -308,9 +308,6 @@ mod unit_1 {
     }
 }
 mod unit_3 {
-    pub fn explicit_current_asset() -> u256 {
-    let asset: Asset1 = jet::current_asset();
-        unwrap_right::<(u1, u256)>(asset)}
     pub fn explicit_input_asset(index: u32) -> u256 {
     let asset: Asset1 = unwrap(jet::input_asset(index));
         unwrap_right::<(u1, u256)>(asset)}

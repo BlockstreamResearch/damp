@@ -13,9 +13,10 @@ use elements::{
 };
 use rand::thread_rng;
 
-/// AMP-specific value-only output blinding. Assets remain explicit because the verifier scans and
-/// compares every regulated asset ID in Simplicity. LWK supplies the input SLIP77 secrets; this
-/// protocol layer only balances and proves the selected values.
+/// AMP-specific value-only blinding for non-regulated wallet outputs. Regulated values stay
+/// explicit because the covenant sums and constrains them in Simplicity. LWK supplies the input
+/// SLIP77 secrets; this protocol layer only balances and proves explicitly selected fee-asset
+/// values.
 pub fn blind_values(
     pset: &mut PartiallySignedTransaction,
     input_secrets: &HashMap<usize, TxOutSecrets>,

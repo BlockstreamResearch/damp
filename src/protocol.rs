@@ -34,9 +34,9 @@ use simplex::utils::tr_unspendable_key;
 
 pub const MAX_REGULATED_INPUTS: usize = 10;
 pub const MAX_REGULATED_OUTPUTS: usize = 10;
-pub const D4_BUDGET_PADDING_WORDS: usize = 278;
-pub const D5_BUDGET_PADDING_WORDS: usize = 329;
-pub const D6_BUDGET_PADDING_WORDS: usize = 380;
+pub const D4_BUDGET_PADDING_WORDS: usize = 295;
+pub const D5_BUDGET_PADDING_WORDS: usize = 346;
+pub const D6_BUDGET_PADDING_WORDS: usize = 397;
 
 type NeighborWitness<const D: usize> = (u32, Hash32, [Hash32; D]);
 type ProofWitness<const D: usize> = (u32, Option<NeighborWitness<D>>, Option<NeighborWitness<D>>);

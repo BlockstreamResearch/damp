@@ -308,9 +308,6 @@ mod unit_1 {
     }
 }
 mod unit_2 {
-    pub fn explicit_current_asset() -> u256 {
-    let asset: Asset1 = jet::current_asset();
-        unwrap_right::<(u1, u256)>(asset)}
     pub fn explicit_input_asset(index: u32) -> u256 {
     let asset: Asset1 = unwrap(jet::input_asset(index));
         unwrap_right::<(u1, u256)>(asset)}
@@ -337,11 +334,13 @@ mod unit_3 {
 }
 mod unit_0 {
     use crate::unit_1::{assert_eq_64, assert_eq_256};
-    use crate::unit_2::{explicit_current_asset, explicit_input_asset_and_amount};
+    use crate::unit_2::{explicit_input_asset_and_amount};
     use crate::unit_3::state_script_hash;
     fn main() {
     assert!(jet::lt_32(0, jet::current_index()));
-        assert_eq_256(explicit_current_asset(), param::REGULATED_ASSET_ID);
+        let (current_asset, current_amount): (u256, u64) = explicit_input_asset_and_amount(jet::current_index());
+        assert_eq_256(current_asset, param::REGULATED_ASSET_ID);
+        assert!(jet::lt_64(0, current_amount));
         let (verifier_asset, verifier_amount): (u256, u64) = explicit_input_asset_and_amount(0);
         assert_eq_256(verifier_asset, param::VERIFIER_ASSET_ID);
         assert_eq_64(verifier_amount, param::VERIFIER_ASSET_AMOUNT);

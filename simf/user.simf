@@ -4,7 +4,6 @@
 use std::lib::asserts::{assert_eq_64, assert_eq_256};
 
 use crate::lib::assets::{
-    explicit_current_asset,
     explicit_input_asset_and_amount,
 };
 use crate::lib::taproot::state_script_hash;
@@ -12,7 +11,10 @@ use crate::lib::taproot::state_script_hash;
 fn main() {
     // The public verifier anchor always occupies input 0; user inputs follow it.
     assert!(jet::lt_32(0, jet::current_index()));
-    assert_eq_256(explicit_current_asset(), param::REGULATED_ASSET_ID);
+    let (current_asset, current_amount): (u256, u64) =
+        explicit_input_asset_and_amount(jet::current_index());
+    assert_eq_256(current_asset, param::REGULATED_ASSET_ID);
+    assert!(jet::lt_64(0, current_amount));
 
     let (verifier_asset, verifier_amount): (u256, u64) =
         explicit_input_asset_and_amount(0);

@@ -166,6 +166,8 @@ function DeploymentSelector() {
   const deployments = useDeployments();
   const activeId = useActiveDeploymentId();
   const selectDeployment = useSelectDeployment();
+  if (deployments.isPending) return <small role="status">Checking asset registry…</small>;
+  if (deployments.error) return <small role="alert" title={deployments.error instanceof Error ? deployments.error.message : String(deployments.error)}>Asset registry unavailable</small>;
   if (!deployments.data?.length) return <small>No deployment selected</small>;
   return <DeploymentControl deployments={deployments.data} activeId={activeId.data ?? undefined} onSelect={(deploymentId) => selectDeployment.mutate(deploymentId)} />;
 }

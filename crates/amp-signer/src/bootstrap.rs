@@ -13,7 +13,7 @@ use elements::pset::{Output, PartiallySignedTransaction};
 use elements::{AssetId, Script, TxOutSecrets};
 
 use crate::blinding;
-use crate::keys::{blinding_public_key, derive_key_index, derive_xprv, xonly_from_xprv};
+use crate::keys::{derive_key_index, derive_xprv, xonly_from_xprv};
 use crate::model::{
     BootstrapRequest, BootstrapResult, CreateReceiveRecordRequest, OperationReview,
     SIGNER_SDK_VERSION, SignerNetwork, WalletKeyLocator,
@@ -161,7 +161,6 @@ pub fn bootstrap(
         contract_bundle_hash: crate::CONTRACT_BUNDLE_HASH.to_owned(),
     };
     let holder_script = protocol.user_script(holder)?;
-    let holder_blinder = blinding_public_key(signer, &holder_script)?;
     let token_locator = selected[0]
         .wallet_key
         .as_ref()
@@ -192,17 +191,14 @@ pub fn bootstrap(
         verifier_asset,
         None,
     ));
-    let mut holder_outputs = Vec::new();
     if supply > 1 {
         for value in [supply - 1, 1] {
-            let index = pset.outputs().len();
             pset.add_output(Output::new_explicit(
                 holder_script.clone(),
                 value,
                 regulated_asset,
-                Some(BitcoinPublicKey::new(holder_blinder)),
+                None,
             ));
-            holder_outputs.push(index);
         }
     } else {
         pset.add_output(Output::new_explicit(
@@ -228,7 +224,7 @@ pub fn bootstrap(
     } else {
         None
     };
-    let mut value_only_outputs = holder_outputs;
+    let mut value_only_outputs = Vec::new();
     let confidential_funding = selected.iter().any(|utxo| {
         utxo.secrets.asset_bf != elements::confidential::AssetBlindingFactor::zero()
             || utxo.secrets.value_bf != elements::confidential::ValueBlindingFactor::zero()

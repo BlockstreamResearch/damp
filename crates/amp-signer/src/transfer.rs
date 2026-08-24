@@ -9,7 +9,7 @@ use elements::secp256k1_zkp::{Keypair, Message, schnorr::Signature};
 use elements::{Address, AssetId, Script, TxOutSecrets};
 
 use crate::blinding;
-use crate::keys::{blinding_public_key, derive_xprv, xonly_from_xprv};
+use crate::keys::{derive_xprv, xonly_from_xprv};
 use crate::model::{
     OperationReview, SIGNER_SDK_VERSION, SignedOperation, SignerNetwork, TransferRequest,
 };
@@ -106,9 +106,10 @@ pub fn sign_transfer(
     let recipient_owner =
         elements::schnorr::XOnlyPublicKey::from_str(&request.recipient.owner_public_key)?;
     let recipient_address = Address::from_str(&request.recipient.confidential_address)?;
-    let recipient_blinder = recipient_address
-        .blinding_pubkey
-        .context("recipient address is not confidential")?;
+    anyhow::ensure!(
+        recipient_address.blinding_pubkey.is_some(),
+        "recipient address is not confidential"
+    );
 
     let mut pset = PartiallySignedTransaction::new_v2();
     set_lwk_genesis_hash(&mut pset, &request.deployment)?;
@@ -127,29 +128,24 @@ pub fn sign_transfer(
         verifier_asset,
         None,
     ));
-    let mut confidential_outputs = Vec::new();
-    let recipient_index = pset.outputs().len();
+    let mut value_blinded_outputs = Vec::new();
     pset.add_output(Output::new_explicit(
         recipient_address.script_pubkey(),
         amount,
         regulated_asset,
-        Some(BitcoinPublicKey::new(recipient_blinder)),
+        None,
     ));
-    confidential_outputs.push(recipient_index);
 
     let regulated_change = regulated_total - amount;
     let mut recipients = vec![recipient_owner];
     if regulated_change > 0 {
         let holder_script = protocol.user_script(sender.0)?;
-        let holder_blinder = blinding_public_key(signer, &holder_script)?;
-        let index = pset.outputs().len();
         pset.add_output(Output::new_explicit(
             holder_script,
             regulated_change,
             regulated_asset,
-            Some(BitcoinPublicKey::new(holder_blinder)),
+            None,
         ));
-        confidential_outputs.push(index);
         recipients.push(sender.0);
     }
     let fee_change = fee_total - fee;
@@ -174,7 +170,7 @@ pub fn sign_transfer(
                 .transpose()?,
         ));
         if confidential_fee_funding {
-            confidential_outputs.push(index);
+            value_blinded_outputs.push(index);
         }
     } else if confidential_fee_funding {
         anyhow::bail!("confidential fee funding requires policy-asset change");
@@ -191,8 +187,10 @@ pub fn sign_transfer(
         .enumerate()
         .map(|(index, utxo)| (index, utxo.secrets))
         .collect::<HashMap<usize, TxOutSecrets>>();
-    blinding::blind_values(&mut pset, &input_secrets, &confidential_outputs)
-        .context("transfer value blinding failed")?;
+    if !value_blinded_outputs.is_empty() {
+        blinding::blind_values(&mut pset, &input_secrets, &value_blinded_outputs)
+            .context("transfer fee-change blinding failed")?;
+    }
 
     let proofs = all_inputs[1..first_fee_index]
         .iter()

@@ -4,12 +4,14 @@ use simplicity_amp::protocol::{AnchorBranch, Protocol, ProtocolConfig};
 
 use simplex::program::ProgramTrait;
 use simplex::provider::SimplicityNetwork;
-use simplex::simplicityhl::elements::confidential;
+use simplex::simplicityhl::elements::confidential::{self, ValueBlindingFactor};
 use simplex::simplicityhl::elements::hashes::Hash;
 use simplex::simplicityhl::elements::pset::{Input, Output, PartiallySignedTransaction};
 use simplex::simplicityhl::elements::schnorr::{Keypair, XOnlyPublicKey};
 use simplex::simplicityhl::elements::secp256k1_zkp::schnorr::Signature;
-use simplex::simplicityhl::elements::secp256k1_zkp::{Message, SECP256K1, SecretKey};
+use simplex::simplicityhl::elements::secp256k1_zkp::{
+    Generator, Message, PedersenCommitment, SECP256K1, SecretKey,
+};
 use simplex::simplicityhl::elements::{AssetId, OutPoint, Script, TxOut, Txid};
 
 struct Fixture {
@@ -182,6 +184,126 @@ fn ordinary_transfer_preserves_anchor_and_executes_both_covenants() -> anyhow::R
             .protocol
             .finalize_user(&pset, fixture.owner(), signature, 1, &fixture.network)?;
     assert_eq!(final_witness.len(), 4);
+    Ok(())
+}
+
+#[test]
+fn transfer_requires_explicit_conserved_regulated_amounts_at_every_depth() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    for depth in [TreeDepth::D4, TreeDepth::D5, TreeDepth::D6] {
+        let blacklist = BlacklistPolicy::empty(depth)?;
+        let policy = blacklist.commitment();
+        let anchor = fixture.protocol.anchor(policy)?;
+        let valid = fixture.transfer(policy, anchor.script_pubkey())?;
+        let witness = Protocol::transfer_witness(
+            policy,
+            fixture.owner(),
+            recipient_slots(&[fixture.recipient()]),
+            &[blacklist.prove_input(1, input_outpoint(1)?)?],
+        )?;
+
+        // The exact explicit input/output total is accepted by the verifier.
+        anchor.execute(
+            &valid,
+            &witness,
+            0,
+            AnchorBranch::Verifier,
+            &fixture.network,
+        )?;
+
+        let mut mismatched = valid.clone();
+        mismatched.outputs_mut()[1].amount = Some(999);
+        assert!(
+            anchor
+                .execute(
+                    &mismatched,
+                    &witness,
+                    0,
+                    AnchorBranch::Verifier,
+                    &fixture.network,
+                )
+                .is_err(),
+            "D{} accepted a mismatched regulated amount",
+            depth.as_u8(),
+        );
+
+        let mut missing = valid.clone();
+        missing.outputs_mut()[1].amount = None;
+        assert!(
+            anchor
+                .execute(
+                    &missing,
+                    &witness,
+                    0,
+                    AnchorBranch::Verifier,
+                    &fixture.network,
+                )
+                .is_err(),
+            "D{} accepted a missing regulated amount",
+            depth.as_u8(),
+        );
+
+        let mut confidential_output = valid.clone();
+        confidential_output.outputs_mut()[1].amount = None;
+        confidential_output.outputs_mut()[1].amount_comm =
+            Some(value_commitment(fixture.regulated_asset, 1_000));
+        assert!(
+            anchor
+                .execute(
+                    &confidential_output,
+                    &witness,
+                    0,
+                    AnchorBranch::Verifier,
+                    &fixture.network,
+                )
+                .is_err(),
+            "D{} accepted a confidential regulated output",
+            depth.as_u8(),
+        );
+
+        let mut confidential_input = valid.clone();
+        let regulated_utxo = confidential_input.inputs_mut()[1]
+            .witness_utxo
+            .as_mut()
+            .expect("fixture has a regulated witness UTXO");
+        regulated_utxo.value =
+            confidential::Value::Confidential(value_commitment(fixture.regulated_asset, 1_000));
+        confidential_input.inputs_mut()[1].amount = None;
+        assert!(
+            anchor
+                .execute(
+                    &confidential_input,
+                    &witness,
+                    0,
+                    AnchorBranch::Verifier,
+                    &fixture.network,
+                )
+                .is_err(),
+            "D{} accepted a confidential regulated input",
+            depth.as_u8(),
+        );
+
+        let user_program = fixture.protocol.user_program(fixture.owner());
+        let signature = sign_program(
+            user_program.as_ref(),
+            &confidential_input,
+            1,
+            &fixture.network,
+            &fixture.owner,
+        )?;
+        assert!(
+            user_program
+                .as_ref()
+                .execute(
+                    &confidential_input,
+                    &Protocol::user_witness(fixture.owner(), signature),
+                    1,
+                    &fixture.network,
+                )
+                .is_err(),
+            "holder covenant accepted a confidential regulated input",
+        );
+    }
     Ok(())
 }
 
@@ -578,9 +700,9 @@ fn maximum_ten_input_ten_output_transfer_uses_recorded_minimal_padding() -> anyh
             metrics.required_padding_bytes,
         );
         let expected = match depth {
-            TreeDepth::D4 => (15_950, 14_692_239, 0),
-            TreeDepth::D5 => (18_235, 16_397_330, 0),
-            TreeDepth::D6 => (20_539, 18_074_773, 0),
+            TreeDepth::D4 => (16_762, 16_759_051, 0),
+            TreeDepth::D5 => (19_048, 18_460_558, 0),
+            TreeDepth::D6 => (21_320, 20_195_857, 0),
         };
         assert_eq!(
             (
@@ -592,6 +714,7 @@ fn maximum_ten_input_ten_output_transfer_uses_recorded_minimal_padding() -> anyh
         );
 
         let mut ordinary = fixture.transfer(policy, anchor.script_pubkey())?;
+        ordinary.outputs_mut()[1].amount = Some(100);
         add_input(
             &mut ordinary,
             input_outpoint(11)?,
@@ -634,9 +757,9 @@ fn maximum_ten_input_ten_output_transfer_uses_recorded_minimal_padding() -> anyh
             ordinary_metrics.required_padding_bytes,
         );
         let expected_ordinary = match depth {
-            TreeDepth::D4 => (12_739, 12_414_705, 0),
-            TreeDepth::D5 => (14_449, 14_119_796, 0),
-            TreeDepth::D6 => (16_176, 15_797_239, 0),
+            TreeDepth::D4 => (13_553, 13_440_589, 0),
+            TreeDepth::D5 => (15_262, 15_142_096, 0),
+            TreeDepth::D6 => (16_958, 16_877_395, 0),
         };
         assert_eq!(
             (
@@ -700,6 +823,17 @@ fn txout(script_pubkey: Script, asset: AssetId, amount: u64) -> TxOut {
         script_pubkey,
         ..Default::default()
     }
+}
+
+fn value_commitment(asset: AssetId, amount: u64) -> PedersenCommitment {
+    let generator = Generator::new_unblinded(SECP256K1, asset.into_tag());
+    let mut rng = rand::thread_rng();
+    PedersenCommitment::new(
+        SECP256K1,
+        amount,
+        ValueBlindingFactor::new(&mut rng).into_inner(),
+        generator,
+    )
 }
 
 fn add_input(

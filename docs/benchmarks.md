@@ -10,12 +10,12 @@ the smallest word counts for which both declared shapes need no annex.
 
 | Verifier | Capacity | Budget words | Budget bytes | Final witness bytes | Execution milliweight | Annex bytes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| D4 | 16 | 278 | 8,896 | 15,950 | 14,692,239 | 0 |
-| D5 | 32 | 329 | 10,528 | 18,235 | 16,397,330 | 0 |
-| D6 | 64 | 380 | 12,160 | 20,539 | 18,074,773 | 0 |
+| D4 | 16 | 295 | 9,440 | 16,762 | 16,759,051 | 0 |
+| D5 | 32 | 346 | 11,072 | 19,048 | 18,460,558 | 0 |
+| D6 | 64 | 397 | 12,704 | 21,320 | 20,195,857 | 0 |
 
-The ordinary transfer fixtures are respectively 12,739 / 12,414,705,
-14,449 / 14,119,796, and 16,176 / 15,797,239 witness bytes / execution
+The ordinary transfer fixtures are respectively 13,553 / 13,440,589,
+15,262 / 15,142,096, and 16,958 / 16,877,395 witness bytes / execution
 milliweight for D4, D5, and D6.
 
 These values are deterministic fixtures for Simplex 0.0.9 and the pinned

@@ -1,15 +1,15 @@
 // Root D4 entrypoint. Witness access must remain in `main` in SimplicityHL.
-use crate::verifier::core::{ProofState, assert_all_inputs_verified, consume_budget, count_regulated_inputs, verify_anchor_and_initiator, verify_regulated_outputs};
+use crate::verifier::core::{InputSummary, ProofState, assert_all_inputs_verified, consume_budget, summarize_regulated_inputs, verify_anchor_and_initiator, verify_regulated_outputs};
 use crate::verifier::d4::verify_policy_proof;
 
 fn main() {
-    assert!(array_fold::<consume_budget, 278>(witness::BUDGET_PADDING, true));
+    assert!(array_fold::<consume_budget, 295>(witness::BUDGET_PADDING, true));
     verify_anchor_and_initiator(witness::TRANSFER_OWNER);
-    let count: u32 = count_regulated_inputs();
+    let (count, regulated_input_amount): InputSummary = summarize_regulated_inputs();
     let state: ProofState = array_fold::<verify_policy_proof, 10>(
         witness::INPUT_POLICY_PROOFS,
         (count, 0, None, false),
     );
     assert_all_inputs_verified(count, state);
-    verify_regulated_outputs(witness::RECIPIENTS);
+    verify_regulated_outputs(witness::RECIPIENTS, regulated_input_amount);
 }

@@ -248,13 +248,13 @@ Liquid using Simplicity}
         \item Its input is transaction input zero and contains $q$ units of $V$.
         \item Output zero returns $q$ units of $V$ to the same $C_V(\pi)$.
         \item At least one regulated input is a $C_U(X)$ input. This input independently requires its owner signature. Only holders can therefore advance the verifier output.
-        \item Every output exposes its asset identifier. Every output of $A$ has locking script $C_U(Y)$ for its supplied recipient key $Y$.
+        \item Every output exposes its asset identifier. Every input and output of $A$ exposes a positive amount, and the verifier requires the two explicit totals to be equal. Every output of $A$ has locking script $C_U(Y)$ for its supplied recipient key $Y$.
         \item All enabled policy predicates hold.
     \end{enumerate}
 
     The output scan advances until the transaction has no output at the next index.
     A confidential asset commitment would hide which outputs need confinement. Hence, asset identifiers must be explicit.
-    Value commitments may remain confidential unless a policy requires their amounts.
+    The v0.1 verifier also makes regulated values explicit and checks their exact input/output sum. This keeps the amount invariant independently auditable inside the covenant instead of relying on caller metadata or implicit transaction inference.
 
     The fixed-index input may be functionally limiting.
     The research of an arbitrary-index positioning is considered future work.
@@ -267,7 +267,7 @@ Liquid using Simplicity}
         T_{\mathrm{out}}&=[(V,q,C_V(\pi)),(A,b_1,C_U(Y_1)),\ldots,\mathrm{fees}].
     \end{align}
     Every user input supplies its owner signature, and the verifier input supplies the policy proofs.
-    Liquid's asset conservation and the two covenant checks preserve both the verifier output and confinement of $A$.
+    Liquid's asset conservation and the two covenant checks preserve both the verifier output and confinement of $A$; the verifier additionally checks the explicit regulated total itself.
 
     An issuer update is instead
     \begin{equation}
@@ -373,8 +373,7 @@ Liquid using Simplicity}
     Asset identifiers are therefore explicit.
     Policy commitments and spend proofs are public.
     A proof may also reveal the queried key and path.
-    If no policy depends on values, confidential value commitments and range proofs remain available.
-    With the transfer limit above, recipient amounts are explicit while sender change may remain confidential.
+    AMP v0.1 intentionally exposes regulated values so its verifier can enforce their exact total. Confidential value commitments remain available for unrelated assets such as fee change and for future verifier versions with a different amount policy.
     Policies keyed by public identity reveal more links than policies keyed by outpoints.
 
     \subsection{Contention}

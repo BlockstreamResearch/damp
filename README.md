@@ -87,6 +87,12 @@ exact repository path, and enables the next operation only after the byte-identi
 file is available from the repository's default branch. No GitHub client ID or
 browser authorization is required.
 
+Ordinary AMP transfers keep every regulated asset ID and amount explicit. The
+holder covenant rejects confidential regulated inputs, while the verifier rejects
+missing, zero, confidential, overflowing, or unequal regulated input/output totals.
+Only unrelated wallet outputs such as confidential L-BTC change use value-only
+blinding.
+
 ## Reproducible build
 
 Simplex 0.0.9 and `simplicityhl-std` revision

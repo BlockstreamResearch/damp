@@ -663,7 +663,7 @@ export function WalletSend() {
           )}
           {message && <p className="inline-message" role="status">{message}</p>}
         </Panel>
-        <aside className="flow-aside"><SafetyNote title="Fail closed before signing">The app validates the receive record, resolves policy from the live anchor, proves every selected outpoint, and rechecks chain state.</SafetyNote><Panel><h3>Transaction rules</h3><ul className="check-list"><li><Check size={15} /> Verifier at input/output 0</li><li><Check size={15} /> Holder at input 1</li><li><Check size={15} /> At most ten regulated inputs/outputs</li><li><Check size={15} /> Explicit assets, value-only blinding</li></ul></Panel></aside>
+        <aside className="flow-aside"><SafetyNote title="Fail closed before signing">The app validates the receive record, resolves policy from the live anchor, proves every selected outpoint, and rechecks chain state.</SafetyNote><Panel><h3>Transaction rules</h3><ul className="check-list"><li><Check size={15} /> Verifier at input/output 0</li><li><Check size={15} /> Holder at input 1</li><li><Check size={15} /> At most ten regulated inputs/outputs</li><li><Check size={15} /> Explicit regulated assets and amounts</li></ul></Panel></aside>
       </div>
     </AppShell>
   );

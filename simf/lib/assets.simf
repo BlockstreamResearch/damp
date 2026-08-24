@@ -1,10 +1,6 @@
-// Explicit-asset helpers. AMP keeps asset IDs visible so the verifier can
-// identify every regulated output; confidential amounts remain possible.
-
-pub fn explicit_current_asset() -> u256 {
-    let asset: Asset1 = jet::current_asset();
-    unwrap_right::<(u1, u256)>(asset)
-}
+// Explicit-asset/value helpers. AMP keeps every asset ID visible. Regulated
+// values are additionally required to be explicit by the holder and verifier
+// covenants so the verifier can enforce their exact transaction-wide total.
 
 pub fn explicit_input_asset(index: u32) -> u256 {
     let asset: Asset1 = unwrap(jet::input_asset(index));

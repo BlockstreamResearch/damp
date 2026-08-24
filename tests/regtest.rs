@@ -4,17 +4,11 @@ use simplicity_amp::policy::{IndexedInputPolicyProof, PolicySet, TreeDepth, outp
 use simplicity_amp::protocol::{AnchorBranch, Protocol, ProtocolConfig};
 
 use simplex::signer::SignerTrait;
-use simplex::simplicityhl::elements::confidential::{
-    Asset, AssetBlindingFactor, Value, ValueBlindingFactor,
-};
 use simplex::simplicityhl::elements::hashes::Hash;
 use simplex::simplicityhl::elements::pset::{Output, PartiallySignedTransaction};
 use simplex::simplicityhl::elements::schnorr::Keypair;
-use simplex::simplicityhl::elements::secp256k1_zkp::rand::thread_rng;
 use simplex::simplicityhl::elements::secp256k1_zkp::{Message, SECP256K1, SecretKey};
-use simplex::simplicityhl::elements::{
-    AssetId, EcdsaSighashType, RangeProofMessage, Script, Transaction, TxOut, TxOutWitness, Txid,
-};
+use simplex::simplicityhl::elements::{AssetId, EcdsaSighashType, Script, Transaction, Txid};
 use simplex::transaction::partial_input::IssuanceInput;
 use simplex::transaction::{
     FinalTransaction, PartialInput, PartialOutput, RequiredSignature, UTXO,
@@ -85,12 +79,12 @@ fn broadcast_policy_checked_transfer(context: simplex::TestContext) -> anyhow::R
         regulated_asset,
         None,
     ));
-    pst.add_output(Output::from_txout(confidential_value_output(
+    pst.add_output(Output::new_explicit(
         owner_script.clone(),
-        regulated_asset,
         CHANGE_AMOUNT,
-        signer,
-    )?));
+        regulated_asset,
+        None,
+    ));
     pst.add_output(Output::new_explicit(
         Script::new(),
         FEE_AMOUNT,
@@ -436,36 +430,6 @@ fn find_funded_utxo(
         .with_context(|| format!("missing funded UTXO {txid}:{asset}:{amount}"))
 }
 
-fn confidential_value_output(
-    script: Script,
-    asset: AssetId,
-    amount: u64,
-    recipient: &simplex::signer::Signer,
-) -> anyhow::Result<TxOut> {
-    let mut rng = thread_rng();
-    let (value, nonce, rangeproof) = Value::Explicit(amount).blind(
-        SECP256K1,
-        ValueBlindingFactor::zero(),
-        recipient.get_blinding_public_key().inner,
-        SecretKey::new(&mut rng),
-        &script,
-        &RangeProofMessage {
-            asset,
-            bf: AssetBlindingFactor::zero(),
-        },
-    )?;
-    Ok(TxOut {
-        asset: Asset::Explicit(asset),
-        value,
-        nonce,
-        script_pubkey: script,
-        witness: TxOutWitness {
-            surjection_proof: None,
-            rangeproof: Some(Box::new(rangeproof)),
-        },
-    })
-}
-
 fn recipient_slots(
     recipients: &[simplex::simplicityhl::elements::schnorr::XOnlyPublicKey],
 ) -> [Option<simplex::simplicityhl::elements::schnorr::XOnlyPublicKey>; 10] {
@@ -501,8 +465,7 @@ fn assert_transfer_shape(
     let change = &transaction.output[2];
     assert_eq!(change.script_pubkey, *owner_script);
     assert_eq!(change.asset.explicit(), Some(regulated_asset));
-    assert!(change.value.is_confidential());
-    assert!(change.witness.rangeproof.is_some());
+    assert_eq!(change.value.explicit(), Some(CHANGE_AMOUNT));
 
     let fee = &transaction.output[3];
     assert!(fee.is_fee());

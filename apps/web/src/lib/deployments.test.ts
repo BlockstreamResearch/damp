@@ -1,6 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { localDeploymentSchema, requirePublishedDeployment } from "./domain";
+vi.mock("./amp-signer", () => ({ validateDeployment: vi.fn() }));
+vi.mock("./store", () => ({
+  getActiveDeploymentId: vi.fn(),
+  listDeployments: vi.fn(),
+  setActiveDeploymentId: vi.fn(),
+}));
+
+import { localDeploymentSchema, publicManifest, requirePublishedDeployment } from "./domain";
+import { loadDeploymentState } from "./deployments";
 
 const base = {
   schema: "simplicity-amp-registry-v1",
@@ -33,5 +41,56 @@ describe("deployment operation gating", () => {
 
     const pending = localDeploymentSchema.parse({ ...base, publication: "pending" });
     expect(() => requirePublishedDeployment(pending)).toThrow(/must be published/);
+  });
+
+  it("filters stale published cache entries against the canonical asset catalog", async () => {
+    const canonical = localDeploymentSchema.parse({ ...base, publication: "published" });
+    const stale = localDeploymentSchema.parse({
+      ...base,
+      deploymentId: "0a".repeat(32),
+      asset: { ...base.asset, name: "Stale cached asset", ticker: "OLD" },
+      publication: "published",
+    });
+    const select = vi.fn(() => Promise.resolve());
+    const state = await loadDeploymentState({
+      catalog: () => Promise.resolve([{ deploymentId: canonical.deploymentId, manifest: publicManifest(canonical) }]),
+      local: () => Promise.resolve([stale, canonical]),
+      activeId: () => Promise.resolve(stale.deploymentId),
+      select,
+      validate: () => Promise.resolve(canonical.deploymentId),
+    });
+
+    expect(state.deployments.map((deployment) => deployment.asset.ticker)).toEqual(["RGA"]);
+    expect(state.activeId).toBe(canonical.deploymentId);
+    expect(select).toHaveBeenCalledWith(canonical.deploymentId);
+  });
+
+  it("retains unpublished issuer work without treating stale published records as supported", async () => {
+    const canonical = localDeploymentSchema.parse({ ...base, publication: "published" });
+    const pending = localDeploymentSchema.parse({
+      ...base,
+      deploymentId: "0b".repeat(32),
+      asset: { ...base.asset, name: "Pending issuer asset", ticker: "NEW" },
+      publication: "pending",
+    });
+    const state = await loadDeploymentState({
+      catalog: () => Promise.resolve([{ deploymentId: canonical.deploymentId, manifest: publicManifest(canonical) }]),
+      local: () => Promise.resolve([canonical, pending]),
+      activeId: () => Promise.resolve(canonical.deploymentId),
+      select: vi.fn(() => Promise.resolve()),
+      validate: () => Promise.resolve(canonical.deploymentId),
+    });
+    expect(state.deployments.map((deployment) => deployment.asset.ticker)).toEqual(["RGA", "NEW"]);
+  });
+
+  it("rejects a canonical filename that does not match the manifest deployment ID", async () => {
+    const canonical = localDeploymentSchema.parse({ ...base, publication: "published" });
+    await expect(loadDeploymentState({
+      catalog: () => Promise.resolve([{ deploymentId: canonical.deploymentId, manifest: publicManifest(canonical) }]),
+      local: () => Promise.resolve([canonical]),
+      activeId: () => Promise.resolve(canonical.deploymentId),
+      select: vi.fn(() => Promise.resolve()),
+      validate: () => Promise.resolve("ff".repeat(32)),
+    })).rejects.toThrow("filename does not match");
   });
 });
