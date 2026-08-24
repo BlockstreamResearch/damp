@@ -1,0 +1,15 @@
+{
+  "schema": "simplicity-amp-registry-v1",
+  "protocol": "simplicity-amp/v0.1",
+  "deploymentId": "8f9a3ce577ba1e06c26fa1c4c3b5748eebe4868f625a7c74eead72f351410351",
+  "sequence": 0,
+  "parentPolicyRoot": null,
+  "parentVerifierScriptHash": null,
+  "treeDepth": 4,
+  "setRoot": "36c614d3fcffdbdfe4baf66656fb17c8373bd42eb8aca046ec5b50ae8395f0cf",
+  "entryCount": 0,
+  "policyRoot": "bdc5cfae858db2cfbae9d9b0be82b14bf6e89ac40c106d52f3741644d94c0bae",
+  "verifierProgramHash": "bb4a3da9b4b81d1e5f1d9b03006629f671f9e1eabd37af28dd864582eedf8228",
+  "verifierScriptPubkey": "5120e064a4d2b95882d348185ed56123ef12cb483aa6e65dba0fb7c7cab9d6f42250",
+  "entries": []
+}
