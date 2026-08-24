@@ -142,6 +142,10 @@ export async function fetchCanonicalDeploymentCatalog(request: typeof fetch = fe
     `https://api.github.com/repos/${owner}/${repository}/contents/deployments?ref=${encodeURIComponent(defaultBranch)}`,
     { cache: "no-store", headers: { Accept: "application/vnd.github+json" } },
   );
+  // Git does not retain empty directories. A missing deployments directory is
+  // therefore the canonical representation of an empty registry, not a
+  // provider outage. Every other failure remains fail-closed.
+  if (directory.status === 404) return [];
   if (!directory.ok) throw new Error(`Could not list canonical deployments (${directory.status}).`);
   const rawEntries = JSON.parse(await boundedResponseText(directory, MAX_CATALOG_RESPONSE_BYTES, "Registry deployment catalog")) as unknown;
   if (!Array.isArray(rawEntries) || rawEntries.length > MAX_CANONICAL_DEPLOYMENTS) {

@@ -65,6 +65,21 @@ describe("deployment operation gating", () => {
     expect(select).toHaveBeenCalledWith(canonical.deploymentId);
   });
 
+  it("exposes no published assets when the canonical registry is empty", async () => {
+    const stale = localDeploymentSchema.parse({ ...base, publication: "published" });
+    const select = vi.fn(() => Promise.resolve());
+    const state = await loadDeploymentState({
+      catalog: () => Promise.resolve([]),
+      local: () => Promise.resolve([stale]),
+      activeId: () => Promise.resolve(stale.deploymentId),
+      select,
+      validate: vi.fn(),
+    });
+
+    expect(state).toEqual({ deployments: [], activeId: null, active: null });
+    expect(select).not.toHaveBeenCalled();
+  });
+
   it("retains unpublished issuer work without treating stale published records as supported", async () => {
     const canonical = localDeploymentSchema.parse({ ...base, publication: "published" });
     const pending = localDeploymentSchema.parse({

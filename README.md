@@ -87,6 +87,11 @@ exact repository path, and enables the next operation only after the byte-identi
 file is available from the repository's default branch. No GitHub client ID or
 browser authorization is required.
 
+The deployment selector reconciles published local records against the
+configured registry repository's current default branch. Published records
+removed from that branch are no longer selectable; a missing `deployments/`
+directory represents an intentionally empty canonical registry.
+
 Ordinary AMP transfers keep every regulated asset ID and amount explicit. The
 holder covenant rejects confidential regulated inputs, while the verifier rejects
 missing, zero, confidential, overflowing, or unequal regulated input/output totals.

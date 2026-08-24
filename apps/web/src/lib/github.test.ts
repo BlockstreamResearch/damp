@@ -100,6 +100,21 @@ describe("manual registry publication", () => {
     ]);
   });
 
+  it("treats a missing deployments directory as an authoritative empty catalog", async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "https://api.github.com/repos/BlockstreamResearch/damp") {
+        return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+      }
+      if (url === "https://api.github.com/repos/BlockstreamResearch/damp/contents/deployments?ref=main") {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response("unexpected request", { status: 500 });
+    }) as typeof fetch;
+
+    await expect(fetchCanonicalDeploymentCatalog(request)).resolves.toEqual([]);
+  });
+
   it("rejects a catalog manifest that is not encoded as exact canonical bytes", async () => {
     const request = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
