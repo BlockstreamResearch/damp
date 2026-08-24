@@ -1,0 +1,21 @@
+{
+  "schema": "simplicity-amp-registry-v1",
+  "protocol": "simplicity-amp/v0.1",
+  "deploymentId": "8f9a3ce577ba1e06c26fa1c4c3b5748eebe4868f625a7c74eead72f351410351",
+  "sequence": 1,
+  "parentPolicyRoot": "bdc5cfae858db2cfbae9d9b0be82b14bf6e89ac40c106d52f3741644d94c0bae",
+  "parentVerifierScriptHash": "5cf36efb7a55089dd622d41f5d87ba8cc9ceb4f95cb45e02a0da176d939980b5",
+  "treeDepth": 4,
+  "setRoot": "b114535af923ec65dd793350e8c18271694e2ed2312c23032aad0a26f4205be7",
+  "entryCount": 1,
+  "policyRoot": "bf518d165897c89894ed06a454e0bc442feaf1d215b665b59edd41e5c0a79062",
+  "verifierProgramHash": "dff8a74f243c80a7961a21689ae08ebcfa2dc2fb31558550aade732eb85d2ae3",
+  "verifierScriptPubkey": "51202e7e25e2f5de652c6b86116a3cbfb2f873286d58a297bf20feaeb25aca16ad4b",
+  "entries": [
+    {
+      "txid": "ccbf930cccb5e20c6d6a7ade1100e9939f8a3e4200296e93713aba4e83068bf3",
+      "vout": 1,
+      "note": "Test blocking 18 tokens"
+    }
+  ]
+}
