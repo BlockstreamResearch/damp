@@ -1,0 +1,24 @@
+{
+  "schema": "simplicity-amp-registry-v1",
+  "protocol": "simplicity-amp/v0.1",
+  "network": "liquid-testnet",
+  "policyAsset": "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49",
+  "regulatedAsset": "b8b6c4e75f04a5adef71d13704f029561cb5dca71957abd684d3a51549d10fb8",
+  "verifierAsset": "e819272b597e527e0ce3218346b30c129bcc7d33dbe88014f9b9abdce02c783c",
+  "verifierAssetAmount": 1,
+  "issuerPublicKey": "60b609ccf4dc4985e3c716dc8d1bc1a75200514dc92b57c9eff8b6a41d070b7c",
+  "deploymentSalt": "9160e3ed49e2eae8f39940c2f120cdc1c4587790568104b4571e3aa389207dc0",
+  "genesisAnchor": "df89770ba55c3c7189569f5fd38c4cf916eaaa5d048b9ba0e773ff4a932168af:0",
+  "asset": {
+    "name": "Regulated Asset 1",
+    "ticker": "RWT-1",
+    "precision": 2
+  },
+  "issuedSupply": "10000",
+  "supplyMode": "issuer-managed",
+  "reissuanceToken": "c02d17ed9ef42fc98899c0764df30dabba121143132733f367b1fe5701d0ad34",
+  "reissuanceEntropy": "c7ec8ecfdc3ebb57234d08e8ca3054cc5d1637d510643d074a15937baa728ff6",
+  "userProgramHash": "613064b6fbbf4ba6d06344a5d88a288010a09818a0421ed712ffe7cbb5c85d03",
+  "governanceProgramHash": "f0796132a10ba5cddd9c79dbc3578595c721a273119d2f39cb7d6a094ed91b89",
+  "contractBundleHash": "10e5f8c6ea867a72d348ccee831babef9d9009b586b6332ce4fe6629bb3dc1ba"
+}
