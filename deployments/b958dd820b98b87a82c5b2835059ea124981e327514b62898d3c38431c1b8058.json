@@ -1,0 +1,24 @@
+{
+  "schema": "simplicity-amp-registry-v1",
+  "protocol": "simplicity-amp/v0.1",
+  "network": "liquid-testnet",
+  "policyAsset": "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49",
+  "regulatedAsset": "77b3060afe0bef53e0ceaaa20203a88d1462a7040645ef70f3899eca3f63ebc3",
+  "verifierAsset": "618a661c4c7b4f13916a43873d86e85d3e546edb136359fc3a211ad1d33fa436",
+  "verifierAssetAmount": 1,
+  "issuerPublicKey": "a1bee297d552517c3ddefbf231d86b9da88d0bafdc3a626570c217c0e80657f0",
+  "deploymentSalt": "1c65dfeda33472589dab9fba43ed6db5106ca8d66edb9ff5dfa2de6f746c1853",
+  "genesisAnchor": "667378405ba5a180d258dc4ceb174ea381a6ef9f1d6440f5735ec902c83957b6:0",
+  "asset": {
+    "name": "FORCE",
+    "ticker": "F",
+    "precision": 8
+  },
+  "issuedSupply": "1000000",
+  "supplyMode": "fixed",
+  "reissuanceToken": null,
+  "reissuanceEntropy": null,
+  "userProgramHash": "a942d47cde6529ed312f91e60f62d13c6305082cc1ee4e949065c76c523fa7e9",
+  "governanceProgramHash": "cd2f88370852afe8ed6aef1f63c446906b7d5498416b2d15f6d93e7101ba5988",
+  "contractBundleHash": "00a50b7658d5914170286b75b95200687b7773c7082c02e3da1dd20012401b74"
+}
