@@ -260,7 +260,7 @@ describe("transfer funding selection", () => {
 
     const blocked = holderUtxo("1", 0, 100n);
     expect(() => selectTransferFunding({ snapshot: snapshot([blocked, feeUtxo("2", 0, 5_000n)]), deployment, policy: { ...policy, entryCount: 1, entries: [{ txid: blocked.txid, vout: blocked.vout }] }, profileId, amount: 1n }))
-      .toThrow(/confirmed spendable balance of 0 AMP/i);
+      .toThrow(/confirmed spendable balance of 0 AMP\. 1 AMP is blacklisted and cannot be spent/i);
 
     expect(() => selectTransferFunding({ snapshot: snapshot([holderUtxo("1", 0, 100n), feeUtxo("2", 0, 3_000n, "unconfirmed")]), deployment, policy, profileId, amount: 50n }))
       .toThrow(/compatible L-BTC output is pending confirmation/i);

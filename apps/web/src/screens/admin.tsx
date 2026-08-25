@@ -86,7 +86,16 @@ import {
   operationReceiptQueryKey,
   saveOperationReceipt,
   tryBeginOperation,
+  transactionExplorerUrl,
 } from "../lib/operation-receipt";
+import {
+  createPolicyUpdateReceipt,
+  dismissPolicyUpdateReceipt,
+  loadPolicyUpdateReceipt,
+  policyUpdateReceiptQueryKey,
+  savePolicyUpdateReceipt,
+  type PolicyUpdateReceipt,
+} from "../lib/policy-update-receipt";
 import { setSignerOperationPending } from "../lib/signer-operation-state";
 import { useBaseWalletSync, walletSyncQueryKeys } from "../lib/wallet-query";
 import {
@@ -141,6 +150,14 @@ export function AdminDashboard() {
   const loadToken = useRef<symbol | undefined>(undefined);
   const activeScope = useRef<string | undefined>(undefined);
   const form = useForm<EntryForm>({ resolver: zodResolver(entryFormSchema) });
+  const receiptKey = policyUpdateReceiptQueryKey(deployment.data?.deploymentId, signerState.profileId);
+  const receiptQuery = useQuery({
+    queryKey: receiptKey,
+    enabled: Boolean(deployment.data && signerState.profileId),
+    queryFn: async () => (await loadPolicyUpdateReceipt(deployment.data!.deploymentId, signerState.profileId!)) ?? null,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const policyUpdateReceipt = receiptQuery.data ?? undefined;
 
   useEffect(() => {
     const key = `policy-update:${deployment.data?.deploymentId ?? "none"}:${signerState.profileId ?? "locked"}`;
@@ -245,12 +262,13 @@ export function AdminDashboard() {
     const key = (entry: BlacklistEntry) => `${entry.txid}:${entry.vout}`;
     const current = new Set((policy.data?.entries ?? []).map(key));
     const next = new Set(scopedDraft.map(key));
-    return { added: scopedDraft.filter((entry) => !current.has(key(entry))).length, removed: (policy.data?.entries ?? []).filter((entry) => !next.has(key(entry))).length };
+    const addedEntries = scopedDraft.filter((entry) => !current.has(key(entry)));
+    const removedEntries = (policy.data?.entries ?? []).filter((entry) => !next.has(key(entry)));
+    return { added: addedEntries.length, removed: removedEntries.length, addedEntries, removedEntries };
   }, [scopedDraft, policy.data]);
-  const activeOutpoints = useMemo(
-    () => new Set((policy.data?.entries ?? []).map((entry) => `${entry.txid}:${entry.vout}`)),
-    [policy.data?.entries],
-  );
+  const pendingChanges = useMemo(() => policy.data && scopedPending
+    ? policyEntryDiff(policy.data.entries, scopedPending.entries)
+    : { added: [], removed: [] }, [policy.data, scopedPending]);
 
   function addEntry(value: EntryForm) {
     const [txid, output] = value.outpoint.split(":");
@@ -341,7 +359,23 @@ export function AdminDashboard() {
       }
       const broadcastTxid = await broadcastTransaction(selected, result.transaction);
       if (broadcastTxid !== result.txid) throw new Error("Esplora returned a different transaction ID.");
-      setMessage(`Policy update ${result.txid} broadcast. Waiting for the confirmed successor anchor…`);
+      const diff = policyEntryDiff(current.entries, successor.entries);
+      const terminalReceipt = createPolicyUpdateReceipt({
+        deployment: selected,
+        signerProfileId: signer.profileId,
+        txid: result.txid,
+        successorSequence: successor.sequence,
+        added: diff.added.map(policyOutpoint),
+        removed: diff.removed.map(policyOutpoint),
+      });
+      queryClient.setQueryData(receiptKey, terminalReceipt);
+      let receiptWarning: string | undefined;
+      try {
+        await savePolicyUpdateReceipt(terminalReceipt);
+      } catch (error) {
+        receiptWarning = ` The broadcast receipt could not be saved for reload: ${userFacingError(error)}`;
+      }
+      setMessage(`Policy update ${result.txid} broadcast. Waiting for the confirmed successor anchor…${receiptWarning ?? ""}`);
       const winning = await waitForAnchor(selected, successor.verifierScriptPubkey);
       await putDeployment({ ...selected, activeAnchor: `${winning.live.txid}:0`, confirmations: winning.live.confirmations });
       await putPolicySnapshot(successor, await sha256Hex(successor.verifierScriptPubkey));
@@ -369,6 +403,12 @@ export function AdminDashboard() {
     }
   }
 
+  async function dismissPolicyReceipt() {
+    if (!deployment.data || !signerState.profileId) return;
+    await dismissPolicyUpdateReceipt(deployment.data.deploymentId, signerState.profileId);
+    queryClient.setQueryData(receiptKey, null);
+  }
+
   const selected = deployment.data;
   return (
     <AppShell eyebrow="Issuer console" title="Exact-outpoint blacklist">
@@ -377,11 +417,12 @@ export function AdminDashboard() {
         <div className="admin-grid">
           <Panel className="policy-editor"><SectionHeading label="Policy entries" title={`${scopedDraft.length} exact outpoint${scopedDraft.length === 1 ? "" : "s"}`} aside={<Pill tone={changes.added || changes.removed ? "warn" : "neutral"}>{changes.added + changes.removed} changes</Pill>} />
             <form className="inline-add-form" onSubmit={form.handleSubmit(addEntry)}><label>Exact outpoint<input aria-invalid={Boolean(form.formState.errors.outpoint)} aria-describedby={form.formState.errors.outpoint ? "blacklist-outpoint-error" : undefined} placeholder="txid:vout" spellCheck={false} {...form.register("outpoint")} /></label><label>Internal note <span>(not consensus)</span><input aria-invalid={Boolean(form.formState.errors.note)} aria-describedby={form.formState.errors.note ? "blacklist-note-error" : undefined} {...form.register("note")} /></label><button className="button issuer-primary" disabled={busy || !workspaceForCurrentPolicy} type="submit"><Plus size={16} /> Add</button>{form.formState.errors.outpoint && <small id="blacklist-outpoint-error" className="field-error form-wide">{form.formState.errors.outpoint.message}</small>}{form.formState.errors.note && <small id="blacklist-note-error" className="field-error form-wide">{form.formState.errors.note.message}</small>}</form>
-            <BlacklistTable entries={scopedDraft} activeOutpoints={activeOutpoints} disabled={busy || !workspaceForCurrentPolicy} onRemove={(entry) => setDraft((entries) => entries.filter((candidate) => candidate !== entry))} />
+            <BlacklistTable entries={scopedDraft} activeEntries={policy.data?.entries ?? []} disabled={busy || !workspaceForCurrentPolicy} onRemove={(entry) => setDraft((entries) => entries.filter((candidate) => candidate !== entry))} onUndoRemoval={(entry) => setDraft((entries) => [...entries, entry].sort((left, right) => left.txid.localeCompare(right.txid) || left.vout - right.vout))} />
           </Panel>
           <aside className="policy-sidebar"><Panel><SectionHeading label="Iterative capacity" title={`Depth ${depth} · ${2 ** depth} entries`} /><div className="diff-counts"><div><Plus size={15} /><span><strong>{changes.added}</strong> added</span></div><div><Minus size={15} /><span><strong>{changes.removed}</strong> removed</span></div></div><div className="root-preview"><small>Next policy digest</small><code>{preview.data ? shortHash(preview.data.policyRoot, 12, 10) : "Calculating…"}</code></div><button className="button secondary wide" disabled={!workspaceForCurrentPolicy} type="button" onClick={() => setDraft(policy.data?.entries ?? [])}>Discard draft</button></Panel><SafetyNote title="Two-phase activation">The exact immutable snapshot must be retrievable from the canonical default branch before the local signer authorizes governance.</SafetyNote></aside>
         </div>
-        <Panel className="publish-flow">
+        {policyUpdateReceipt && <PolicyUpdateReceiptPanel receipt={policyUpdateReceipt} deployment={selected} active={Boolean(policy.data && policy.data.sequence >= policyUpdateReceipt.successorSequence)} onDismiss={() => void dismissPolicyReceipt()} />}
+        {!policyUpdateReceipt && <Panel className="publish-flow">
           <SectionHeading label="Manual publication" title="Move this draft on chain" />
           <div className="publish-steps">
             <div><span>1</span><div><strong>Download snapshot</strong><small>D{depth}, exact canonical bytes</small></div><button className="button secondary" disabled={busy || !(changes.added || changes.removed)} type="button" onClick={downloadPolicySnapshot}><Download size={15} /> Download JSON</button></div>
@@ -391,16 +432,48 @@ export function AdminDashboard() {
           {reviewUpdate && scopedPending && <div className="review-stack" aria-label="Policy update review">
             <div className="review-row"><span>Policy sequence</span><strong>{policy.data?.sequence ?? "–"} → {scopedPending.sequence}</strong></div>
             <div className="review-row"><span>Blacklist</span><strong>{scopedPending.entryCount} exact outpoint{scopedPending.entryCount === 1 ? "" : "s"} · D{scopedPending.treeDepth}</strong></div>
+            <PolicyChangeReview label="Will be blacklisted" entries={pendingChanges.added} empty="No new outpoints" />
+            <PolicyChangeReview label="Will be removed" entries={pendingChanges.removed} empty="No removals" />
             <div className="review-row"><span>Current anchor</span><strong>{anchor.data ? `${shortHash(anchor.data.live.txid)}:0` : "Resolving…"}</strong></div>
             <div className="review-row"><span>Network fee</span><strong>0.000015 L-BTC</strong></div>
             <div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReviewUpdate(false)}>Back</button><button className="button issuer-primary" disabled={busy || !signerState.walletReady} type="button" onClick={() => void activate()}>{busy ? "Validating and signing…" : !signerState.walletReady ? "Sync wallet before signing" : "Sign and activate"} <ArrowRight size={15} /></button></div>
           </div>}
-          {message && <p className="inline-message" role="status">{message}</p>}
-        </Panel>
+        </Panel>}
+        {message && <p className="inline-message" role="status" aria-live="polite">{message}</p>}
         <TechnicalDetails label="Policy commitment details"><dl className="detail-grid"><div><dt>Policy profile</dt><dd>Blacklist non-membership only</dd></div><div><dt>Key</dt><dd>SHA256(consensus_txid || big_endian(vout))</dd></div><div><dt>Supported depths</dt><dd>4, 5, 6</dd></div><div><dt>PoC transaction limit</dt><dd>10 regulated inputs and outputs</dd></div></dl></TechnicalDetails>
       </>}
     </AppShell>
   );
+}
+
+function PolicyChangeReview({ label, entries, empty }: { label: string; entries: BlacklistEntry[]; empty: string }) {
+  return <div className="review-row policy-change-review"><span>{label}</span><div>{entries.length === 0 ? <small>{empty}</small> : entries.map((entry) => <code key={`${entry.txid}:${entry.vout}`}>{entry.txid}:{entry.vout}</code>)}</div></div>;
+}
+
+function PolicyUpdateReceiptPanel({ receipt, deployment, active, onDismiss }: { receipt: PolicyUpdateReceipt; deployment: Deployment; active: boolean; onDismiss: () => void }) {
+  const explorer = transactionExplorerUrl(deployment.network, receipt.txid);
+  return <section className="policy-update-receipt" role="status" aria-live="polite">
+    <AlertTriangle size={22} />
+    <div>
+      <h2>{active ? "Blacklist policy active" : "Blacklist update broadcast"}</h2>
+      <p>{active ? "The added outpoints are blacklisted and their funds cannot be spent." : "The update is recorded. Added outpoints become unusable when the successor policy confirms."}</p>
+      <dl><div><dt>Added</dt><dd>{receipt.added.length}</dd></div><div><dt>Removed</dt><dd>{receipt.removed.length}</dd></div><div><dt>Transaction</dt><dd><code>{shortHash(receipt.txid, 12, 10)}</code></dd></div></dl>
+      <div className="policy-receipt-actions">{explorer ? <a className="button secondary" href={explorer} target="_blank" rel="noreferrer">View transaction <ExternalLink size={14} /></a> : null}<button className="button secondary" type="button" onClick={onDismiss}>Dismiss receipt</button></div>
+    </div>
+  </section>;
+}
+
+function policyOutpoint(entry: BlacklistEntry) {
+  return `${entry.txid}:${entry.vout}`;
+}
+
+function policyEntryDiff(current: BlacklistEntry[], successor: BlacklistEntry[]) {
+  const currentOutpoints = new Set(current.map(policyOutpoint));
+  const successorOutpoints = new Set(successor.map(policyOutpoint));
+  return {
+    added: successor.filter((entry) => !currentOutpoints.has(policyOutpoint(entry))),
+    removed: current.filter((entry) => !successorOutpoints.has(policyOutpoint(entry))),
+  };
 }
 
 async function waitForAnchor(deployment: Deployment, expectedScript: string) {

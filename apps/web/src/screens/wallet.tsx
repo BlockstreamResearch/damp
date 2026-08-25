@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { QRCodeSVG } from "qrcode.react";
-import { ArrowRight, Check, ExternalLink, EyeOff, Fuel, Info, Radio, RefreshCw, Send, ShieldCheck, Upload, WalletCards } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ExternalLink, EyeOff, Fuel, Info, Radio, RefreshCw, Send, ShieldCheck, Upload, WalletCards } from "lucide-react";
 
 import {
   AppShell,
@@ -49,6 +49,7 @@ import {
 import { esploraUrlForDeployment, requireFreshAnchor, traverseLiveAnchor } from "../lib/esplora";
 import { liquidTestnetFaucetUrl } from "../lib/faucet";
 import { resolvePolicySnapshot } from "../lib/policy-registry";
+import { classifyRegulatedFunds, type RegulatedFunds } from "../lib/regulated-funds";
 import { sendSchema, type SendForm } from "../lib/form-schemas";
 import { useDeploymentWalletSync, walletSyncPresentation, walletSyncQueryKeys } from "../lib/wallet-query";
 import {
@@ -86,10 +87,26 @@ export function WalletDashboard() {
     deployment.data,
     signer.connected && signerMatchesDeployment ? signer.profileId : undefined,
   );
+  const policyVerification = useQuery({
+    queryKey: ["holder-live-policy", deployment.data?.deploymentId],
+    enabled: deployment.data?.publication === "published",
+    staleTime: 10_000,
+    queryFn: async () => {
+      const selected = requirePublishedDeployment(deployment.data);
+      const anchor = await traverseLiveAnchor(selected, esploraUrlForDeployment(selected));
+      if (anchor.live.confirmations < 1) throw new Error("The live verifier anchor is not confirmed.");
+      const policy = await resolvePolicySnapshot(selected, anchor.live.scriptPubkey);
+      return { anchor: anchor.live, policy };
+    },
+  });
   const [feeMessage, setFeeMessage] = useState<string>();
   const snapshot = wallet.data?.snapshot;
   const balances = useMemo(() => assetBalances(snapshot), [snapshot]);
   const regulated = balances.find((balance) => balance.assetId === deployment.data?.regulatedAsset);
+  const regulatedFunds = useMemo(() => deployment.data && snapshot && policyVerification.data
+    ? classifyRegulatedFunds(snapshot, deployment.data, policyVerification.data.policy)
+    : undefined, [deployment.data, policyVerification.data, snapshot]);
+  const blacklistedOutpoints = useMemo(() => new Set(policyVerification.data?.policy.entries.map((entry) => `${entry.txid}:${entry.vout}`) ?? []), [policyVerification.data?.policy.entries]);
   const syncError = wallet.data?.syncError ?? (wallet.error instanceof Error ? wallet.error.message : undefined);
   const networkError = deployment.data && signer.connected && signer.network !== deployment.data.network
     ? `Reconnect the AMP signer for ${networkLabel(deployment.data.network)}.`
@@ -113,9 +130,7 @@ export function WalletDashboard() {
   const canRequestTestFunds = presentation.state === "synced"
     && deployment.data?.network === "liquid-testnet"
     && Boolean(fundingAddress);
-  const spendableRegulated = snapshot?.utxos.filter((utxo) =>
-    utxo.source === "holder" && utxo.assetId === deployment.data?.regulatedAsset && utxo.status === "confirmed"
-  ).length ?? 0;
+  const policyChecking = deployment.data?.publication === "published" && policyVerification.isPending && !policyVerification.data;
 
   async function refreshPortfolio() {
     if (!signer.connected) {
@@ -151,18 +166,19 @@ export function WalletDashboard() {
             <Panel className="balance-card">
               <div className="balance-topline">
                 <span className="asset-glyph">{deployment.data.asset.ticker.slice(0, 2)}</span>
-                <div><span>{deployment.data.asset.name}</span><small>Simplicity AMP · blacklist only</small></div>
+                <div><span>{deployment.data.asset.name}</span><small>Verified spendable balance · blacklist only</small></div>
                 <Pill tone="blue"><EyeOff size={12} /> Confidential values</Pill>
               </div>
-              <div className="balance-value">{presentation.hasSnapshot ? formatUnits(regulated?.confirmed ?? 0n, deployment.data.asset.precision) : "—"}<span>{deployment.data.asset.ticker}</span></div>
+              <div className="balance-value">{presentation.hasSnapshot && regulatedFunds ? formatUnits(regulatedFunds.spendable, deployment.data.asset.precision) : "—"}<span>{deployment.data.asset.ticker}</span></div>
               {regulated?.pending ? <p className="pending-balance">+{formatUnits(regulated.pending, deployment.data.asset.precision)} pending confirmation</p> : null}
+              {deployment.data.publication !== "published" ? <p className="policy-balance-state" role="status">Balance verification starts after registry publication.</p> : policyChecking ? <p className="policy-balance-state" role="status">Checking the live blacklist before marking funds spendable…</p> : policyVerification.error && !policyVerification.data ? <div className="policy-balance-error" role="alert"><strong>Spendable balance unavailable</strong><span>{userFacingError(policyVerification.error)}</span><button className="button secondary" type="button" onClick={() => void policyVerification.refetch()}>Recheck policy</button></div> : regulatedFunds && regulatedFunds.blacklisted > 0n ? <div className="blacklisted-balance" role="status"><AlertTriangle size={16} /><span><strong>Blacklisted — cannot be spent</strong>{formatUnits(regulatedFunds.blacklisted, deployment.data.asset.precision)} {deployment.data.asset.ticker} in {regulatedFunds.blacklistedUtxos.length} output{regulatedFunds.blacklistedUtxos.length === 1 ? "" : "s"}</span></div> : null}
               <div className="balance-actions"><Link to="/wallet/send" className="button primary"><Send size={16} /> Send</Link><Link to="/wallet/receive" className="button secondary"><Radio size={16} /> Receive</Link></div>
               <div className="card-rule" />
-              <div className="stat-row"><span><small>Spendable outputs</small><strong>{presentation.hasSnapshot ? spendableRegulated : "Unknown"}</strong></span><span><small>Supply model</small><strong>{supplyModeLabel(deployment.data.supplyMode)}</strong></span><span><small>Network</small><strong>{networkLabel(deployment.data.network)}</strong></span></div>
+              <div className="stat-row"><span><small>Spendable outputs</small><strong>{regulatedFunds ? regulatedFunds.spendableUtxos.length : "Unknown"}</strong></span><span><small>Supply model</small><strong>{supplyModeLabel(deployment.data.supplyMode)}</strong></span><span><small>Network</small><strong>{networkLabel(deployment.data.network)}</strong></span></div>
             </Panel>
             <Panel className="activity-card">
               <SectionHeading label="Wallet inventory" title="Assets" aside={<Pill tone={presentation.state === "error" || presentation.state === "stale" ? "warn" : presentation.state === "loading" || presentation.state === "syncing" ? "blue" : presentation.state === "synced" ? "good" : "neutral"}>{presentation.state === "stale" ? "Last good state" : presentation.state === "error" ? "Sync error" : presentation.state === "loading" ? "Loading" : presentation.state === "syncing" ? "Syncing" : presentation.state === "synced" ? "Synced" : "Disconnected"}</Pill>} />
-              {presentation.state === "disconnected" ? <p>Connect the signer to restore the wallet identified by its collision-resistant public account identity.</p> : presentation.state === "error" ? <div className="wallet-sync-error" role="alert"><p>Wallet balance is unknown because no verified snapshot is available.</p><small>{presentation.message}</small><button className="button secondary" type="button" onClick={() => void wallet.refetch()}>Retry synchronization</button></div> : balances.length === 0 && !snapshot ? <p>Discovering wallet addresses and outputs…</p> : balances.length === 0 ? <p>No wallet assets found.</p> : <div className="asset-list">{balances.map((balance) => <AssetRow key={balance.assetId} balance={balance} deployment={deployment.data!} />)}</div>}
+              {presentation.state === "disconnected" ? <p>Connect the signer to restore the wallet identified by its collision-resistant public account identity.</p> : presentation.state === "error" ? <div className="wallet-sync-error" role="alert"><p>Wallet balance is unknown because no verified snapshot is available.</p><small>{presentation.message}</small><button className="button secondary" type="button" onClick={() => void wallet.refetch()}>Retry synchronization</button></div> : balances.length === 0 && !snapshot ? <p>Discovering wallet addresses and outputs…</p> : balances.length === 0 ? <p>No wallet assets found.</p> : <div className="asset-list">{balances.map((balance) => <AssetRow key={balance.assetId} balance={balance} deployment={deployment.data!} regulatedFunds={balance.assetId === deployment.data!.regulatedAsset ? regulatedFunds : undefined} />)}</div>}
               {snapshot && <small className="sync-time">Last successful sync {new Date(snapshot.syncedAt).toLocaleTimeString()} · through external #{snapshot.scannedThrough.external} and change #{snapshot.scannedThrough.change}</small>}
             </Panel>
           </div>
@@ -177,7 +193,7 @@ export function WalletDashboard() {
             </div>
           </Panel>
           {feeMessage && <p className="inline-message" role="status">{feeMessage}</p>}
-          {snapshot && <TechnicalDetails label="Wallet UTXOs"><div className="utxo-list">{snapshot.utxos.filter((utxo) => utxo.status !== "spent" && utxo.status !== "orphaned").map((utxo) => <div key={`${utxo.txid}:${utxo.vout}`}><code>{shortHash(utxo.txid)}:{utxo.vout}</code><span>{utxo.status}</span><span>{shortHash(utxo.assetId)}</span><strong>{utxo.amount}</strong></div>)}{snapshot.utxos.every((utxo) => utxo.status === "spent" || utxo.status === "orphaned") && <p>No current outputs.</p>}</div></TechnicalDetails>}
+          {snapshot && <TechnicalDetails label="Wallet UTXOs"><div className="utxo-list">{snapshot.utxos.filter((utxo) => utxo.status !== "spent" && utxo.status !== "orphaned").map((utxo) => { const blacklisted = blacklistedOutpoints.has(`${utxo.txid}:${utxo.vout}`); return <div key={`${utxo.txid}:${utxo.vout}`}><code>{shortHash(utxo.txid)}:{utxo.vout}</code><span>{blacklisted ? <Pill tone="danger">Blacklisted — cannot be spent</Pill> : utxo.status}</span><span>{shortHash(utxo.assetId)}</span><strong>{utxo.amount}</strong></div>; })}{snapshot.utxos.every((utxo) => utxo.status === "spent" || utxo.status === "orphaned") && <p>No current outputs.</p>}</div></TechnicalDetails>}
           <TechnicalDetails label="Deployment details"><dl className="detail-grid"><div><dt>Asset ID</dt><dd>{deployment.data.regulatedAsset}</dd></div><div><dt>Genesis anchor</dt><dd>{deployment.data.genesisAnchor}</dd></div><div><dt>User program</dt><dd>{deployment.data.userProgramHash}</dd></div><div><dt>Governance program</dt><dd>{deployment.data.governanceProgramHash}</dd></div></dl></TechnicalDetails>
         </>
       )}
@@ -227,14 +243,14 @@ export function WalletImport() {
   );
 }
 
-function AssetRow({ balance, deployment }: { balance: AssetBalance; deployment: Deployment }) {
+function AssetRow({ balance, deployment, regulatedFunds }: { balance: AssetBalance; deployment: Deployment; regulatedFunds?: RegulatedFunds }) {
   const regulated = balance.assetId === deployment.regulatedAsset;
   const policy = balance.assetId === deployment.policyAsset;
   const token = balance.assetId === deployment.reissuanceToken;
   const label = regulated ? deployment.asset.name : policy ? "Liquid Bitcoin" : token ? "Reissuance token" : shortHash(balance.assetId);
   const ticker = regulated ? deployment.asset.ticker : policy ? "L-BTC" : token ? "TOKEN" : "units";
   const precision = regulated ? deployment.asset.precision : policy ? 8 : 0;
-  return <div><span><strong>{label}</strong><small>{shortHash(balance.assetId)}</small></span><span><strong>{formatUnits(balance.confirmed, precision)} {ticker}</strong>{balance.pending > 0n ? <small>+{formatUnits(balance.pending, precision)} pending</small> : <small>{balance.confirmedUtxos} confirmed output{balance.confirmedUtxos === 1 ? "" : "s"}</small>}</span></div>;
+  return <div><span><strong>{label}</strong><small>{shortHash(balance.assetId)}</small></span><span><strong>{regulated && regulatedFunds ? `${formatUnits(regulatedFunds.spendable, precision)} ${ticker} spendable` : `${formatUnits(balance.confirmed, precision)} ${ticker}`}</strong>{regulated && regulatedFunds?.blacklisted ? <small className="asset-blacklisted">{formatUnits(regulatedFunds.blacklisted, precision)} blacklisted — cannot be spent</small> : balance.pending > 0n ? <small>+{formatUnits(balance.pending, precision)} pending</small> : <small>{balance.confirmedUtxos} confirmed output{balance.confirmedUtxos === 1 ? "" : "s"}</small>}</span></div>;
 }
 
 type SendReview = SendForm & {
@@ -315,6 +331,9 @@ export function WalletSend() {
       pendingUtxos: 0,
     };
   }, [deployment.data, synchronizedSnapshot]);
+  const transferFunds = useMemo(() => deployment.data && synchronizedSnapshot && liveState.data
+    ? classifyRegulatedFunds(synchronizedSnapshot, deployment.data, liveState.data.policy)
+    : undefined, [deployment.data, liveState.data, synchronizedSnapshot]);
 
   useEffect(() => {
     reviewAttempt.current += 1;
@@ -624,7 +643,8 @@ export function WalletSend() {
     && recipientValidation.status === "valid"
     && recipientValidation.source === form.getValues("recipient").trim()
     && !contextError
-    && !reviewBusy;
+    && !reviewBusy
+    && Boolean(transferFunds && transferFunds.spendable > 0n);
 
   return (
     <AppShell eyebrow="Holder wallet / Send" title="Build a confidential transfer">
@@ -634,8 +654,9 @@ export function WalletSend() {
           <SectionHeading label={receipt ? "Receipt" : review ? "Review" : "Recipient and amount"} title={receipt ? "Transfer broadcast" : review ? "Confirm transfer details" : "Who are you paying?"} />
           {!deployment.data ? <p>Import or select a deployment first.</p> : deployment.data.publication !== "published" ? <div className="generate-record"><ShieldCheck size={26} /><p>This deployment is confirmed, but canonical registry publication is still pending. Transfers remain disabled until its manifest and live D4 policy are byte-identical on the registry default branch.</p><Link className="button primary" to="/admin/setup">Finish registry publication</Link></div> : receipt ? <OperationReceiptPanel receipt={receipt} network={deployment.data.network} amountLabel={`${formatUnits(receipt.amount, deployment.data.asset.precision)} ${receipt.ticker}`} resetLabel="Start a new transfer" tone="holder" onReset={() => void startNewTransfer()} /> : !review ? (
             <form onSubmit={form.handleSubmit(reviewTransfer)} className="form-stack">
+              {transferFunds && transferFunds.blacklisted > 0n ? <div className={`blacklist-warning ${transferFunds.spendable === 0n ? "full" : "partial"}`} role={transferFunds.spendable === 0n ? "alert" : "status"}><AlertTriangle size={18} /><div><strong>{transferFunds.spendable === 0n ? "All confirmed funds are blacklisted" : "Some confirmed funds are blacklisted"}</strong><p>{formatUnits(transferFunds.blacklisted, deployment.data.asset.precision)} {deployment.data.asset.ticker} cannot be spent. {formatUnits(transferFunds.spendable, deployment.data.asset.precision)} {deployment.data.asset.ticker} remains spendable.</p></div></div> : null}
               <label>Signed AMP ReceiveRecord JSON or HTTPS URL<textarea aria-invalid={Boolean(form.formState.errors.recipient)} aria-describedby={form.formState.errors.recipient ? "send-recipient-error" : "send-recipient-help"} rows={5} {...recipientField} onChange={(event) => { recipientField.onChange(event); recipientAbort.current?.abort(); recipientValidationRevision.current += 1; setRecipientValidation({ status: "idle" }); setContextError(undefined); if (event.target.value.trim()) form.clearErrors("recipient"); }} onBlur={(event) => { recipientField.onBlur(event); void validateRecipientOnBlur(event.target.value); }} />{form.formState.errors.recipient ? <small id="send-recipient-error" className="field-error">{form.formState.errors.recipient.message}</small> : <small id="send-recipient-help">{recipientValidation.status === "validating" ? "Validating checksum, holder key, network, and deployment…" : recipientValidation.status === "valid" ? `Verified for ${recipientValidation.record.alias}. The canonical record is pinned for review.` : "A plain Liquid address is not enough; the signed record proves the holder covenant and deployment binding."}</small>}</label>
-              <label>Amount<div className="amount-input"><input aria-invalid={Boolean(form.formState.errors.amount)} aria-describedby={form.formState.errors.amount ? "send-amount-error" : "send-amount-help"} inputMode="decimal" {...amountField} onChange={(event) => { amountField.onChange(event); setContextError(undefined); if (event.target.value.trim()) form.clearErrors("amount"); }} onBlur={(event) => { amountField.onBlur(event); void validateAmountOnBlur(event.target.value); }} /><span>{deployment.data.asset.ticker}</span></div>{form.formState.errors.amount ? <small id="send-amount-error" className="field-error">{form.formState.errors.amount.message}</small> : <small id="send-amount-help">{regulatedBalance ? `${formatUnits(regulatedBalance.confirmed, deployment.data.asset.precision)} confirmed · ${formatUnits(regulatedBalance.pending, deployment.data.asset.precision)} pending · ${deployment.data.asset.precision} decimal precision` : "Confirmed and pending balance will appear after wallet synchronization."}</small>}</label>
+              <label>Amount<div className="amount-input"><input aria-invalid={Boolean(form.formState.errors.amount)} aria-describedby={form.formState.errors.amount ? "send-amount-error" : "send-amount-help"} inputMode="decimal" {...amountField} onChange={(event) => { amountField.onChange(event); setContextError(undefined); if (event.target.value.trim()) form.clearErrors("amount"); }} onBlur={(event) => { amountField.onBlur(event); void validateAmountOnBlur(event.target.value); }} /><span>{deployment.data.asset.ticker}</span></div>{form.formState.errors.amount ? <small id="send-amount-error" className="field-error">{form.formState.errors.amount.message}</small> : <small id="send-amount-help">{transferFunds && regulatedBalance ? `${formatUnits(transferFunds.spendable, deployment.data.asset.precision)} spendable · ${formatUnits(transferFunds.blacklisted, deployment.data.asset.precision)} blacklisted · ${formatUnits(regulatedBalance.pending, deployment.data.asset.precision)} pending` : "Spendable balance appears only after wallet and live-policy verification."}</small>}</label>
               <div className="transfer-readiness" aria-label="Transfer readiness">
                 <div><span>Deployment</span><Pill tone="good">Published + canonical</Pill></div>
                 <div><span>Signer profile</span><Pill tone={signerReady ? "good" : "warn"}>{signerReady ? "Connected + synced" : "Action needed"}</Pill></div>

@@ -768,7 +768,7 @@ export function Panel({ children, className = "" }: { children: ReactNode; class
   return <section className={`panel ${className}`}>{children}</section>;
 }
 
-export function Pill({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "good" | "warn" | "blue" }) {
+export function Pill({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "good" | "warn" | "blue" | "danger" }) {
   return <span className={`pill ${tone}`}>{children}</span>;
 }
 

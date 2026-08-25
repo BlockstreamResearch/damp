@@ -149,6 +149,7 @@ export function selectTransferFunding(input: {
   const selectableRegulated = total(selectable);
   const confirmedRegulated = total(eligible);
   const pendingRegulated = total(pending);
+  const blacklistedRegulated = total(blacklisted);
 
   if (amount > selectableRegulated) {
     if (amount <= confirmedRegulated) {
@@ -157,7 +158,10 @@ export function selectTransferFunding(input: {
     if (amount <= confirmedRegulated + pendingRegulated) {
       throw new TransferValidationError("amount", "pending-balance", `Only ${formatUnits(confirmedRegulated, deployment.asset.precision)} ${deployment.asset.ticker} is confirmed; wait for pending funds and refresh.`);
     }
-    throw new TransferValidationError("amount", "insufficient-balance", `Amount exceeds the confirmed spendable balance of ${formatUnits(confirmedRegulated, deployment.asset.precision)} ${deployment.asset.ticker}.`);
+    const blacklistDetail = blacklistedRegulated > 0n
+      ? ` ${formatUnits(blacklistedRegulated, deployment.asset.precision)} ${deployment.asset.ticker} is blacklisted and cannot be spent.`
+      : "";
+    throw new TransferValidationError("amount", "insufficient-balance", `Amount exceeds the confirmed spendable balance of ${formatUnits(confirmedRegulated, deployment.asset.precision)} ${deployment.asset.ticker}.${blacklistDetail}`);
   }
 
   const chosen: WalletSyncUtxo[] = [];
