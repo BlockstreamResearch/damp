@@ -1,29 +1,26 @@
 import { buildBlacklist, preparePolicy, validatePolicySnapshot } from "./amp-signer";
 import type { BlacklistEntry, Deployment, PolicySnapshot } from "./domain";
 import { policySnapshotSchema, publicManifest, smallestTreeDepth } from "./domain";
-import { fetchCanonicalRegistryFile, registryPathForVerifierScript } from "./github";
-import { getPolicySnapshot, putPolicySnapshot } from "./store";
+import { canonicalRegistryContent, fetchCanonicalRegistryFile, registryPathForVerifierScript } from "./github";
+import { putPolicySnapshot } from "./store";
 
 export async function resolvePolicySnapshot(
   deployment: Deployment,
   liveVerifierScript: string,
 ): Promise<PolicySnapshot> {
   const verifierScriptHash = await sha256Hex(liveVerifierScript);
-  const cached = await getPolicySnapshot(deployment.deploymentId, verifierScriptHash);
-  if (cached) {
-    await validatePolicySnapshot(cached);
-    await validateBundledPolicy(deployment, cached);
-    return cached;
-  }
   const path = await registryPathForVerifierScript(deployment.deploymentId, liveVerifierScript);
-  const raw = await fetchCanonicalRegistryFile(path);
+  const raw = await fetchCanonicalRegistryFile(path, fetch, deployment.registryRepository);
   if (!raw) throw new Error("The live verifier policy is not published in the canonical registry.");
   const snapshot = policySnapshotSchema.parse(JSON.parse(raw));
+  if (raw !== canonicalRegistryContent(snapshot)) {
+    throw new Error("The live verifier policy is not encoded as canonical registry bytes.");
+  }
   if (snapshot.deploymentId !== deployment.deploymentId) throw new Error("Policy belongs to another deployment.");
   if (snapshot.verifierScriptPubkey !== liveVerifierScript) throw new Error("Policy script does not match the live anchor.");
   await validatePolicySnapshot(snapshot);
   await validateBundledPolicy(deployment, snapshot);
-  await putPolicySnapshot(snapshot, verifierScriptHash);
+  await putPolicySnapshot(snapshot, verifierScriptHash, deployment.registryRepository);
   return snapshot;
 }
 
@@ -39,7 +36,7 @@ async function validateBundledPolicy(deployment: Deployment, snapshot: PolicySna
     || prepared.verifierProgramHash !== snapshot.verifierProgramHash
     || prepared.verifierScriptPubkey !== snapshot.verifierScriptPubkey
   ) {
-    throw new Error("Policy snapshot does not match the bundled AMP contracts.");
+    throw new Error("Policy snapshot does not match the bundled DAMP contracts.");
   }
 }
 

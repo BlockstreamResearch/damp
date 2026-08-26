@@ -15,8 +15,8 @@ use elements::{AssetId, Script, TxOutSecrets};
 use crate::blinding;
 use crate::keys::{derive_key_index, derive_xprv, xonly_from_xprv};
 use crate::model::{
-    BootstrapRequest, BootstrapResult, CreateReceiveRecordRequest, OperationReview,
-    SIGNER_SDK_VERSION, SignerNetwork, WalletKeyLocator,
+    BootstrapRequest, BootstrapResult, OperationReview, SIGNER_SDK_VERSION, SignerNetwork,
+    WalletKeyLocator,
 };
 use crate::protocol::{Protocol, ProtocolConfig};
 use crate::receive;
@@ -191,23 +191,12 @@ pub fn bootstrap(
         verifier_asset,
         None,
     ));
-    if supply > 1 {
-        for value in [supply - 1, 1] {
-            pset.add_output(Output::new_explicit(
-                holder_script.clone(),
-                value,
-                regulated_asset,
-                None,
-            ));
-        }
-    } else {
-        pset.add_output(Output::new_explicit(
-            holder_script,
-            1,
-            regulated_asset,
-            None,
-        ));
-    }
+    pset.add_output(Output::new_explicit(
+        holder_script,
+        supply,
+        regulated_asset,
+        None,
+    ));
     let token_output = if matches!(request.supply_mode, SupplyMode::IssuerManaged) {
         let index = pset.outputs().len();
         pset.add_output(Output::new_explicit(
@@ -373,16 +362,8 @@ pub fn bootstrap(
         entries: Vec::new(),
     };
     initial_policy.validate()?;
-    let initial_receive_record = receive::create_receive_record(
-        signer,
-        network,
-        CreateReceiveRecordRequest {
-            alias: request.receive_alias,
-            deployment: deployment.clone(),
-            deployment_id: deployment_id.clone(),
-        },
-    )?
-    .record;
+    let initial_holder_address =
+        receive::derive_holder_address(signer, network, deployment.clone())?;
     let review = OperationReview {
         deployment_id: deployment_id.clone(),
         operation: "bootstrap",
@@ -392,7 +373,7 @@ pub fn bootstrap(
         output_count: pset.outputs().len(),
         current_depth: TreeDepth::D4,
         successor_depth: None,
-        recipients: vec![initial_receive_record.alias.clone()],
+        recipients: vec![initial_holder_address.confidential_address.clone()],
     };
     Ok(BootstrapResult {
         sdk: SIGNER_SDK_VERSION,
@@ -404,7 +385,7 @@ pub fn bootstrap(
         deployment,
         deployment_id,
         initial_policy,
-        initial_receive_record,
+        initial_holder_address,
         issuer_derivation_index: issuer_index,
         holder_derivation_index: holder_index,
         required_confirmations: request.required_confirmations,

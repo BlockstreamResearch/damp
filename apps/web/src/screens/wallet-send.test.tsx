@@ -43,19 +43,8 @@ const fixtures = vi.hoisted(() => {
     verifierScriptPubkey: "51",
     entries: [],
   } as const;
-  const recipient = {
-    schema: "simplicity-amp-registry-v1",
-    protocol: "simplicity-amp/v0.1",
-    deploymentId: deployment.deploymentId,
-    alias: "QA recipient",
-    ownerPublicKey: hash("f"),
-    scriptPubkey: "51",
-    confidentialAddress: `tlq1${"q".repeat(50)}`,
-    blindingPublicKey: `02${hash("1")}`,
-    proofAddress: `tlq1${"p".repeat(50)}`,
-    bip322Signature: "signed-proof",
-  } as const;
-  const ownRecord = { ...recipient, alias: "Own profile", ownerPublicKey: hash("0") };
+  const recipient = { ownerPublicKey: hash("f"), confidentialAddress: `tlq1${"q".repeat(50)}` } as const;
+  const ownAddress = { ...recipient, ownerPublicKey: hash("0"), derivationIndex: 0, scriptPubkey: "51", sdk: "test" };
   const snapshot = {
     version: 3,
     profileId,
@@ -74,14 +63,13 @@ const fixtures = vi.hoisted(() => {
     ],
   } as const;
   const signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet", profileId, walletReady: true, profiles: [] } as const;
-  return { deployment, hash, ownRecord, policy, profileId, recipient, signer, snapshot };
+  return { deployment, hash, ownAddress, policy, profileId, recipient, signer, snapshot };
 });
 
 const calls = vi.hoisted(() => ({
   walletRefetch: vi.fn(),
   liveRefetch: vi.fn(),
-  validateRecord: vi.fn(() => Promise.resolve()),
-  validateShape: vi.fn(() => Promise.resolve()),
+  validateAddress: vi.fn(() => Promise.resolve(fixtures.recipient.ownerPublicKey)),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -96,7 +84,7 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("../components/ui", () => ({
-  AppShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main>,
+  AppShell: ({ children, title }: { children: React.ReactNode; title: string }) => <main><h1>{title}</h1>{children}</main>,
   BackLink: ({ children }: { children: React.ReactNode }) => <a href="/wallet">{children}</a>,
   Panel: ({ children }: { children: React.ReactNode }) => <section>{children}</section>,
   Pill: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
@@ -112,8 +100,7 @@ vi.mock("../lib/amp-signer", () => ({
   signerSnapshot: () => fixtures.signer,
   subscribeSigner: () => () => undefined,
   signTransfer: vi.fn(),
-  validateReceiveRecord: calls.validateRecord,
-  validateReceiveRecordShape: calls.validateShape,
+  validateRecipientAddress: calls.validateAddress,
 }));
 
 vi.mock("../lib/deployments", () => ({
@@ -130,7 +117,7 @@ vi.mock("../lib/wallet-query", () => ({
 
 vi.mock("../lib/wallet-sync", () => ({
   assetBalances: () => [{ assetId: fixtures.deployment.regulatedAsset, confirmed: 200n, pending: 0n, confirmedUtxos: 1, pendingUtxos: 0 }],
-  ensureSignerReceiveRecord: vi.fn(() => Promise.resolve({ derivationIndex: 0, record: fixtures.ownRecord })),
+  ensureSignerHolderAddress: vi.fn(() => Promise.resolve(fixtures.ownAddress)),
   feeFundingState: vi.fn(),
   nextFundingAddress: vi.fn(),
   synchronizeDeploymentWallet: vi.fn(() => Promise.resolve(fixtures.snapshot)),
@@ -151,8 +138,7 @@ import { WalletSend } from "./wallet";
 afterEach(cleanup);
 
 beforeEach(() => {
-  calls.validateRecord.mockReset().mockResolvedValue(undefined);
-  calls.validateShape.mockReset().mockResolvedValue(undefined);
+  calls.validateAddress.mockReset().mockResolvedValue(fixtures.recipient.ownerPublicKey);
   calls.walletRefetch.mockReset().mockResolvedValue({ data: { snapshot: fixtures.snapshot }, error: null });
   calls.liveRefetch.mockReset().mockResolvedValue({ data: { anchor: { txid: fixtures.hash("b"), confirmations: 2, scriptPubkey: "51" }, policy: fixtures.policy }, error: null });
 });
@@ -160,19 +146,23 @@ beforeEach(() => {
 describe("WalletSend progressive validation", () => {
   it("rejects malformed inputs inline, clears corrected errors, prevents duplicate review, and shows the canonical review", async () => {
     render(<WalletSend />);
-    const recipient = screen.getByLabelText(/Signed AMP ReceiveRecord JSON or HTTPS URL/);
+    expect(screen.getByRole("heading", { name: "Build a regulated transfer" })).toBeInTheDocument();
+    expect(screen.getByText(/does not prove which deployment manifest/i)).toBeInTheDocument();
+    expect(screen.queryByText(/confidential values|confidential transfer/i)).not.toBeInTheDocument();
+    const recipient = screen.getByLabelText(/Recipient confidential address/);
     const amount = screen.getByLabelText(/^Amount/);
     const review = screen.getByRole("button", { name: /Review transfer/ });
     expect(review).toBeDisabled();
 
-    fireEvent.change(recipient, { target: { value: `tlq1${"q".repeat(50)}` } });
+    calls.validateAddress.mockRejectedValueOnce(new Error("recipient is not a valid Elements address"));
+    fireEvent.change(recipient, { target: { value: "not-an-address" } });
     fireEvent.blur(recipient);
-    expect(await screen.findByText(/plain Liquid address does not prove/i)).toBeInTheDocument();
+    expect(await screen.findByText(/not a valid Elements address/i)).toBeInTheDocument();
     expect(recipient).toHaveAttribute("aria-invalid", "true");
 
-    fireEvent.change(recipient, { target: { value: JSON.stringify(fixtures.recipient) } });
+    fireEvent.change(recipient, { target: { value: fixtures.recipient.confidentialAddress } });
     fireEvent.blur(recipient);
-    expect(await screen.findByText(/Verified for QA recipient/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Address verified for the selected DAMP covenant/i)).toBeInTheDocument();
     expect(recipient).toHaveAttribute("aria-invalid", "false");
 
     fireEvent.change(amount, { target: { value: "0" } });
@@ -197,9 +187,9 @@ describe("WalletSend progressive validation", () => {
     expect(calls.walletRefetch).toHaveBeenCalledOnce();
     expect(calls.liveRefetch).toHaveBeenCalledOnce();
     expect(screen.getByText("1.00 AMP · 100 base units")).toBeInTheDocument();
-    expect(screen.getByText(/QA recipient/)).toBeInTheDocument();
+    expect(screen.getByText(/tlq1qqqqqqqq…qqqqqqqq/)).toBeInTheDocument();
     expect(screen.getByText(/aabbccdd/)).toBeInTheDocument();
     expect(screen.getByText("Liquid testnet")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Sign locally/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Sign and broadcast/ })).toBeEnabled();
   });
 });

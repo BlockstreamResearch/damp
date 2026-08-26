@@ -1,26 +1,19 @@
 import { z } from "zod";
 
 import {
-  validateReceiveRecord,
-  validateReceiveRecordShape,
+  validateRecipientAddress,
   type SpendableUtxo,
 } from "./amp-signer";
 import {
   formatUnits,
   parseUnits,
-  protocolId,
   publicManifest,
-  receiveRecordSchema,
-  registrySchema,
   type Deployment,
   type PolicySnapshot,
-  type ReceiveRecord,
 } from "./domain";
 import type { WalletSyncSnapshot, WalletSyncUtxo } from "./wallet-sync";
 
 export const maxTransferInputs = 10;
-export const maxReceiveRecordBytes = 128_000;
-export const receiveRecordRequestTimeoutMs = 15_000;
 export const minimumTransferFee = 500n;
 export const maximumTransferFee = 100_000n;
 const unsigned64Max = (1n << 64n) - 1n;
@@ -66,7 +59,7 @@ export function estimateTransferFee(regulatedInputCount: number) {
   const estimatedWeight = 650n + BigInt(regulatedInputCount) * 180n + 5n * 100n;
   const fee = (estimatedWeight * 125n + 99n) / 100n;
   if (fee < minimumTransferFee || fee > maximumTransferFee) {
-    throw new TransferValidationError("context", "fee-bounds", "Estimated fee is outside the supported test transaction bounds.");
+    throw new TransferValidationError("context", "fee-bounds", "Network fee is outside the supported test transaction bounds.");
   }
   return fee;
 }
@@ -192,7 +185,7 @@ export function selectTransferFunding(input: {
     const pendingHint = pendingFeeCandidates.some(compatibleFeeOutput)
       ? " A compatible L-BTC output is pending confirmation."
       : total(confirmedFeeCandidates) >= fee
-        ? " AMP v0.1 needs one compatible fee output; smaller outputs cannot be combined in this transaction. Request another test output or consolidate them first."
+        ? " DAMP v0.1 needs one compatible fee output; smaller outputs cannot be combined in this transaction. Request another test output or consolidate them first."
         : deployment.network === "liquid-testnet"
           ? " Request Liquid testnet funds, then refresh the wallet."
           : " Fund one signer wallet output from the local Elements node, then refresh the wallet.";
@@ -215,179 +208,19 @@ export function selectTransferFunding(input: {
   };
 }
 
-function plainAddressMessage() {
-  return "Paste a signed AMP ReceiveRecord JSON or HTTPS URL. A plain Liquid address does not prove the holder covenant or deployment binding.";
-}
-
-export function parseReceiveRecordSource(value: string): { json?: unknown; url?: URL } {
-  const normalized = value.trim();
-  if (!normalized) throw new TransferValidationError("recipient", "required", "Paste a signed AMP ReceiveRecord JSON or HTTPS URL.");
-  if (normalized.startsWith("{")) {
-    try {
-      return { json: JSON.parse(normalized) };
-    } catch {
-      throw new TransferValidationError("recipient", "json", "ReceiveRecord JSON is malformed. Copy the complete record from the recipient's Receive screen.");
-    }
+export async function resolveAndValidateRecipientAddress(value: string, deployment: Deployment) {
+  const address = value.trim();
+  if (!address) {
+    throw new TransferValidationError("recipient", "required", "Paste the recipient's confidential DAMP address.");
   }
-  let url: URL;
   try {
-    url = new URL(normalized);
-  } catch {
-    throw new TransferValidationError("recipient", "plain-address", plainAddressMessage());
-  }
-  if (url.protocol !== "https:" || url.username || url.password) {
-    throw new TransferValidationError("recipient", "url", "ReceiveRecord links must use HTTPS and must not contain embedded credentials.");
-  }
-  return { url };
-}
-
-function parseReceiveRecord(raw: unknown, deployment: Deployment) {
-  if (raw && typeof raw === "object") {
-    const version = raw as { schema?: unknown; protocol?: unknown };
-    if (version.schema !== registrySchema || version.protocol !== protocolId) {
-      throw new TransferValidationError("recipient", "version", "Unsupported ReceiveRecord version or protocol. Ask the recipient to generate a current Simplicity AMP v0.1 record.");
-    }
-  }
-  let record: ReceiveRecord;
-  try {
-    record = receiveRecordSchema.parse(raw);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      throw new TransferValidationError("recipient", "shape", `ReceiveRecord fields are invalid: ${error.issues[0]?.message ?? "invalid data"}.`);
-    }
-    throw error;
-  }
-  if (record.deploymentId !== deployment.deploymentId) {
-    throw new TransferValidationError("recipient", "deployment", "ReceiveRecord belongs to another deployment, asset, or genesis anchor.");
-  }
-  return record;
-}
-
-export async function resolveAndValidateReceiveRecord(
-  value: string,
-  deployment: Deployment,
-  options: { request?: typeof fetch; signal?: AbortSignal; timeoutMs?: number } = {},
-) {
-  const source = parseReceiveRecordSource(value);
-  let raw = source.json;
-  if (source.url) {
-    const requestGuard = receiveRecordRequestGuard(
-      options.signal,
-      options.timeoutMs ?? receiveRecordRequestTimeoutMs,
-    );
-    try {
-      const response = await (options.request ?? fetch)(source.url, {
-        cache: "no-store",
-        credentials: "omit",
-        headers: { Accept: "application/json" },
-        redirect: "error",
-        referrerPolicy: "no-referrer",
-        signal: requestGuard.signal,
-      });
-      // `redirect: "error"` is enforced by native fetch. Keep the response-side
-      // check as well so injected transports, service-worker wrappers, or test
-      // adapters cannot silently weaken the direct-origin requirement.
-      if (response.redirected) {
-        throw new TransferValidationError(
-          "recipient",
-          "redirect",
-          "ReceiveRecord links may not redirect. Use the final direct HTTPS link or paste the JSON.",
-        );
-      }
-      if (!response.ok) {
-        throw new TransferValidationError("recipient", "fetch", `ReceiveRecord request failed (${response.status}). Retry the link or paste the JSON directly.`, true);
-      }
-      const declaredLength = Number(response.headers.get("content-length"));
-      if (Number.isFinite(declaredLength) && declaredLength > maxReceiveRecordBytes) {
-        throw new TransferValidationError("recipient", "size", "ReceiveRecord response is too large.");
-      }
-      const body = await readBoundedResponseText(response, maxReceiveRecordBytes);
-      try {
-        raw = JSON.parse(body);
-      } catch {
-        throw new TransferValidationError("recipient", "json", "ReceiveRecord URL did not return valid JSON.");
-      }
-    } catch (error) {
-      if (requestGuard.timedOut()) {
-        throw new TransferValidationError("recipient", "timeout", "ReceiveRecord request timed out. Paste the JSON directly or retry a direct HTTPS link.", true);
-      }
-      if (options.signal?.aborted || error instanceof TransferValidationError) throw error;
-      throw new TransferValidationError(
-        "recipient",
-        "fetch",
-        "ReceiveRecord request could not be completed. Redirects are not accepted; use a direct HTTPS link or paste the JSON.",
-        true,
-      );
-    } finally {
-      requestGuard.finish();
-    }
-  }
-  const record = parseReceiveRecord(raw, deployment);
-  try {
-    await validateReceiveRecordShape(record);
-    await validateReceiveRecord(publicManifest(deployment), record);
+    const ownerPublicKey = await validateRecipientAddress(publicManifest(deployment), address);
+    return { confidentialAddress: address, ownerPublicKey };
   } catch (error) {
     throw new TransferValidationError(
       "recipient",
-      "cryptographic-validation",
-      `ReceiveRecord checksum, network, holder key, address, or deployment proof is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      "address",
+      `Recipient address is invalid or incompatible with the selected deployment: ${error instanceof Error ? error.message : String(error)}`,
     );
-  }
-  return record;
-}
-
-function receiveRecordRequestGuard(externalSignal: AbortSignal | undefined, timeoutMs: number) {
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
-    throw new Error("ReceiveRecord request timeout must be between 1 and 60000 milliseconds.");
-  }
-  const controller = new AbortController();
-  let timeoutReached = false;
-  const relayAbort = () => controller.abort();
-  if (externalSignal?.aborted) relayAbort();
-  else externalSignal?.addEventListener("abort", relayAbort, { once: true });
-  const timer = setTimeout(() => {
-    timeoutReached = true;
-    controller.abort();
-  }, timeoutMs);
-  return {
-    signal: controller.signal,
-    timedOut: () => timeoutReached,
-    finish: () => {
-      clearTimeout(timer);
-      externalSignal?.removeEventListener("abort", relayAbort);
-    },
-  };
-}
-
-async function readBoundedResponseText(response: Response, maximumBytes: number) {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    const body = await response.text();
-    if (new TextEncoder().encode(body).byteLength > maximumBytes) {
-      throw new TransferValidationError("recipient", "size", "ReceiveRecord response is too large.");
-    }
-    return body;
-  }
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  let received = 0;
-  let body = "";
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.byteLength;
-      if (received > maximumBytes) {
-        await reader.cancel("ReceiveRecord response exceeded the size limit.");
-        throw new TransferValidationError("recipient", "size", "ReceiveRecord response is too large.");
-      }
-      body += decoder.decode(value, { stream: true });
-    }
-    body += decoder.decode();
-    return body;
-  } catch (error) {
-    if (error instanceof TransferValidationError) throw error;
-    throw new TransferValidationError("recipient", "encoding", "ReceiveRecord response is not valid UTF-8 JSON.");
-  } finally {
-    reader.releaseLock();
   }
 }

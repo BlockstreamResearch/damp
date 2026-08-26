@@ -146,7 +146,7 @@ describe("role-neutral deployment import", () => {
     mocks.signer.fingerprint = "aabbccdd";
     mocks.signer.profileId = `elements-regtest:${"aa".repeat(32)}`;
     mocks.signer.network = "liquid-testnet";
-    await expect(attachIssuerControl(importedDeployment())).rejects.toThrow("Reconnect the AMP signer for elements-regtest");
+    await expect(attachIssuerControl(importedDeployment())).rejects.toThrow("Reconnect the DAMP signer for elements-regtest");
     expect(mocks.deriveIssuer).not.toHaveBeenCalled();
 
     mocks.signer.network = "elements-regtest";

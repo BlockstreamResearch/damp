@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use secp256k1_zkp::{PublicKey, XOnlyPublicKey};
+use secp256k1_zkp::XOnlyPublicKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -11,7 +11,6 @@ use crate::policy::{PolicySet, TreeDepth, decode_hex_32, outpoint_key};
 
 pub const REGISTRY_SCHEMA_V1: &str = "simplicity-amp-registry-v1";
 pub const PROTOCOL_ID_V1: &str = "simplicity-amp/v0.1";
-pub const RECEIVE_RECORD_DOMAIN_V1: &[u8] = b"simplicity-amp/receive/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -270,64 +269,6 @@ impl PolicySnapshotV1 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ReceiveRecordV1 {
-    pub schema: String,
-    pub protocol: String,
-    pub deployment_id: String,
-    pub alias: String,
-    pub owner_public_key: String,
-    pub script_pubkey: String,
-    pub confidential_address: String,
-    pub blinding_public_key: String,
-    pub proof_address: String,
-    pub bip322_signature: String,
-}
-
-impl ReceiveRecordV1 {
-    pub fn validate_shape(&self) -> anyhow::Result<()> {
-        require_header(&self.schema, &self.protocol)?;
-        validate_hash("deployment id", &self.deployment_id)?;
-        validate_xonly("owner public key", &self.owner_public_key)?;
-        anyhow::ensure!(
-            (1..=80).contains(&self.alias.trim().len()),
-            "receive alias must be 1..=80 characters"
-        );
-        validate_script(&self.script_pubkey)?;
-        PublicKey::from_str(&self.blinding_public_key).context("invalid blinding public key")?;
-        anyhow::ensure!(
-            self.confidential_address.len() >= 20,
-            "confidential address is invalid"
-        );
-        anyhow::ensure!(self.proof_address.len() >= 20, "proof address is invalid");
-        anyhow::ensure!(
-            !self.bip322_signature.is_empty(),
-            "BIP322 signature is required"
-        );
-        Ok(())
-    }
-
-    #[must_use]
-    pub fn signing_message(&self) -> Vec<u8> {
-        let mut message = Vec::new();
-        message.extend_from_slice(RECEIVE_RECORD_DOMAIN_V1);
-        for value in [
-            self.deployment_id.as_bytes(),
-            self.alias.as_bytes(),
-            self.owner_public_key.as_bytes(),
-            self.script_pubkey.as_bytes(),
-            self.confidential_address.as_bytes(),
-            self.blinding_public_key.as_bytes(),
-            self.proof_address.as_bytes(),
-        ] {
-            message.extend_from_slice(&(value.len() as u32).to_be_bytes());
-            message.extend_from_slice(value);
-        }
-        message
-    }
-}
-
 fn require_header(schema: &str, protocol: &str) -> anyhow::Result<()> {
     anyhow::ensure!(schema == REGISTRY_SCHEMA_V1, "unsupported registry schema");
     anyhow::ensure!(protocol == PROTOCOL_ID_V1, "unsupported AMP protocol");
@@ -412,10 +353,6 @@ mod tests {
         let policy: PolicySnapshotV1 =
             serde_json::from_str(include_str!("../../../registry/fixtures/policy.valid.json"))?;
         policy.validate()?;
-        let receive: ReceiveRecordV1 = serde_json::from_str(include_str!(
-            "../../../registry/fixtures/receive-record.valid.json"
-        ))?;
-        receive.validate_shape()?;
         Ok(())
     }
 

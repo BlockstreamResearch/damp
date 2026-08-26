@@ -60,6 +60,7 @@ export const localDeploymentSchema = deploymentManifestSchema.extend({
   issuerFingerprint: z.string().regex(/^[0-9a-f]{8}$/).optional(),
   issuerProfileId: z.string().regex(/^(liquid-testnet|elements-regtest):[0-9a-f]{64}$/).optional(),
   publication: z.enum(["local", "pending", "published"]),
+  registryRepository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).optional(),
 }).strict().superRefine((deployment, context) => {
   const authorityFields = [deployment.issuerDerivationIndex, deployment.issuerFingerprint, deployment.issuerProfileId];
   const present = authorityFields.filter((value) => value !== undefined).length;
@@ -106,7 +107,7 @@ export function publicManifest(deployment: Deployment): DeploymentManifest {
   const { deploymentId: _deploymentId, confirmations: _confirmations, activeAnchor: _activeAnchor,
     issuerDerivationIndex: _issuerDerivationIndex, issuerFingerprint: _issuerFingerprint,
     issuerProfileId: _issuerProfileId,
-    publication: _publication, ...manifest } = deployment;
+    publication: _publication, registryRepository: _registryRepository, ...manifest } = deployment;
   return deploymentManifestSchema.parse(manifest);
 }
 
@@ -150,24 +151,9 @@ export const policySnapshotSchema = z.object({
 
 export type PolicySnapshot = z.infer<typeof policySnapshotSchema>;
 
-export const receiveRecordSchema = z.object({
-  schema: z.literal(registrySchema),
-  protocol: z.literal(protocolId),
-  deploymentId: hash,
-  alias: z.string().trim().min(1).max(80),
-  ownerPublicKey: hash,
-  scriptPubkey: z.string().regex(SCRIPT),
-  confidentialAddress: z.string().min(20),
-  blindingPublicKey: z.string().regex(/^(02|03)[0-9a-f]{64}$/),
-  proofAddress: z.string().min(20),
-  bip322Signature: z.string().min(1),
-}).strict();
-
-export type ReceiveRecord = z.infer<typeof receiveRecordSchema>;
-
 export function smallestTreeDepth(entryCount: number): TreeDepth {
   const depth = supportedTreeDepths.find((candidate) => entryCount <= 2 ** candidate);
-  if (!depth) throw new Error("AMP v0.1 supports at most 64 blacklist entries.");
+  if (!depth) throw new Error("DAMP v0.1 supports at most 64 blacklist entries.");
   return depth;
 }
 

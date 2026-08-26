@@ -52,12 +52,10 @@ pub fn sign_transfer(
             && prepared.verifier_script_pubkey == request.current_policy.verifier_script_pubkey,
         "current snapshot does not match the bundled verifier"
     );
-    receive::validate_receive_record(
+    let recipient_owner = receive::validate_recipient_address(
         network,
-        crate::model::ValidateReceiveRecordRequest {
-            deployment: request.deployment.clone(),
-            record: request.recipient.clone(),
-        },
+        &request.deployment,
+        &request.recipient_address,
     )?;
     let amount = parse_amount(&request.amount, "transfer amount")?;
     let fee = parse_amount(&request.fee, "fee")?;
@@ -103,13 +101,7 @@ pub fn sign_transfer(
     let protocol = protocol_for_deployment(&request.deployment)?;
     let anchor = protocol.anchor(policy)?;
     let sender = validate_holder_inputs(signer, &protocol, &selected_regulated)?;
-    let recipient_owner =
-        elements::schnorr::XOnlyPublicKey::from_str(&request.recipient.owner_public_key)?;
-    let recipient_address = Address::from_str(&request.recipient.confidential_address)?;
-    anyhow::ensure!(
-        recipient_address.blinding_pubkey.is_some(),
-        "recipient address is not confidential"
-    );
+    let recipient_address = Address::from_str(&request.recipient_address)?;
 
     let mut pset = PartiallySignedTransaction::new_v2();
     set_lwk_genesis_hash(&mut pset, &request.deployment)?;
@@ -262,7 +254,7 @@ pub fn sign_transfer(
             output_count,
             current_depth: policy.depth,
             successor_depth: None,
-            recipients: vec![request.recipient.alias],
+            recipients: vec![request.recipient_address],
         },
     )
 }

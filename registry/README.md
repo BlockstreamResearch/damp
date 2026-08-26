@@ -1,9 +1,10 @@
 # Public registry
 
-This directory contains public, reviewable AMP data. Deployment manifests are
+This directory contains public, reviewable DAMP data. Deployment manifests are
 immutable. Policy snapshots are immutable and stored at
 `policies/{deploymentId}/{sha256(verifierScriptPubkey)}.json`.
-Receive records bind a holder key and confidential address to one deployment.
+Holder wallets share a standard confidential address. Its public blinding key
+encodes the holder identity needed to validate the selected covenant script.
 
 Notes attached to blacklist entries are non-consensus metadata. Consensus uses
 only the exact `txid:vout` pair. Wallets resolve the current snapshot directly

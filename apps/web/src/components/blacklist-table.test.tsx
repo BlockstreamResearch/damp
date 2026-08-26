@@ -17,7 +17,7 @@ describe("blacklist table semantics", () => {
     expect(container.querySelector('td[data-label="Outpoint"]')).toBeInTheDocument();
     expect(container.querySelector('td[data-label="Note"]')).toHaveTextContent("Compliance case");
     expect(screen.getByText("Blacklisted — cannot be spent")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Remove outpoint/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Draft removal of outpoint/ }));
     expect(onRemove).toHaveBeenCalledWith(entry);
   });
 
@@ -32,7 +32,7 @@ describe("blacklist table semantics", () => {
 
   it("renders disabled removal coherently and keeps a valid empty row", () => {
     const { rerender } = render(<BlacklistTable entries={[entry]} activeEntries={[]} disabled onRemove={vi.fn()} onUndoRemoval={vi.fn()} />);
-    expect(screen.getByRole("button", { name: /Remove outpoint/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Draft removal of outpoint/ })).toBeDisabled();
 
     rerender(<BlacklistTable entries={[]} activeEntries={[]} onRemove={vi.fn()} onUndoRemoval={vi.fn()} />);
     expect(screen.getByRole("cell", { name: /Empty blacklist/ })).toHaveAttribute("colspan", "4");

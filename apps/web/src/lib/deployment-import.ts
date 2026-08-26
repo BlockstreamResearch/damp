@@ -71,12 +71,17 @@ export async function readPublicManifestSource(value: string, request: typeof fe
 export async function validatePublicDeploymentImport(
   value: string,
   dependencies: Partial<PublicImportDependencies> = {},
+  registryRepository?: string,
 ): Promise<PublicDeploymentImport> {
   const deps = { ...defaultDependencies, ...dependencies };
   const raw = await readPublicManifestSource(value, deps.request);
   const manifest = deploymentManifestSchema.parse(raw);
   const deploymentId = await deps.validateDeployment(manifest);
-  await deps.verifyCanonicalManifest(deploymentRegistryPath(deploymentId), manifest);
+  if (registryRepository) {
+    await deps.verifyCanonicalManifest(deploymentRegistryPath(deploymentId), manifest, deps.request, registryRepository);
+  } else {
+    await deps.verifyCanonicalManifest(deploymentRegistryPath(deploymentId), manifest);
+  }
 
   // Public import deliberately creates no issuer-key locator. The temporary
   // published state is used only to resolve and validate the canonical policy;
@@ -86,6 +91,7 @@ export async function validatePublicDeploymentImport(
     deploymentId,
     confirmations: 0,
     publication: "published",
+    registryRepository,
   });
   const anchor = await deps.traverseAnchor(temporary, esploraUrlForDeployment(temporary));
   if (anchor.live.confirmations < 1) throw new Error("Live anchor must be confirmed before import.");
@@ -117,16 +123,16 @@ export async function persistPublicDeploymentImport(result: PublicDeploymentImpo
   });
   await putDeployment(deployment);
   await setActiveDeploymentId(deployment.deploymentId);
-  await putPolicySnapshot(result.snapshot, await sha256Hex(result.snapshot.verifierScriptPubkey));
+  await putPolicySnapshot(result.snapshot, await sha256Hex(result.snapshot.verifierScriptPubkey), deployment.registryRepository);
   return deployment;
 }
 
 export async function attachIssuerControl(deployment: Deployment) {
   const selected = localDeploymentSchema.parse(deployment);
   const signer = signerSnapshot();
-  if (!signer.connected || !signer.fingerprint || !signer.profileId) throw new Error("Connect the AMP signer first.");
+  if (!signer.connected || !signer.fingerprint || !signer.profileId) throw new Error("Connect the DAMP signer first.");
   if (signer.network !== selected.network) {
-    throw new Error(`Reconnect the AMP signer for ${selected.network}.`);
+    throw new Error(`Reconnect the DAMP signer for ${selected.network}.`);
   }
   const revision = signerSessionRevision();
   const issuer = await deriveAmpKey(selected.deploymentSalt, "issuer", selected.network);

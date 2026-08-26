@@ -6,8 +6,6 @@ import liveWaterfallsFixture from "../test/fixtures/waterfalls-v4-live.json";
 vi.mock("./store", () => ({
   getWalletSyncRecord: () => Promise.resolve(undefined),
   putWalletSyncRecord: () => Promise.resolve(),
-  listReceiveRecords: () => Promise.resolve([]),
-  putReceiveRecord: () => Promise.resolve(),
 }));
 
 import {

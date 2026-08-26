@@ -12,7 +12,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 amp-core = { package = "simplicity-amp-core", path = "../amp-core" }
 anyhow = "1.0.101"
-base64 = "0.22.1"
 elements = { version = "0.25.3", features = ["base64", "serde"] }
 elements-miniscript = { version = "0.4.0", default-features = false }
 getrandom = { version = "0.2.16", features = ["js"] }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://blockstreamresearch.github.io/simplicity-amp/schemas/policy-snapshot.schema.json",
-  "title": "Simplicity AMP v0.1 policy snapshot",
+  "title": "DAMP v0.1 policy snapshot",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "protocol", "deploymentId", "sequence", "parentPolicyRoot", "parentVerifierScriptHash", "treeDepth", "setRoot", "entryCount", "policyRoot", "verifierProgramHash", "verifierScriptPubkey", "entries"],

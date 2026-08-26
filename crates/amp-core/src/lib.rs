@@ -9,5 +9,5 @@ pub use policy::{
 };
 pub use registry::{
     AssetMetadata, BlacklistEntryV1, DeploymentManifestV1, DeploymentNetwork, PolicySnapshotV1,
-    ReceiveRecordV1, SupplyMode,
+    SupplyMode,
 };

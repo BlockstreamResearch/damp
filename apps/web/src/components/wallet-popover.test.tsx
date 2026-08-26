@@ -91,7 +91,7 @@ const connectedModel: WalletPopoverModel = {
   lbtcPending: "0.00002",
   otherAssets: [{ assetId: "22".repeat(32), label: "AMP", amount: "42", pending: "3" }],
   utxoCount: 3,
-  utxos: [{ outpoint: `${"33".repeat(32)}:1`, status: "confirmed", amount: "0.00012 L-BTC" }],
+  utxos: [{ outpoint: `${"33".repeat(32)}:1`, status: "confirmed", asset: "L-BTC", assetId: "11".repeat(32), amount: "0.00012 L-BTC" }],
   receiveAddress: {
     address: `tlq1${"q".repeat(48)}`,
     index: 2,
@@ -104,11 +104,11 @@ const profileBIdentity = "bb".repeat(32);
 const profileA = { id: `liquid-testnet:${profileAIdentity}`, publicIdentity: profileAIdentity, fingerprint: "aabbccdd", network: "liquid-testnet" as const, label: "QA Alice", active: true };
 const profileB = { id: `liquid-testnet:${profileBIdentity}`, publicIdentity: profileBIdentity, fingerprint: "11223344", network: "liquid-testnet" as const, label: "QA Bob", active: false };
 
-describe("AMP signer wallet popover content", () => {
+describe("DAMP signer wallet popover content", () => {
   it("offers the existing connect action while disconnected", () => {
     const onConnect = vi.fn();
     render(<WalletPopoverContent mnemonicInput="abandon ability" onConnect={onConnect} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
-    expect(screen.getByRole("dialog", { name: "AMP signer wallet" })).toHaveTextContent("No signer connected");
+    expect(screen.getByRole("dialog", { name: "DAMP signer wallet" })).toHaveTextContent("No signer connected");
     fireEvent.click(screen.getByRole("button", { name: "Connect and save debug signer" }));
     expect(onConnect).toHaveBeenCalledWith("abandon ability");
   });
@@ -209,20 +209,24 @@ describe("AMP signer wallet popover content", () => {
 
   it("keeps unknown balances distinct and applies explicit issuer grammar", () => {
     render(<WalletPopoverContent role="issuer" model={{ ...connectedModel, role: "issuer", hasSnapshot: false, syncState: "error", syncError: "No verified snapshot" }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
-    expect(screen.getByRole("dialog", { name: "AMP signer wallet" })).toHaveClass("issuer");
+    expect(screen.getByRole("dialog", { name: "DAMP signer wallet" })).toHaveClass("issuer");
     expect(screen.getByText("Balance unavailable")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("No verified snapshot");
   });
 
   it("shows the base wallet before a deployment is selected", () => {
-    render(<WalletPopoverContent model={{ ...connectedModel, deploymentSelected: false, lbtcConfirmed: "0.00002", otherAssets: [] }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    const { rerender } = render(<WalletPopoverContent model={{ ...connectedModel, deploymentSelected: false, lbtcConfirmed: "0.00002", otherAssets: [] }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
     expect(screen.getByText("Available L-BTC").parentElement).toHaveTextContent("0.00002 L-BTC");
     expect(screen.getByText(/Base wallet synchronized/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Refresh/ })).toBeEnabled();
+
+    rerender(<WalletPopoverContent model={{ ...connectedModel, deploymentSelected: false, hasSnapshot: false, syncState: "error", syncError: "Native asset is not configured" }} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    expect(screen.queryByText(/Base wallet synchronized/)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Native asset is not configured");
   });
 });
 
-describe("AMP signer wallet popover interactions", () => {
+describe("DAMP signer wallet popover interactions", () => {
   beforeEach(() => {
     state.signer = { connected: false, fingerprint: undefined, network: "liquid-testnet" };
     state.deployment = undefined;
@@ -239,18 +243,18 @@ describe("AMP signer wallet popover interactions", () => {
 
   it("opens from the status control, traps initial focus in its action, and restores focus on Escape", () => {
     render(<WalletStatus />);
-    const trigger = screen.getByRole("button", { name: "Open AMP Signer SDK connection" });
+    const trigger = screen.getByRole("button", { name: "Open DAMP Signer SDK connection" });
     fireEvent.click(trigger);
-    expect(screen.getByRole("dialog", { name: "AMP signer wallet" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "DAMP signer wallet" })).toBeInTheDocument();
     expect(screen.getByLabelText("Signer network")).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "AMP signer wallet" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "DAMP signer wallet" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
   });
 
   it("cycles Tab and Shift+Tab within the open signer dialog", () => {
     render(<WalletStatus />);
-    fireEvent.click(screen.getByRole("button", { name: "Open AMP Signer SDK connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open DAMP Signer SDK connection" }));
     const network = screen.getByLabelText("Signer network");
     const connect = screen.getByRole("button", { name: "Connect and save debug signer" });
     expect(network).toHaveFocus();
@@ -270,7 +274,7 @@ describe("AMP signer wallet popover interactions", () => {
 
   it("connects a fresh signer on the explicitly selected Elements regtest network", async () => {
     render(<WalletStatus />);
-    fireEvent.click(screen.getByRole("button", { name: "Open AMP Signer SDK connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open DAMP Signer SDK connection" }));
     fireEvent.change(screen.getByLabelText("Signer network"), { target: { value: "elements-regtest" } });
     fireEvent.change(screen.getByLabelText("Recovery phrase or NEW"), { target: { value: "test recovery phrase" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect and save debug signer" }));
@@ -287,9 +291,9 @@ describe("AMP signer wallet popover interactions", () => {
       asset: { ticker: "AMP", precision: 0 },
     };
     render(<WalletStatus role="issuer" />);
-    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
-    expect(screen.getByRole("dialog", { name: "AMP signer wallet" })).toHaveClass("issuer");
-    expect(screen.getByRole("status")).toHaveTextContent("Reconnect the AMP signer for Elements regtest");
+    fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
+    expect(screen.getByRole("dialog", { name: "DAMP signer wallet" })).toHaveClass("issuer");
+    expect(screen.getByRole("status")).toHaveTextContent("Reconnect the DAMP signer for Elements regtest");
     expect(screen.getByText("Balance unavailable")).toBeInTheDocument();
   });
 
@@ -299,7 +303,7 @@ describe("AMP signer wallet popover interactions", () => {
     state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
-    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
     fireEvent.click(screen.getByRole("button", { name: "Active signer profile" }));
     fireEvent.click(screen.getByRole("option", { name: /QA Bob.*11223344.*Liquid testnet/ }));
     expect(screen.getByRole("alertdialog", { name: "Confirm signer profile switch" })).toBeInTheDocument();
@@ -313,7 +317,7 @@ describe("AMP signer wallet popover interactions", () => {
     state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
-    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
     fireEvent.click(screen.getByRole("button", { name: "Manage profiles" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove signer profile" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Remove this profile?");
@@ -327,7 +331,7 @@ describe("AMP signer wallet popover interactions", () => {
     state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
-    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
     fireEvent.click(screen.getByRole("button", { name: "Active signer profile" }));
     fireEvent.click(screen.getByRole("option", { name: /QA Bob.*11223344.*Liquid testnet/ }));
     await waitFor(() => expect(switchProfileMock).toHaveBeenCalledWith(profileB.id, "liquid-testnet"));
@@ -341,7 +345,7 @@ describe("AMP signer wallet popover interactions", () => {
     state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
-    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
     fireEvent.click(screen.getByRole("button", { name: "Active signer profile" }));
     fireEvent.click(screen.getByRole("option", { name: /QA Bob.*11223344.*Elements regtest/ }));
     expect(screen.getByRole("status")).toHaveTextContent("requires Liquid testnet");
@@ -350,10 +354,10 @@ describe("AMP signer wallet popover interactions", () => {
 
   it("dismisses on an outside pointer interaction", () => {
     render(<WalletStatus />);
-    const trigger = screen.getByRole("button", { name: "Open AMP Signer SDK connection" });
+    const trigger = screen.getByRole("button", { name: "Open DAMP Signer SDK connection" });
     fireEvent.click(trigger);
     fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole("dialog", { name: "AMP signer wallet" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "DAMP signer wallet" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
   });
 
@@ -375,12 +379,12 @@ describe("AMP signer wallet popover interactions", () => {
       refetch,
     };
     render(<WalletStatus />);
-    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
+    fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     expect(refetch).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: /Disconnect/ }));
     expect(disconnect).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("dialog", { name: "AMP signer wallet" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "DAMP signer wallet" })).not.toBeInTheDocument();
   });
 
   it("keeps the exact-address faucet action available after synced unfunded, pending, and funded states", () => {
@@ -397,39 +401,39 @@ describe("AMP signer wallet popover interactions", () => {
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
 
     const { rerender } = render(<WalletStatus />);
-    fireEvent.click(screen.getByRole("button", { name: /AMP Signer SDK wallet/ }));
-    const faucet = screen.getByRole("link", { name: /Request test funds/ });
+    fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
+    const faucet = screen.getByRole("link", { name: /Open testnet faucet/ });
     expect(faucet).toHaveAttribute("rel", expect.stringContaining("noreferrer"));
     expect(new URL(faucet.getAttribute("href")!).searchParams.get("address")).toBe(state.fundingAddress.confidentialAddress);
-    expect(screen.getByText(/public testnet receive address will be sent to liquidtestnet.com/i)).toBeInTheDocument();
+    expect(screen.getByText(/public testnet receive address will be sent to the external faucet/i)).toBeInTheDocument();
     fireEvent.click(faucet);
     expect(screen.getByRole("status")).toHaveTextContent("Liquid testnet faucet opened. Refresh to check whether new test funds arrived.");
 
     state.signer = { ...state.signer, walletReady: false };
     rerender(<WalletStatus />);
-    expect(screen.queryByRole("link", { name: /Request test funds/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Open testnet faucet/ })).not.toBeInTheDocument();
     expect(screen.getByText("Syncing")).toBeInTheDocument();
     state.signer = { ...state.signer, walletReady: true };
     rerender(<WalletStatus />);
-    expect(screen.getByRole("link", { name: /Request test funds/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open testnet faucet/ })).toBeInTheDocument();
 
     state.wallet = { data: { snapshot: { utxos: [{ status: "unconfirmed", assetId: policyAsset, amount: "1500" }], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     rerender(<WalletStatus />);
-    expect(screen.getByRole("link", { name: /Request test funds/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open testnet faucet/ })).toBeInTheDocument();
 
     state.wallet = { data: { snapshot: { utxos: [{ status: "confirmed", assetId: policyAsset, amount: "150000" }], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     rerender(<WalletStatus />);
-    expect(screen.getByRole("link", { name: /Request test funds/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open testnet faucet/ })).toBeInTheDocument();
 
     state.wallet = { data: undefined, error: new Error("Waterfalls unavailable"), isPending: false, isFetching: false, refetch };
     rerender(<WalletStatus />);
-    expect(screen.queryByRole("link", { name: /Request test funds/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Open testnet faucet/ })).not.toBeInTheDocument();
     expect(screen.getByText("Balance unavailable")).toBeInTheDocument();
 
     state.signer = { connected: true, fingerprint: "aabbccdd", network: "elements-regtest", profileId: `elements-regtest:${profileAIdentity}` };
     state.deployment = { ...state.deployment, network: "elements-regtest" };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     rerender(<WalletStatus />);
-    expect(screen.queryByRole("link", { name: /Request test funds/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Open testnet faucet/ })).not.toBeInTheDocument();
   });
 });

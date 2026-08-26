@@ -69,7 +69,7 @@ export class AnchorConflictError extends Error {
   readonly winningAnchor: AnchorTraversal;
 
   constructor(winningAnchor: AnchorTraversal) {
-    super(`Verifier anchor changed to ${winningAnchor.live.txid}:0. Rebuild with the local AMP signer.`);
+    super(`Verifier anchor changed to ${winningAnchor.live.txid}:0. Rebuild with the local DAMP signer.`);
     this.name = "AnchorConflictError";
     this.winningAnchor = winningAnchor;
   }
@@ -96,7 +96,7 @@ export async function traverseLiveAnchor(
 ): Promise<AnchorTraversal> {
   const [genesisTxid, genesisVoutText] = deployment.genesisAnchor.split(":");
   const genesisVout = Number(genesisVoutText);
-  if (genesisVout !== 0) throw new Error("AMP v0.1 requires the genesis verifier anchor at output 0.");
+  if (genesisVout !== 0) throw new Error("DAMP v0.1 requires the genesis verifier anchor at output 0.");
 
   const baseUrl = esploraUrl.replace(/\/$/, "");
   const tipHeight = await getTextNumber(request, `${baseUrl}/blocks/tip/height`);

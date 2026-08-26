@@ -454,11 +454,23 @@ pub fn set_lwk_genesis_hash(
     pset: &mut PartiallySignedTransaction,
     deployment: &DeploymentManifestV1,
 ) -> anyhow::Result<()> {
-    let network = match deployment.network {
+    set_lwk_genesis_hash_for(
+        pset,
+        deployment.network,
+        AssetId::from_str(&deployment.policy_asset)?,
+    )
+}
+
+pub fn set_lwk_genesis_hash_for(
+    pset: &mut PartiallySignedTransaction,
+    deployment_network: DeploymentNetwork,
+    policy_asset: AssetId,
+) -> anyhow::Result<()> {
+    let network = match deployment_network {
         DeploymentNetwork::LiquidTestnet => lwk_common::Network::TestnetLiquid,
         DeploymentNetwork::ElementsRegtest => {
             let params = lwk_common::ElementsParamsBuilder::new()
-                .with_policy_asset(AssetId::from_str(&deployment.policy_asset)?)
+                .with_policy_asset(policy_asset)
                 .build()?;
             lwk_common::Network::CustomElements(params)
         }

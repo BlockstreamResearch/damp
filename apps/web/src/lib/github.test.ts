@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   canonicalRegistryContent,
+  customGitHubManifestSource,
   deploymentRegistryPath,
   fetchCanonicalDeploymentCatalog,
   localDevelopmentRegistryUrl,
+  registryRepositoryUrlFor,
   verifyCanonicalRegistryFile,
 } from "./github";
 import type { DeploymentManifest } from "./domain";
@@ -49,6 +51,17 @@ function registryRequest(content?: string) {
 }
 
 describe("manual registry publication", () => {
+  it("pins custom GitHub manifests to the repository default branch", async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify({ default_branch: "main" }), { status: 200 })) as typeof fetch;
+    const id = "ab".repeat(32);
+    await expect(customGitHubManifestSource(`https://github.com/example/registry/blob/main/deployments/${id}.json`, request)).resolves.toEqual({
+      sourceRepository: "example/registry",
+      manifestUrl: `https://raw.githubusercontent.com/example/registry/main/deployments/${id}.json`,
+    });
+    await expect(customGitHubManifestSource(`https://github.com/example/registry/blob/dev/deployments/${id}.json`, request)).rejects.toThrow(/default branch \(main\)/i);
+    await expect(customGitHubManifestSource("https://example.com/manifest.json", request)).rejects.toThrow(/github\.com/i);
+  });
+
   it("uses deterministic manifest paths and canonical bytes", () => {
     expect(path).toBe(`deployments/${"ab".repeat(32)}.json`);
     expect(() => deploymentRegistryPath("../manifest")).toThrow("32-byte lowercase hex");
@@ -75,6 +88,11 @@ describe("manual registry publication", () => {
     expect(localDevelopmentRegistryUrl(false, "http://127.0.0.1:5173/registry")).toBeUndefined();
     expect(() => localDevelopmentRegistryUrl(true, "https://registry.example/amp")).toThrow("loopback host");
     expect(() => localDevelopmentRegistryUrl(true, "file:///tmp/registry")).toThrow("loopback host");
+  });
+
+  it("builds repository links for validated custom registry identifiers", () => {
+    expect(registryRepositoryUrlFor("example/custom-registry")).toBe("https://github.com/example/custom-registry");
+    expect(() => registryRepositoryUrlFor("https://github.com/example/custom-registry")).toThrow(/owner\/repository/i);
   });
 
   it("enumerates only canonical deployment manifests from the default branch", async () => {

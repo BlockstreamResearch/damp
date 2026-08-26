@@ -4,7 +4,7 @@ use anyhow::Context;
 use elements::Address;
 use elements::bitcoin::PublicKey as BitcoinPublicKey;
 use elements::bitcoin::bip32::DerivationPath;
-use elements::secp256k1_zkp::{Keypair, PublicKey, XOnlyPublicKey};
+use elements::secp256k1_zkp::{Keypair, XOnlyPublicKey};
 use elements_miniscript::bitcoin::bip32::Xpriv;
 use lwk_common::Signer as _;
 use lwk_signer::SwSigner;
@@ -51,16 +51,6 @@ pub fn derive_xprv(
 pub fn xonly_from_xprv(xprv: &Xpriv) -> XOnlyPublicKey {
     let keypair = Keypair::from_secret_key(elements::secp256k1_zkp::SECP256K1, &xprv.private_key);
     keypair.x_only_public_key().0
-}
-
-pub fn blinding_public_key(
-    signer: &SwSigner,
-    script: &elements::Script,
-) -> anyhow::Result<PublicKey> {
-    let master = signer
-        .slip77_master_blinding_key()
-        .map_err(|error| anyhow::anyhow!("LWK SLIP77 key unavailable: {error:?}"))?;
-    Ok(master.blinding_key(elements::secp256k1_zkp::SECP256K1, script))
 }
 
 pub fn signer_descriptor(signer: &SwSigner) -> anyhow::Result<String> {

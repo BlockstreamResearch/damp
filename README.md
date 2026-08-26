@@ -1,4 +1,9 @@
-# Simplicity AMP v0.1
+# DAMP — Decentralized Asset Management Protocol
+
+> **Experimental proof of concept.** This software is not production-ready. Do not use it with real funds or assets; use is at your own risk.
+
+The closed UX scope and audit evidence are tracked in
+[`docs/damp-ux-improvement-checklist.md`](docs/damp-ux-improvement-checklist.md).
 
 Research software for blacklist-regulated assets on Liquid testnet and Elements
 regtest. Liquid mainnet is intentionally unsupported.
@@ -34,8 +39,8 @@ the depth-specific verifier leaf and resulting script. Snapshots are stored at
 policy from the live anchor rather than mutable registry state.
 
 The web app persists public deployments locally and scopes anchor, policy, UTXO,
-draft, and receive-record data by the selected deployment ID. A standalone Rust
-AMP Signer SDK owns bootstrap, receive, transfer, policy-update, and reissuance
+and draft data by the selected deployment ID. A standalone Rust DAMP Signer SDK
+owns bootstrap, holder-address, transfer, policy-update, and reissuance
 validation. It uses LWK for mnemonic derivation, SLIP77, and ordinary wallet
 signing and compiles to WebAssembly. Every signer profile in the v0.1 web app is
 an explicitly disposable **debug/test profile**: its recovery phrase is stored
@@ -79,7 +84,7 @@ the network, while the regulated and verifier asset IDs are derived by the
 bootstrap issuance transaction. Bootstrap accepts ordinary fully confidential
 faucet outputs after signer-owned unblinding, then returns fee change as two
 internal wallet outputs whose L-BTC asset ID is explicit and whose values remain
-confidential. Those normalized outputs satisfy the stricter AMP input format for
+confidential. Those normalized outputs satisfy the stricter DAMP input format for
 later transfers, policy updates, and reissuance. GitHub Pages builds read the public
 `VITE_GITHUB_REGISTRY_REPO` setting for read-only registry verification. Registry
 publication is intentionally manual: the app downloads canonical JSON, shows its
@@ -92,7 +97,7 @@ configured registry repository's current default branch. Published records
 removed from that branch are no longer selectable; a missing `deployments/`
 directory represents an intentionally empty canonical registry.
 
-Ordinary AMP transfers keep every regulated asset ID and amount explicit. The
+Ordinary DAMP transfers keep every regulated asset ID and amount explicit. The
 holder covenant rejects confidential regulated inputs, while the verifier rejects
 missing, zero, confidential, overflowing, or unequal regulated input/output totals.
 Only unrelated wallet outputs such as confidential L-BTC change use value-only

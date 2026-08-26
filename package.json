@@ -9,7 +9,7 @@
     "wasm": "wasm-pack build crates/amp-signer --target web --out-dir ../../apps/web/src/generated/amp-signer",
     "dev": "pnpm run wasm && pnpm --dir apps/web dev",
     "build": "pnpm run wasm && pnpm --dir apps/web build",
-    "schema:test": "ajv validate --spec=draft2020 -s registry/schemas/deployment.schema.json -d registry/fixtures/deployment.valid.json && ajv validate --spec=draft2020 -s registry/schemas/policy-snapshot.schema.json -d registry/fixtures/policy.valid.json && ajv validate --spec=draft2020 -s registry/schemas/receive-record.schema.json -d registry/fixtures/receive-record.valid.json",
+    "schema:test": "ajv validate --spec=draft2020 -s registry/schemas/deployment.schema.json -d registry/fixtures/deployment.valid.json && ajv validate --spec=draft2020 -s registry/schemas/policy-snapshot.schema.json -d registry/fixtures/policy.valid.json",
     "typecheck": "pnpm --dir apps/web typecheck",
     "test": "pnpm --dir apps/web test"
   },

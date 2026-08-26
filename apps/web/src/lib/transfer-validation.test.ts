@@ -1,24 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const signerValidation = vi.hoisted(() => ({
-  record: vi.fn(() => Promise.resolve()),
-  shape: vi.fn(() => Promise.resolve()),
+  address: vi.fn(() => Promise.resolve("ff".repeat(32))),
 }));
 
 vi.mock("./amp-signer", async (importOriginal) => ({
   ...await importOriginal<typeof import("./amp-signer")>(),
-  validateReceiveRecord: signerValidation.record,
-  validateReceiveRecordShape: signerValidation.shape,
+  validateRecipientAddress: signerValidation.address,
 }));
 
-import { protocolId, registrySchema, type Deployment, type PolicySnapshot, type ReceiveRecord } from "./domain";
+import { protocolId, registrySchema, type Deployment, type PolicySnapshot } from "./domain";
 import {
   TransferValidationError,
   estimateTransferFee,
-  maxReceiveRecordBytes,
-  parseReceiveRecordSource,
   parseTransferAmount,
-  resolveAndValidateReceiveRecord,
+  resolveAndValidateRecipientAddress,
   selectTransferFunding,
 } from "./transfer-validation";
 import type { WalletSyncSnapshot, WalletSyncUtxo } from "./wallet-sync";
@@ -67,18 +63,7 @@ const policy: PolicySnapshot = {
   entries: [],
 };
 
-const record: ReceiveRecord = {
-  schema: registrySchema,
-  protocol: protocolId,
-  deploymentId: deployment.deploymentId,
-  alias: "Recipient",
-  ownerPublicKey: hash("f"),
-  scriptPubkey: "51",
-  confidentialAddress: `tlq1${"q".repeat(50)}`,
-  blindingPublicKey: `02${hash("1")}`,
-  proofAddress: `tlq1${"p".repeat(50)}`,
-  bip322Signature: "signed-proof",
-};
+const recipientAddress = `tlq1${"q".repeat(50)}`;
 
 function holderUtxo(txByte: string, vout: number, amount: bigint, status: "confirmed" | "unconfirmed" = "confirmed"): WalletSyncUtxo {
   return {
@@ -136,8 +121,7 @@ function snapshot(utxos: WalletSyncUtxo[]): WalletSyncSnapshot {
 }
 
 beforeEach(() => {
-  signerValidation.record.mockReset().mockResolvedValue(undefined);
-  signerValidation.shape.mockReset().mockResolvedValue(undefined);
+  signerValidation.address.mockReset().mockResolvedValue(hash("f"));
 });
 
 afterEach(() => vi.useRealTimers());
@@ -162,74 +146,28 @@ describe("transfer amount validation", () => {
   });
 });
 
-describe("ReceiveRecord validation", () => {
-  it("rejects plain addresses, insecure links, malformed JSON, and unsupported versions", async () => {
-    expect(() => parseReceiveRecordSource(`tlq1${"q".repeat(50)}`)).toThrow(/plain Liquid address/i);
-    expect(() => parseReceiveRecordSource("http://example.test/record.json")).toThrow(/HTTPS/i);
-    expect(() => parseReceiveRecordSource("{broken")).toThrow(/malformed/i);
-    await expect(resolveAndValidateReceiveRecord(JSON.stringify({ ...record, protocol: "old" }), deployment)).rejects.toMatchObject({ field: "recipient", code: "version" });
-    await expect(resolveAndValidateReceiveRecord(JSON.stringify({ ...record, deploymentId: hash("0") }), deployment)).rejects.toMatchObject({ field: "recipient", code: "deployment" });
+describe("recipient address validation", () => {
+  it("requires a confidential holder address", async () => {
+    await expect(resolveAndValidateRecipientAddress("", deployment)).rejects.toMatchObject({ field: "recipient", code: "required" });
   });
 
-  it("performs shared shape and cryptographic checks for a valid record", async () => {
-    await expect(resolveAndValidateReceiveRecord(JSON.stringify(record), deployment)).resolves.toEqual(record);
-    expect(signerValidation.shape).toHaveBeenCalledWith(record);
-    expect(signerValidation.record).toHaveBeenCalledOnce();
-
-    signerValidation.record.mockRejectedValueOnce(new Error("wrong network proof"));
-    await expect(resolveAndValidateReceiveRecord(JSON.stringify(record), deployment)).rejects.toMatchObject({ field: "recipient", code: "cryptographic-validation" });
+  it("returns the address and signer-validated covenant owner", async () => {
+    await expect(resolveAndValidateRecipientAddress(`  ${recipientAddress}  `, deployment)).resolves.toEqual({
+      confidentialAddress: recipientAddress,
+      ownerPublicKey: hash("f"),
+    });
+    expect(signerValidation.address).toHaveBeenCalledWith(expect.not.objectContaining({ deploymentId: expect.anything() }), recipientAddress);
   });
 
-  it("bounds remote records and reports retryable request failures", async () => {
-    const oversized = vi.fn(() => Promise.resolve(new Response("{}", { headers: { "content-length": "128001" } })));
-    await expect(resolveAndValidateReceiveRecord("https://example.test/record.json", deployment, { request: oversized as typeof fetch })).rejects.toMatchObject({ code: "size" });
-    const unavailable = vi.fn(() => Promise.resolve(new Response("unavailable", { status: 503 })));
-    await expect(resolveAndValidateReceiveRecord("https://example.test/record.json", deployment, { request: unavailable as typeof fetch })).rejects.toMatchObject({ code: "fetch", retryable: true });
-
-    const unannouncedOversized = vi.fn(() => Promise.resolve(new Response(new ReadableStream({
-      start(controller) {
-        controller.enqueue(new Uint8Array(maxReceiveRecordBytes));
-        controller.enqueue(new Uint8Array(1));
-        controller.close();
-      },
-    }))));
-    await expect(resolveAndValidateReceiveRecord("https://example.test/record.json", deployment, { request: unannouncedOversized as typeof fetch })).rejects.toMatchObject({ code: "size" });
-  });
-
-  it("rejects redirects, omits ambient credentials and referrers, and times out stalled bodies", async () => {
-    const direct = vi.fn(() => Promise.resolve(new Response(JSON.stringify(record))));
-    await expect(resolveAndValidateReceiveRecord("https://example.test/record.json", deployment, { request: direct as typeof fetch })).resolves.toEqual(record);
-    expect(direct).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({
-      credentials: "omit",
-      redirect: "error",
-      referrerPolicy: "no-referrer",
-    }));
-
-    const redirected = vi.fn(() => Promise.reject(new TypeError("redirect mode is set to error")));
-    await expect(resolveAndValidateReceiveRecord("https://example.test/redirect", deployment, { request: redirected as typeof fetch })).rejects.toMatchObject({
-      code: "fetch",
-      message: expect.stringMatching(/Redirects are not accepted/i),
-    });
-
-    const followedResponse = new Response(JSON.stringify(record));
-    Object.defineProperty(followedResponse, "redirected", { value: true });
-    const silentlyFollowed = vi.fn(() => Promise.resolve(followedResponse));
-    await expect(resolveAndValidateReceiveRecord("https://example.test/redirect", deployment, { request: silentlyFollowed as typeof fetch })).rejects.toMatchObject({
-      code: "redirect",
-      message: expect.stringMatching(/may not redirect/i),
-    });
-
-    vi.useFakeTimers();
-    const stalled = vi.fn((_url: URL | RequestInfo, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
-    }));
-    const timedOut = resolveAndValidateReceiveRecord("https://example.test/stalled", deployment, {
-      request: stalled as typeof fetch,
-      timeoutMs: 25,
-    });
-    const timeoutAssertion = expect(timedOut).rejects.toMatchObject({ code: "timeout", retryable: true });
-    await vi.advanceTimersByTimeAsync(25);
-    await timeoutAssertion;
+  it("reports malformed, unconfidential, wrong-network, and incompatible addresses", async () => {
+    for (const message of ["recipient is not a valid Elements address", "recipient address must be confidential", "recipient address network mismatch", "not a holder address for the selected deployment"]) {
+      signerValidation.address.mockRejectedValueOnce(new Error(message));
+      await expect(resolveAndValidateRecipientAddress(recipientAddress, deployment)).rejects.toMatchObject({
+        field: "recipient",
+        code: "address",
+        message: expect.stringContaining(message),
+      });
+    }
   });
 });
 

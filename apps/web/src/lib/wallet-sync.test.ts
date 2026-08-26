@@ -23,8 +23,6 @@ vi.mock("./store", () => ({
     storedWallets.set(key, structuredClone(value));
     return Promise.resolve(key);
   },
-  listReceiveRecords: () => Promise.resolve([]),
-  putReceiveRecord: () => Promise.resolve(),
 }));
 
 import type { DerivedWalletAddress, InspectedUtxo, SpendableUtxo } from "./amp-signer";
@@ -36,7 +34,6 @@ import {
   loadWalletSyncSnapshot,
   saveWalletSyncSnapshot,
   selectSpendableUtxos,
-  signerReceiveRecord,
   synchronizeBaseWallet,
   WalletDiscoverySafetyError,
   walletSyncStorageKey,
@@ -375,6 +372,46 @@ describe("wallet state and persistence", () => {
     });
   });
 
+  it("offers one useful confirmed output for an explicit wallet split", async () => {
+    const only = txid("8");
+    const snapshot = await discover({
+      dependencies: dependencies({
+        scans: (value) => value.source === "wallet" && value.branch === 0 && value.index === 0
+          ? { hasActivity: true, utxos: [listed(only, true)] }
+          : { hasActivity: false, utxos: [] },
+      }),
+    });
+
+    expect(issuanceFundingPlan({ snapshot, assetId: policyAsset })).toMatchObject({
+      splitOffer: true,
+      splitCandidate: { txid: only, vout: 0, amount: "5000" },
+    });
+  });
+
+  it("suppresses splitting below the useful floor or when another output exists", async () => {
+    const only = txid("9");
+    const small = await discover({
+      dependencies: dependencies({
+        scans: (value) => value.source === "wallet" && value.branch === 0 && value.index === 0
+          ? { hasActivity: true, utxos: [listed(only, true)] }
+          : { hasActivity: false, utxos: [] },
+        inspect: (utxos) => Promise.resolve(utxos.map((utxo) => ({
+          txid: utxo.txid,
+          vout: utxo.vout,
+          assetId: policyAsset,
+          amount: "4999",
+          scriptPubkey: scriptFor(utxo.walletKey!.branch, utxo.walletKey!.index),
+          assetConfidential: false,
+          valueConfidential: true,
+        }))),
+      }),
+    });
+    expect(issuanceFundingPlan({ snapshot: small, assetId: policyAsset })).toMatchObject({
+      splitOffer: false,
+      splitCandidate: undefined,
+    });
+  });
+
   it("restores the same strong profile snapshot and isolates another mnemonic", async () => {
     const snapshot = await discover();
     await saveWalletSyncSnapshot(snapshot);
@@ -383,16 +420,6 @@ describe("wallet state and persistence", () => {
     const otherProfileId = `elements-regtest:${"bb".repeat(32)}`;
     await expect(loadWalletSyncSnapshot(otherProfileId, "elements-regtest", "base")).resolves.toBeUndefined();
     expect(walletSyncStorageKey(profileId, "elements-regtest", "base")).not.toBe(walletSyncStorageKey(otherProfileId, "elements-regtest", "base"));
-  });
-
-  it("selects only the connected signer's deployment receive record", () => {
-    const first = { record: { ownerPublicKey: txid("1") }, derivationIndex: 7 };
-    const second = { record: { ownerPublicKey: txid("2") }, derivationIndex: 7 };
-    const records = [first, second] as Parameters<typeof signerReceiveRecord>[0];
-
-    expect(signerReceiveRecord(records, txid("2"), 7)).toBe(second);
-    expect(signerReceiveRecord(records, txid("3"), 7)).toBeUndefined();
-    expect(() => signerReceiveRecord(records, txid("1"), 8)).toThrow("wrong holder derivation");
   });
 
   it("keeps the last good persisted snapshot when a refresh fails", async () => {

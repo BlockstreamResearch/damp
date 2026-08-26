@@ -1,12 +1,18 @@
 import { deploymentManifestSchema, HASH, type DeploymentManifest } from "./domain";
 
-const registryRepository = (import.meta.env.VITE_GITHUB_REGISTRY_REPO as string | undefined) ?? "BlockstreamResearch/damp";
+const configuredRegistryRepository = (import.meta.env.VITE_GITHUB_REGISTRY_REPO as string | undefined) ?? "BlockstreamResearch/damp";
 const localRegistryBaseUrl = localDevelopmentRegistryUrl(
   import.meta.env.DEV,
   import.meta.env.VITE_LOCAL_REGISTRY_BASE_URL as string | undefined,
 );
 
-export const registryRepositoryUrl = localRegistryBaseUrl ?? `https://github.com/${registryRepository}`;
+export function registryRepositoryUrlFor(sourceRepository = configuredRegistryRepository) {
+  if (localRegistryBaseUrl && sourceRepository === configuredRegistryRepository) return localRegistryBaseUrl;
+  const { owner, repository } = repositoryParts(sourceRepository);
+  return `https://github.com/${owner}/${repository}`;
+}
+
+export const registryRepositoryUrl = registryRepositoryUrlFor();
 
 const MAX_REPOSITORY_RESPONSE_BYTES = 64 * 1024;
 const MAX_CATALOG_RESPONSE_BYTES = 1024 * 1024;
@@ -37,8 +43,8 @@ function assertRegistryPath(path: string) {
   }
 }
 
-function repositoryParts() {
-  const match = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(registryRepository);
+function repositoryParts(repository = configuredRegistryRepository) {
+  const match = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(repository);
   if (!match) throw new Error("VITE_GITHUB_REGISTRY_REPO must be an owner/repository pair.");
   return { owner: match[1], repository: match[2] };
 }
@@ -51,8 +57,8 @@ async function boundedResponseText(response: Response, maximum: number, label: s
   return new TextDecoder().decode(bytes);
 }
 
-async function resolveCanonicalRepository(request: typeof fetch) {
-  const { owner, repository } = repositoryParts();
+async function resolveCanonicalRepository(request: typeof fetch, sourceRepository = configuredRegistryRepository) {
+  const { owner, repository } = repositoryParts(sourceRepository);
   const response = await request(`https://api.github.com/repos/${owner}/${repository}`, {
     cache: "no-store",
     headers: { Accept: "application/vnd.github+json" },
@@ -93,9 +99,9 @@ export async function registryPathForVerifierScript(deploymentId: string, script
   return `policies/${deploymentId}/${scriptHash}.json`;
 }
 
-export async function fetchCanonicalRegistryFile(path: string, request: typeof fetch = fetch) {
+export async function fetchCanonicalRegistryFile(path: string, request: typeof fetch = fetch, sourceRepository = configuredRegistryRepository) {
   assertRegistryPath(path);
-  if (localRegistryBaseUrl) {
+  if (localRegistryBaseUrl && sourceRepository === configuredRegistryRepository) {
     const response = await request(new URL(path, localRegistryBaseUrl), {
       cache: "no-store",
       headers: { Accept: "application/json" },
@@ -104,7 +110,7 @@ export async function fetchCanonicalRegistryFile(path: string, request: typeof f
     if (!response.ok) throw new Error(`Local test registry fetch failed (${response.status}).`);
     return boundedResponseText(response, MAX_MANIFEST_RESPONSE_BYTES, "Local registry file");
   }
-  const { owner, repository, defaultBranch } = await resolveCanonicalRepository(request);
+  const { owner, repository, defaultBranch } = await resolveCanonicalRepository(request, sourceRepository);
   const raw = await request(
     `https://raw.githubusercontent.com/${owner}/${repository}/${defaultBranch}/${path}`,
     { cache: "no-store", headers: { Accept: "application/json" } },
@@ -115,8 +121,8 @@ export async function fetchCanonicalRegistryFile(path: string, request: typeof f
 }
 
 /** Enumerate and strictly validate the manifests on the configured registry's default branch. */
-export async function fetchCanonicalDeploymentCatalog(request: typeof fetch = fetch): Promise<CanonicalDeployment[]> {
-  if (localRegistryBaseUrl) {
+export async function fetchCanonicalDeploymentCatalog(request: typeof fetch = fetch, sourceRepository = configuredRegistryRepository): Promise<CanonicalDeployment[]> {
+  if (localRegistryBaseUrl && sourceRepository === configuredRegistryRepository) {
     const response = await request(new URL("deployments/index.json", localRegistryBaseUrl), {
       cache: "no-store",
       headers: { Accept: "application/json" },
@@ -130,14 +136,14 @@ export async function fetchCanonicalDeploymentCatalog(request: typeof fetch = fe
     if (uniqueIds.length !== raw.length) throw new Error("Local registry deployment index contains duplicate IDs.");
     const catalog: CanonicalDeployment[] = [];
     for (const deploymentId of uniqueIds) {
-      const text = await fetchCanonicalRegistryFile(deploymentRegistryPath(deploymentId), request);
+      const text = await fetchCanonicalRegistryFile(deploymentRegistryPath(deploymentId), request, sourceRepository);
       if (text === undefined) throw new Error(`Indexed registry manifest ${deploymentId} is missing.`);
       catalog.push({ deploymentId, manifest: parseCanonicalManifest(deploymentId, text) });
     }
     return catalog;
   }
 
-  const { owner, repository, defaultBranch } = await resolveCanonicalRepository(request);
+  const { owner, repository, defaultBranch } = await resolveCanonicalRepository(request, sourceRepository);
   const directory = await request(
     `https://api.github.com/repos/${owner}/${repository}/contents/deployments?ref=${encodeURIComponent(defaultBranch)}`,
     { cache: "no-store", headers: { Accept: "application/vnd.github+json" } },
@@ -181,13 +187,31 @@ export async function verifyCanonicalRegistryFile(
   path: string,
   content: unknown,
   request: typeof fetch = fetch,
+  sourceRepository = configuredRegistryRepository,
 ) {
-  const published = await fetchCanonicalRegistryFile(path, request);
+  const published = await fetchCanonicalRegistryFile(path, request, sourceRepository);
   if (published === undefined) throw new Error(`Registry file is not available at ${path}.`);
   if (published !== canonicalRegistryContent(content)) {
     throw new Error(`Registry file at ${path} does not match the downloaded canonical bytes.`);
   }
   return published;
+}
+
+export async function customGitHubManifestSource(value: string, request: typeof fetch = fetch) {
+  const url = new URL(value.trim());
+  if (url.protocol !== "https:" || url.hostname !== "github.com") {
+    throw new Error("Custom registry links must be HTTPS github.com manifest links.");
+  }
+  const match = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/blob\/(.+)\/deployments\/([0-9a-f]{64})\.json$/.exec(url.pathname);
+  if (!match) throw new Error("Use a GitHub link to deployments/<deployment-id>.json on the repository default branch.");
+  const sourceRepository = `${match[1]}/${match[2]}`;
+  const branch = decodeURIComponent(match[3]);
+  const resolved = await resolveCanonicalRepository(request, sourceRepository);
+  if (branch !== resolved.defaultBranch) throw new Error(`Custom registry manifest must be on its default branch (${resolved.defaultBranch}).`);
+  return {
+    sourceRepository,
+    manifestUrl: `https://raw.githubusercontent.com/${resolved.owner}/${resolved.repository}/${resolved.defaultBranch}/deployments/${match[4]}.json`,
+  };
 }
 
 export function downloadCanonicalRegistryFile(path: string, content: unknown) {

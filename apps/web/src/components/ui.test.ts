@@ -47,7 +47,7 @@ describe("activeNavigationTarget", () => {
 
 describe("contextualDocumentTitle", () => {
   it("keeps each route identifiable in browser history and tabs", () => {
-    expect(contextualDocumentTitle("Mint governed supply")).toBe("Mint governed supply · Simplicity AMP");
+    expect(contextualDocumentTitle("Mint governed supply")).toBe("Mint governed supply · DAMP");
   });
 });
 
@@ -71,7 +71,7 @@ describe("appRoleForPath", () => {
 
 describe("roleSwitchNavigation", () => {
   it("keeps a compact mobile route switch available in both application shells", () => {
-    expect(roleSwitchNavigation("holder")).toEqual({ to: "/admin", label: "Issuer console", mobileLabel: "Issuer" });
+    expect(roleSwitchNavigation("holder")).toEqual({ to: "/admin/setup", label: "Issuer console", mobileLabel: "Issuer" });
     expect(roleSwitchNavigation("issuer")).toEqual({ to: "/wallet", label: "Holder wallet", mobileLabel: "Wallet" });
   });
 });

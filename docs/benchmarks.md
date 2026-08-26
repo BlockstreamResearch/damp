@@ -1,4 +1,4 @@
-# AMP v0.1 maximum-shape contract metrics
+# DAMP v0.1 maximum-shape contract metrics
 
 Measured by `maximum_ten_input_ten_output_transfer_uses_recorded_minimal_padding`
 for both an ordinary one-regulated-input transfer and the maximum

@@ -2,12 +2,12 @@ export type AppRole = "holder" | "issuer";
 
 export function roleSwitchNavigation(role: AppRole) {
   return role === "holder"
-    ? { to: "/admin" as const, label: "Issuer console", mobileLabel: "Issuer" }
+    ? { to: "/admin/setup" as const, label: "Issuer console", mobileLabel: "Issuer" }
     : { to: "/wallet" as const, label: "Holder wallet", mobileLabel: "Wallet" };
 }
 
 export function contextualDocumentTitle(title: string) {
-  return `${title} · Simplicity AMP`;
+  return `${title} · DAMP`;
 }
 
 export function appRoleForPath(pathname: string): AppRole | undefined {

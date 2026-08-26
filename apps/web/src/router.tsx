@@ -6,7 +6,7 @@ import {
   createRouter,
   redirect,
 } from "@tanstack/react-router";
-import { AdminDashboard, AdminReissue, AdminSetup } from "./screens/admin";
+import { AdminDashboard, AdminHolders, AdminReissue, AdminReport, AdminSetup } from "./screens/admin";
 import { WalletDashboard, WalletImport, WalletReceive, WalletSend } from "./screens/wallet";
 
 const rootRoute = createRootRoute({ component: Outlet });
@@ -24,9 +24,12 @@ const routes = [
   createRoute({ getParentRoute: () => rootRoute, path: "/wallet/send", component: WalletSend }),
   createRoute({ getParentRoute: () => rootRoute, path: "/wallet/receive", component: WalletReceive }),
   createRoute({ getParentRoute: () => rootRoute, path: "/wallet/import", component: WalletImport }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/admin", component: AdminDashboard }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/admin", beforeLoad: () => { throw redirect({ to: "/admin/setup" }); } }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/admin/blacklist", component: AdminDashboard }),
   createRoute({ getParentRoute: () => rootRoute, path: "/admin/setup", component: AdminSetup }),
   createRoute({ getParentRoute: () => rootRoute, path: "/admin/reissue", component: AdminReissue }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/admin/holders", component: AdminHolders }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/admin/report", component: AdminReport }),
 ];
 
 const routeTree = rootRoute.addChildren([indexRoute, ...routes]);

@@ -3,14 +3,14 @@ import { Buffer } from "buffer";
 import { address as liquidAddress, networks as liquidNetworks, Transaction } from "liquidjs-lib";
 
 import {
-  createReceiveRecord,
+  deriveHolderAddress,
   deriveWalletAddress,
   inspectUtxos,
   markSignerWalletReady,
   signerSessionRevision,
   signerSnapshot,
-  validateReceiveRecord,
-  validateReceiveRecordShape,
+  validateRecipientAddress,
+  type DerivedHolderAddress,
   type DerivedWalletAddress,
   type InspectedUtxo,
   type SignerNetwork,
@@ -20,15 +20,11 @@ import {
   HASH,
   SCRIPT,
   publicManifest,
-  receiveRecordSchema,
   type Deployment,
 } from "./domain";
 import {
   getWalletSyncRecord,
-  listReceiveRecords,
-  putReceiveRecord,
   putWalletSyncRecord,
-  type StoredReceiveRecord,
 } from "./store";
 import { walletDiscoverySource, type WalletDiscoverySource } from "./wallet-source";
 
@@ -408,7 +404,7 @@ export async function discoverWalletSnapshot(input: {
   scope: string;
   source: WalletDiscoverySource;
   previous?: WalletSyncSnapshot;
-  holderRecords?: StoredReceiveRecord[];
+  holderAddresses?: DerivedHolderAddress[];
   gapLimit?: number;
   signal?: AbortSignal;
   request?: typeof fetch;
@@ -466,13 +462,13 @@ export async function discoverWalletSnapshot(input: {
     else scannedThrough.change = scanThrough;
   }
 
-  const holderAddresses = (input.holderRecords ?? []).map(({ record, derivationIndex }): WalletSyncAddress =>
+  const holderAddresses = (input.holderAddresses ?? []).map((holder): WalletSyncAddress =>
     holderAddressSchema.parse({
       source: "holder",
-      derivationIndex,
-      ownerPublicKey: record.ownerPublicKey,
-      confidentialAddress: record.confidentialAddress,
-      scriptPubkey: record.scriptPubkey,
+      derivationIndex: holder.derivationIndex,
+      ownerPublicKey: holder.ownerPublicKey,
+      confidentialAddress: holder.confidentialAddress,
+      scriptPubkey: holder.scriptPubkey,
       hasActivity: false,
     })
   );
@@ -646,7 +642,7 @@ export async function synchronizeDeploymentWallet(
   options: { signal?: AbortSignal; request?: typeof fetch; dependencies?: Partial<WalletDiscoveryDependencies> } = {},
 ) {
   const revision = requireSignerIdentity(profileId, deployment.network);
-  const record = await ensureSignerReceiveRecord(deployment, profileId);
+  const holderAddress = await ensureSignerHolderAddress(deployment, profileId);
   const previous = await loadWalletSyncSnapshot(profileId, deployment.network, deployment.deploymentId);
   const snapshot = await discoverWalletSnapshot({
     profileId,
@@ -654,7 +650,7 @@ export async function synchronizeDeploymentWallet(
     scope: deployment.deploymentId,
     source: walletDiscoverySource(deployment.network),
     previous,
-    holderRecords: [record],
+    holderAddresses: [holderAddress],
     ...options,
   });
   requireSignerIdentity(profileId, deployment.network, revision);
@@ -733,7 +729,12 @@ export type IssuanceFundingPlan = {
   ready: boolean;
   projectedReady: boolean;
   faucetOutputs: number;
+  splitOffer: boolean;
+  splitCandidate?: Pick<WalletSyncUtxo, "txid" | "vout" | "amount">;
 };
+
+export const SPLIT_FUNDING_FEE = 500n;
+export const SPLIT_FUNDING_MINIMUM = 5_000n;
 
 /**
  * Summarizes the exact funding shape required by bootstrap. Issuance consumes
@@ -771,6 +772,12 @@ export function issuanceFundingPlan(input: {
       Math.max(0, requiredOutputs - projectedOutputs),
       projectedBalance < requiredAmount ? 1 : 0,
     );
+  const splitOffer = confirmed.length === 1
+    && pending.length === 0
+    && BigInt(confirmed[0].amount) >= SPLIT_FUNDING_MINIMUM;
+  const splitCandidate = splitOffer
+    ? { txid: confirmed[0].txid, vout: confirmed[0].vout, amount: confirmed[0].amount }
+    : undefined;
 
   return {
     confirmedOutputs: confirmed.length,
@@ -780,6 +787,8 @@ export function issuanceFundingPlan(input: {
     ready,
     projectedReady,
     faucetOutputs,
+    splitOffer,
+    splitCandidate,
   };
 }
 
@@ -789,48 +798,13 @@ export function nextFundingAddress(snapshot: WalletSyncSnapshot | undefined) {
     .sort((left, right) => left.index - right.index)[0];
 }
 
-export function signerReceiveRecord(
-  stored: StoredReceiveRecord[],
-  ownerPublicKey: string,
-  derivationIndex: number,
-) {
-  const matching = stored.find(({ record }) => record.ownerPublicKey === ownerPublicKey);
-  if (matching && matching.derivationIndex !== derivationIndex) {
-    throw new Error("Stored receive record uses the wrong holder derivation.");
-  }
-  return matching;
-}
-
-export async function ensureSignerReceiveRecord(deployment: Deployment, profileId: string) {
+export async function ensureSignerHolderAddress(deployment: Deployment, profileId: string) {
   const revision = requireSignerIdentity(profileId, deployment.network);
-  const stored = await listReceiveRecords(deployment.deploymentId);
-  // Derive the connected signer's deterministic holder identity first. A
-  // deployment may contain public receive records for several mnemonics, but a
-  // wallet sync must scan only the holder script controlled by this signer.
-  const created = await createReceiveRecord(
-    publicManifest(deployment),
-    deployment.deploymentId,
-    deployment.asset.ticker.toLowerCase(),
-  );
-  const derived = receiveRecordSchema.parse(created.record);
-  await validateReceiveRecordShape(derived);
-  await validateReceiveRecord(publicManifest(deployment), derived);
-
-  const matching = signerReceiveRecord(stored, derived.ownerPublicKey, created.derivationIndex);
-  if (!matching) {
-    await putReceiveRecord(derived, created.derivationIndex);
-    requireSignerIdentity(profileId, deployment.network, revision);
-    return { record: derived, derivationIndex: created.derivationIndex };
-  }
-
-  const record = receiveRecordSchema.parse(matching.record);
-  if (record.deploymentId !== deployment.deploymentId) {
-    throw new Error("Stored receive record belongs to another deployment.");
-  }
-  await validateReceiveRecordShape(record);
-  await validateReceiveRecord(publicManifest(deployment), record);
+  const derived = await deriveHolderAddress(publicManifest(deployment));
+  const owner = await validateRecipientAddress(publicManifest(deployment), derived.confidentialAddress);
+  if (owner !== derived.ownerPublicKey) throw new Error("Derived holder address owner mismatch.");
   requireSignerIdentity(profileId, deployment.network, revision);
-  return { record, derivationIndex: matching.derivationIndex };
+  return derived;
 }
 
 function requireSignerIdentity(

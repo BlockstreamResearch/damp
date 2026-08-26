@@ -1,7 +1,6 @@
 use amp_core::policy::TreeDepth;
 use amp_core::registry::{
-    AssetMetadata, DeploymentManifestV1, DeploymentNetwork, PolicySnapshotV1, ReceiveRecordV1,
-    SupplyMode,
+    AssetMetadata, DeploymentManifestV1, DeploymentNetwork, PolicySnapshotV1, SupplyMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -17,13 +16,6 @@ pub enum SignerNetwork {
 impl SignerNetwork {
     pub const fn is_mainnet(self) -> bool {
         false
-    }
-
-    pub const fn bip322_name(self) -> &'static str {
-        match self {
-            Self::LiquidTestnet => "testnet",
-            Self::ElementsRegtest => "regtest",
-        }
     }
 
     pub const fn address_params(self) -> &'static elements::AddressParams {
@@ -52,27 +44,14 @@ pub struct PreparedPolicy {
     pub verifier_script_pubkey: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CreateReceiveRecordRequest {
-    pub alias: String,
-    pub deployment: DeploymentManifestV1,
-    pub deployment_id: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreatedReceiveRecord {
+pub struct DerivedHolderAddress {
     pub sdk: &'static str,
     pub derivation_index: u32,
-    pub record: ReceiveRecordV1,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ValidateReceiveRecordRequest {
-    pub deployment: DeploymentManifestV1,
-    pub record: ReceiveRecordV1,
+    pub owner_public_key: String,
+    pub script_pubkey: String,
+    pub confidential_address: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -155,7 +134,7 @@ pub struct TransferRequest {
     pub verifier_utxo: SpendableUtxo,
     pub regulated_utxos: Vec<SpendableUtxo>,
     pub fee_utxos: Vec<SpendableUtxo>,
-    pub recipient: ReceiveRecordV1,
+    pub recipient_address: String,
     pub amount: String,
     pub fee: String,
 }
@@ -210,7 +189,6 @@ pub struct BootstrapRequest {
     pub policy_utxos: Vec<SpendableUtxo>,
     pub fee: String,
     pub required_confirmations: u32,
-    pub receive_alias: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -225,10 +203,43 @@ pub struct BootstrapResult {
     pub deployment: DeploymentManifestV1,
     pub deployment_id: String,
     pub initial_policy: PolicySnapshotV1,
-    pub initial_receive_record: ReceiveRecordV1,
+    pub initial_holder_address: DerivedHolderAddress,
     pub issuer_derivation_index: u32,
     pub holder_derivation_index: u32,
     pub required_confirmations: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SplitFundingRequest {
+    pub network: DeploymentNetwork,
+    pub policy_asset: String,
+    pub source_utxos: Vec<SpendableUtxo>,
+    pub fee: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitFundingOutput {
+    pub vout: u32,
+    pub amount: String,
+    pub confidential_address: String,
+    pub wallet_key: WalletKeyLocator,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitFundingResult {
+    pub sdk: &'static str,
+    pub operation: &'static str,
+    pub pset: String,
+    pub transaction: String,
+    pub txid: String,
+    pub source_txid: String,
+    pub source_vout: u32,
+    pub source_amount: String,
+    pub fee: String,
+    pub outputs: Vec<SplitFundingOutput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -239,7 +250,7 @@ pub struct ReissuanceRequest {
     pub verifier_utxo: SpendableUtxo,
     pub token_utxo: SpendableUtxo,
     pub fee_utxos: Vec<SpendableUtxo>,
-    pub recipient: ReceiveRecordV1,
+    pub recipient_address: String,
     pub amount: String,
     pub fee: String,
     pub issuer_derivation_index: u32,

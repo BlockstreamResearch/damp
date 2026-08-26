@@ -38,7 +38,7 @@ export function BlacklistTable({
                 <td data-label="State"><span className={`pill ${removed ? "warn" : active ? "danger" : "warn"}`}>{removed ? "Removal drafted" : active ? "Blacklisted — cannot be spent" : "Addition drafted"}</span></td>
                 <td data-label="Actions">{removed
                   ? <button aria-label={`Undo removal of outpoint ${shortHash(entry.txid, 8, 6)}:${entry.vout}`} className="icon-button" disabled={disabled} type="button" onClick={() => onUndoRemoval(entry)}><RotateCcw size={15} /></button>
-                  : <button aria-label={`Remove outpoint ${shortHash(entry.txid, 8, 6)}:${entry.vout}`} className="icon-button" disabled={disabled} type="button" onClick={() => onRemove(entry)}><Trash2 size={15} /></button>}
+                  : <button aria-label={`Draft removal of outpoint ${shortHash(entry.txid, 8, 6)}:${entry.vout}`} className="icon-button" disabled={disabled} type="button" onClick={() => onRemove(entry)}><Trash2 size={15} /></button>}
                 </td>
               </tr>
             );

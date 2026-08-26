@@ -55,13 +55,7 @@ pub fn reissue(
         prepared.verifier_script_pubkey == request.current_policy.verifier_script_pubkey,
         "policy script mismatch"
     );
-    receive::validate_receive_record(
-        network,
-        crate::model::ValidateReceiveRecordRequest {
-            deployment: request.deployment.clone(),
-            record: request.recipient.clone(),
-        },
-    )?;
+    receive::validate_recipient_address(network, &request.deployment, &request.recipient_address)?;
     let amount = parse_amount(&request.amount, "reissuance amount")?;
     let fee = parse_amount(&request.fee, "fee")?;
     let verifier_asset = AssetId::from_str(&request.deployment.verifier_asset)?;
@@ -122,11 +116,7 @@ pub fn reissue(
         xonly_from_xprv(&issuer_xprv).to_string() == request.deployment.issuer_public_key,
         "issuer derivation does not match deployment"
     );
-    let recipient = Address::from_str(&request.recipient.confidential_address)?;
-    anyhow::ensure!(
-        recipient.blinding_pubkey.is_some(),
-        "recipient is not confidential"
-    );
+    let recipient = Address::from_str(&request.recipient_address)?;
     let token_locator = token.wallet_key.as_ref().expect("validated");
     let token_address = wallet_address(signer, &request.deployment, token_locator)?;
 
@@ -160,23 +150,12 @@ pub fn reissue(
         None,
     ));
     let mut value_only_outputs = Vec::new();
-    if amount > 1 {
-        for value in [amount - 1, 1] {
-            pset.add_output(Output::new_explicit(
-                recipient.script_pubkey(),
-                value,
-                regulated_asset,
-                None,
-            ));
-        }
-    } else {
-        pset.add_output(Output::new_explicit(
-            recipient.script_pubkey(),
-            1,
-            regulated_asset,
-            None,
-        ));
-    }
+    pset.add_output(Output::new_explicit(
+        recipient.script_pubkey(),
+        amount,
+        regulated_asset,
+        None,
+    ));
     let token_output = pset.outputs().len();
     pset.add_output(Output::new_explicit(
         token_address.script_pubkey(),
@@ -278,7 +257,7 @@ pub fn reissue(
             output_count,
             current_depth: policy.depth,
             successor_depth: None,
-            recipients: vec![request.recipient.alias],
+            recipients: vec![request.recipient_address],
         },
     )
 }

@@ -1,15 +1,13 @@
 import { openDB } from "idb";
 
-import type { Deployment, PolicySnapshot, ReceiveRecord } from "./domain";
+import type { Deployment, PolicySnapshot } from "./domain";
 
-export type StoredReceiveRecord = { record: ReceiveRecord; derivationIndex: number };
-
-const database = openDB("simplicity-amp-v1", 4, {
+const database = openDB("simplicity-amp-v1", 5, {
   upgrade(db) {
     if (!db.objectStoreNames.contains("deployments")) db.createObjectStore("deployments", { keyPath: "deploymentId" });
     if (!db.objectStoreNames.contains("settings")) db.createObjectStore("settings");
     if (!db.objectStoreNames.contains("snapshots")) db.createObjectStore("snapshots");
-    if (!db.objectStoreNames.contains("receiveRecords")) db.createObjectStore("receiveRecords");
+    if (db.objectStoreNames.contains("receiveRecords")) db.deleteObjectStore("receiveRecords");
     if (!db.objectStoreNames.contains("drafts")) db.createObjectStore("drafts");
     if (!db.objectStoreNames.contains("caches")) db.createObjectStore("caches");
     if (!db.objectStoreNames.contains("walletSync")) db.createObjectStore("walletSync");
@@ -45,36 +43,24 @@ export async function getActiveDeployment(): Promise<Deployment | null> {
   return deploymentId ? (await getDeployment(deploymentId)) ?? null : null;
 }
 
-export function snapshotKey(deploymentId: string, verifierScriptHash: string) {
-  return `${deploymentId}:${verifierScriptHash}`;
+export function snapshotKey(deploymentId: string, verifierScriptHash: string, registryRepository?: string) {
+  return `${deploymentId}:${registryRepository ?? "official"}:${verifierScriptHash}`;
 }
 
 export async function getPolicySnapshot(
   deploymentId: string,
   verifierScriptHash: string,
+  registryRepository?: string,
 ): Promise<PolicySnapshot | undefined> {
-  return (await database).get("snapshots", snapshotKey(deploymentId, verifierScriptHash));
+  return (await database).get("snapshots", snapshotKey(deploymentId, verifierScriptHash, registryRepository));
 }
 
-export async function putPolicySnapshot(snapshot: PolicySnapshot, verifierScriptHash: string) {
+export async function putPolicySnapshot(snapshot: PolicySnapshot, verifierScriptHash: string, registryRepository?: string) {
   return (await database).put(
     "snapshots",
     snapshot,
-    snapshotKey(snapshot.deploymentId, verifierScriptHash),
+    snapshotKey(snapshot.deploymentId, verifierScriptHash, registryRepository),
   );
-}
-
-export async function putReceiveRecord(record: ReceiveRecord, derivationIndex: number) {
-  return (await database).put(
-    "receiveRecords",
-    { record, derivationIndex } satisfies StoredReceiveRecord,
-    `${record.deploymentId}:${record.ownerPublicKey}`,
-  );
-}
-
-export async function listReceiveRecords(deploymentId: string): Promise<StoredReceiveRecord[]> {
-  const records = await (await database).getAll("receiveRecords") as StoredReceiveRecord[];
-  return records.filter(({ record }) => record.deploymentId === deploymentId);
 }
 
 export async function getDraft<T>(deploymentId: string, name: string): Promise<T | undefined> {

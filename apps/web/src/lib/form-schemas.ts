@@ -14,7 +14,7 @@ export const reissueSchema = z.object({
 });
 
 export const sendSchema = z.object({
-  recipient: z.string().trim().min(1, "Paste a signed AMP ReceiveRecord JSON or HTTPS URL"),
+  recipient: z.string().trim().min(1, "Paste the recipient's confidential DAMP address"),
   amount: z.string().trim()
     .min(1, "Enter an amount")
     .regex(/^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)$/, "Enter an amount greater than zero without signs or exponent notation"),
@@ -23,3 +23,7 @@ export const sendSchema = z.object({
 export type SetupForm = z.infer<typeof setupSchema>;
 export type ReissueForm = z.infer<typeof reissueSchema>;
 export type SendForm = z.infer<typeof sendSchema>;
+
+export function setupFormDefaults(network: SetupForm["network"] | undefined): SetupForm {
+  return { name: "", ticker: "", precision: 8, supply: "", supplyMode: "fixed", network: network ?? "liquid-testnet" };
+}

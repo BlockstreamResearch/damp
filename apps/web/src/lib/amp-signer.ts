@@ -6,7 +6,6 @@ import type {
   BlacklistEntry,
   DeploymentManifest,
   PolicySnapshot,
-  ReceiveRecord,
   TreeDepth,
 } from "./domain";
 import {
@@ -78,16 +77,36 @@ export type BootstrapResult = {
   deployment: DeploymentManifest;
   deploymentId: string;
   initialPolicy: PolicySnapshot;
-  initialReceiveRecord: ReceiveRecord;
+  initialHolderAddress: DerivedHolderAddress;
   issuerDerivationIndex: number;
   holderDerivationIndex: number;
   requiredConfirmations: number;
 };
 
-export type CreatedReceiveRecord = {
+export type SplitFundingResult = {
+  sdk: string;
+  operation: "funding-split";
+  pset: string;
+  transaction: string;
+  txid: string;
+  sourceTxid: string;
+  sourceVout: number;
+  sourceAmount: string;
+  fee: string;
+  outputs: Array<{
+    vout: number;
+    amount: string;
+    confidentialAddress: string;
+    walletKey: WalletKeyLocator;
+  }>;
+};
+
+export type DerivedHolderAddress = {
   sdk: string;
   derivationIndex: number;
-  record: ReceiveRecord;
+  ownerPublicKey: string;
+  scriptPubkey: string;
+  confidentialAddress: string;
 };
 
 export type DerivedWalletAddress = {
@@ -311,9 +330,9 @@ export async function generateMnemonic() {
 }
 
 export function requireSigner(network?: SignerNetwork) {
-  if (!signer) throw new Error("Connect the AMP signer first.");
+  if (!signer) throw new Error("Connect the DAMP signer first.");
   if (network && state.network !== network) {
-    throw new Error(`Reconnect the AMP signer for ${network}.`);
+    throw new Error(`Reconnect the DAMP signer for ${network}.`);
   }
   return signer;
 }
@@ -352,23 +371,12 @@ export async function inspectUtxos(utxos: SpendableUtxo[]) {
   return requireSigner().inspectUtxos(utxos) as InspectedUtxo[];
 }
 
-export async function createReceiveRecord(
-  deployment: DeploymentManifest,
-  deploymentId: string,
-  alias: string,
-) {
-  return requireSigner(deployment.network).createReceiveRecord({
-    deployment,
-    deploymentId,
-    alias,
-  }) as CreatedReceiveRecord;
+export async function deriveHolderAddress(deployment: DeploymentManifest) {
+  return requireSigner(deployment.network).deriveHolderAddress(deployment) as DerivedHolderAddress;
 }
 
-export async function validateReceiveRecord(
-  deployment: DeploymentManifest,
-  record: ReceiveRecord,
-) {
-  requireSigner(deployment.network).validateReceiveRecord({ deployment, record });
+export async function validateRecipientAddress(deployment: DeploymentManifest, address: string) {
+  return requireSigner(deployment.network).validateRecipientAddress(deployment, address) as string;
 }
 
 export async function bootstrap(input: {
@@ -381,9 +389,17 @@ export async function bootstrap(input: {
   policyUtxos: SpendableUtxo[];
   fee: string;
   requiredConfirmations: number;
-  receiveAlias: string;
 }) {
   return requireReadySigner(input.network).bootstrap(input) as BootstrapResult;
+}
+
+export async function splitFunding(input: {
+  network: SignerNetwork;
+  policyAsset: string;
+  sourceUtxos: SpendableUtxo[];
+  fee: string;
+}) {
+  return requireReadySigner(input.network).splitFunding(input) as SplitFundingResult;
 }
 
 export async function signTransfer(input: {
@@ -392,7 +408,7 @@ export async function signTransfer(input: {
   verifierUtxo: SpendableUtxo;
   regulatedUtxos: SpendableUtxo[];
   feeUtxos: SpendableUtxo[];
-  recipient: ReceiveRecord;
+  recipientAddress: string;
   amount: string;
   fee: string;
 }) {
@@ -417,7 +433,7 @@ export async function reissue(input: {
   verifierUtxo: SpendableUtxo;
   tokenUtxo: SpendableUtxo;
   feeUtxos: SpendableUtxo[];
-  recipient: ReceiveRecord;
+  recipientAddress: string;
   amount: string;
   fee: string;
   issuerDerivationIndex: number;
@@ -455,8 +471,4 @@ export async function validateDeployment(deployment: DeploymentManifest) {
 
 export async function validatePolicySnapshot(snapshot: PolicySnapshot) {
   return (await loadModule()).validatePolicySnapshot(snapshot);
-}
-
-export async function validateReceiveRecordShape(record: ReceiveRecord) {
-  return (await loadModule()).validateReceiveRecordShape(record);
 }

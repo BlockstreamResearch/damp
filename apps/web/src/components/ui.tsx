@@ -48,16 +48,12 @@ import { DeploymentControl } from "./deployment-control";
 import { CopyableAddress } from "./copyable-address";
 import { SignerProfilePicker } from "./signer-profile-picker";
 
-export function Brand({ tone, network }: { tone: "holder" | "issuer"; network: string }) {
+export function Brand({ tone: _tone, network }: { tone: "holder" | "issuer"; network: string }) {
   return (
     <div className="brand">
-      <span className={`brand-mark ${tone}`} aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </span>
       <span className="brand-copy">
-        <strong>Simplicity AMP</strong>
+        <strong>DAMP</strong>
+        <span className="sr-only">Decentralized Asset Management Protocol</span>
         <small>{network}</small>
       </span>
     </div>
@@ -72,10 +68,12 @@ const holderNav: NavItem[] = [
   { to: "/wallet/receive", label: "Receive", icon: Radio },
 ];
 
-const issuerNav: NavItem[] = [
-  { to: "/admin", label: "Blacklist", icon: ListFilter },
+const issuerNavigation: NavItem[] = [
   { to: "/admin/setup", label: "Setup", icon: Settings2 },
+  { to: "/admin/blacklist", label: "Blacklist", icon: ListFilter },
   { to: "/admin/reissue", label: "Reissue", icon: Repeat2 },
+  { to: "/admin/holders", label: "Holder", icon: WalletCards },
+  { to: "/admin/report", label: "Report", icon: FileKey },
 ];
 
 export function AppShell({
@@ -96,7 +94,7 @@ export function AppShell({
   const signer = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
   const currentNetwork = deployment.data?.network ?? signer.network;
   const currentNetworkLabel = currentNetwork ? networkLabel(currentNetwork) : "Network not selected";
-  const nav = role === "holder" ? holderNav : issuerNav;
+  const nav = role === "holder" ? holderNav : issuerNavigation;
   const roleSwitch = roleSwitchNavigation(role);
   const activeTarget = activeNavigationTarget(path, nav);
   useEffect(() => {
@@ -124,17 +122,8 @@ export function AppShell({
               </Link>
             );
           })}
-          <Link
-            to={roleSwitch.to}
-            className="mobile-role-switch"
-            title={roleSwitch.label}
-          >
-            {role === "holder" ? <ShieldCheck size={17} strokeWidth={1.8} /> : <WalletCards size={17} strokeWidth={1.8} />}
-            {roleSwitch.mobileLabel}
-          </Link>
         </nav>
         <div className="rail-bottom">
-          <DeploymentSelector />
           <span className="network-status" aria-label={`${currentNetworkLabel} network`}>
             <span className="network-dot" aria-hidden="true" />
             <span className="network-label">{currentNetworkLabel}</span>
@@ -142,13 +131,20 @@ export function AppShell({
           <a href="https://github.com/BlockstreamResearch/damp" target="_blank" rel="noreferrer">
             <BookOpen size={15} /> Protocol source
           </a>
-          <Link to={roleSwitch.to} className="switch-role">
-            {role === "holder" ? <ShieldCheck size={15} /> : <WalletCards size={15} />}
-            {roleSwitch.label}
-          </Link>
         </div>
       </aside>
       <main>
+        <div className="poc-warning" role="note">
+          <strong>Experimental proof of concept.</strong> Not production-ready. Do not use with real funds or assets; use is at your own risk.
+        </div>
+        <div className="workspace-bar" aria-label="Current workspace">
+          <Link to={roleSwitch.to} className="workspace-mode">
+            {role === "holder" ? <WalletCards size={16} /> : <ShieldCheck size={16} />}
+            <span><small>Current mode</small><strong>{role === "holder" ? "Holder Wallet" : "Issuer Console"}</strong></span>
+            <span className="workspace-switch-label">Switch</span>
+          </Link>
+          <div className="workspace-deployment"><small>Current deployment</small><DeploymentSelector /></div>
+        </div>
         <header className="page-header">
           <div>
             <span className="eyebrow">{eyebrow}</span>
@@ -156,7 +152,7 @@ export function AppShell({
           </div>
           <div className="header-action">{action ?? <WalletStatus role={role} />}</div>
         </header>
-        <div className="page-body"><div className="responsive-deployment-selector"><DeploymentSelector /></div>{children}</div>
+        <div className="page-body">{children}</div>
       </main>
     </div>
   );
@@ -219,7 +215,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
     const lbtc = balances.find((balance) => balance.assetId === feeAsset);
     const other = balances.filter((balance) => balance.assetId !== feeAsset);
     const networkError = selected && signer.network !== selected.network
-      ? `Reconnect the AMP signer for ${networkLabel(selected.network)}.`
+      ? `Reconnect the DAMP signer for ${networkLabel(selected.network)}.`
       : undefined;
     const syncError = networkError
       ?? feeAssetError
@@ -268,7 +264,19 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
         .map((utxo) => ({
           outpoint: `${utxo.txid}:${utxo.vout}`,
           status: utxo.status,
-          amount: utxo.assetId === feeAsset ? `${formatUnits(utxo.amount, 8)} L-BTC` : `${utxo.amount} units`,
+          asset: utxo.assetId === feeAsset
+            ? "L-BTC"
+            : utxo.assetId === selected?.regulatedAsset
+              ? selected.asset.ticker
+              : utxo.assetId === selected?.reissuanceToken
+                ? "TOKEN"
+                : shortHash(utxo.assetId, 6, 4),
+          assetId: utxo.assetId,
+          amount: utxo.assetId === feeAsset
+            ? `${formatUnits(utxo.amount, 8)} L-BTC`
+            : utxo.assetId === selected?.regulatedAsset
+              ? `${formatUnits(utxo.amount, selected.asset.precision)} ${selected.asset.ticker}`
+              : `${utxo.amount} base units`,
         })),
       receiveAddress: funding && signer.profileId && signer.network
         ? {
@@ -462,18 +470,19 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
   return (
     <div className="wallet-popover-anchor" ref={containerRef}>
       <button
+        id="damp-signer-trigger"
         ref={triggerRef}
         className="wallet-status"
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="amp-signer-wallet-popover"
-        aria-label={signer.connected ? `AMP Signer SDK wallet ${signer.fingerprint}` : "Open AMP Signer SDK connection"}
+        aria-label={signer.connected ? `DAMP Signer SDK wallet ${signer.fingerprint}` : "Open DAMP Signer SDK connection"}
         onClick={() => setOpen((value) => !value)}
       >
         <span className={signer.connected ? "status-light" : "status-light muted"} />
         <span>
-          <small>AMP Signer SDK</small>
+          <small>DAMP Signer SDK</small>
           <strong>{signer.connected ? profiles.find((profile) => profile.id === signer.profileId)?.label ?? signer.fingerprint : "Connect signer"}</strong>
         </span>
       </button>
@@ -524,7 +533,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
           onConnect={(input) => void connectFromPopover(input)}
           onRefresh={() => {
             if (signerMatchesDeployment) void wallet.refetch();
-            else setConnectionNotice({ tone: "error", message: `Reconnect the AMP signer for ${networkLabel(deployment.data!.network)}.` });
+            else setConnectionNotice({ tone: "error", message: `Reconnect the DAMP signer for ${networkLabel(deployment.data!.network)}.` });
           }}
           onAddressCopyNotice={setConnectionNotice}
           onFaucetOpened={() => setConnectionNotice({
@@ -558,7 +567,7 @@ export type WalletPopoverModel = {
   lbtcPending: string;
   otherAssets: Array<{ assetId: string; label: string; amount: string; pending: string }>;
   utxoCount: number;
-  utxos: Array<{ outpoint: string; status: "confirmed" | "unconfirmed" | "spent" | "orphaned"; amount: string }>;
+  utxos: Array<{ outpoint: string; status: "confirmed" | "unconfirmed" | "spent" | "orphaned"; asset: string; assetId: string; amount: string }>;
   receiveAddress?: { address: string; index: number; resetKey: string };
   faucetUrl?: string;
 };
@@ -640,8 +649,8 @@ export function WalletPopoverContent({
 
   if (!model) {
     return (
-      <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="AMP signer wallet" tabIndex={-1} ref={panelRef}>
-        <span className="overline">AMP Signer SDK</span>
+      <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="DAMP signer wallet" tabIndex={-1} ref={panelRef}>
+        <span className="overline">DAMP Signer SDK</span>
         <h2>No signer connected</h2>
         <p>Choose a saved disposable debug profile, or add another test-only recovery phrase.</p>
         <form className="wallet-connect-form" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}>
@@ -679,10 +688,10 @@ export function WalletPopoverContent({
   }
 
   return (
-    <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="AMP signer wallet" tabIndex={-1} ref={panelRef}>
+    <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="DAMP signer wallet" tabIndex={-1} ref={panelRef}>
       <div className="wallet-popover-heading">
         <div>
-          <span className="overline">AMP Signer SDK</span>
+          <span className="overline">DAMP Signer SDK</span>
           <h2>Wallet status</h2>
         </div>
         <span className={`wallet-sync-state ${model.syncState}`}><i />{stateLabel}</span>
@@ -726,18 +735,18 @@ export function WalletPopoverContent({
             </div>
           )}
           {model.receiveAddress && <CopyableAddress address={model.receiveAddress.address} resetKey={model.receiveAddress.resetKey} accessibleLabel={`Copy external receive address ${model.receiveAddress.index}`} display={`External #${model.receiveAddress.index} · ${shortHash(model.receiveAddress.address, 11, 7)}`} className="wallet-receive-indicator" onNotice={onAddressCopyNotice} />}
-          {model.utxos.length > 0 && <details className="wallet-popover-utxos"><summary>Current outputs ({model.utxoCount})</summary><div>{model.utxos.map((utxo) => <p key={utxo.outpoint}><code title={utxo.outpoint}>{shortHash(utxo.outpoint, 9, 5)}</code><span>{utxo.status}</span><strong>{utxo.amount}</strong></p>)}</div></details>}
-          {!model.deploymentSelected && <p>Base wallet synchronized. Select or create a deployment to discover deployment-bound assets.</p>}
+          {model.utxos.length > 0 && <details className="wallet-popover-utxos"><summary>Current outputs ({model.utxoCount})</summary><dl>{model.utxos.map((utxo) => <div key={utxo.outpoint}><dt><code title={utxo.outpoint}>{shortHash(utxo.outpoint, 9, 5)}</code></dt><dd><span><small>State</small>{utxo.status}</span><span title={utxo.assetId}><small>Asset</small>{utxo.asset}</span><strong><small>Amount</small>{utxo.amount}</strong></dd></div>)}</dl></details>}
+          {!model.deploymentSelected && model.hasSnapshot !== false && (model.syncState === "synced" || model.syncState === "stale") && <p>{model.syncState === "synced" ? "Base wallet synchronized." : "Showing the last synchronized base wallet."} Select or create a deployment to discover deployment-bound assets.</p>}
       </>
       {model.syncError && <p className="wallet-popover-error" role="status">{model.syncError}</p>}
-      {model.faucetUrl && <div className="wallet-popover-faucet"><p>The active profile's public testnet receive address will be sent to liquidtestnet.com. Opening the faucet does not confirm funding.</p><a className="button secondary wide" href={model.faucetUrl} target="_blank" rel="noreferrer" onClick={onFaucetOpened}>Request test funds <ExternalLink size={14} /></a></div>}
+      {model.faucetUrl && <div className="wallet-popover-faucet"><p>The active profile's public testnet receive address will be sent to the external faucet. Opening it does not confirm funding.</p><a className="button secondary wide" href={model.faucetUrl} target="_blank" rel="noreferrer" onClick={onFaucetOpened}>Open testnet faucet <ExternalLink size={14} /></a></div>}
       {connectionNotice && <p className={`wallet-popover-status ${connectionNotice.tone}`} role="status" aria-live="polite">{connectionNotice.message}</p>}
       <div className="wallet-popover-actions">
         <button className="button secondary" type="button" onClick={onRefresh} disabled={model.syncState === "loading" || model.syncState === "syncing"}>
           <RefreshCw size={14} /> Refresh
         </button>
-        <button className="button secondary" type="button" onClick={onDisconnect}>
-          <LogOut size={14} /> Disconnect
+        <button className="button secondary" type="button" onClick={onDisconnect} title="Disconnects this session; the test-only recovery phrase remains stored in this browser profile.">
+          <LogOut size={14} /> Disconnect session
         </button>
       </div>
     </div>
@@ -793,7 +802,7 @@ export function SafetyNote({ title, children }: { title: string; children: React
   );
 }
 
-export function BackLink({ to, children }: { to: "/wallet" | "/admin"; children: ReactNode }) {
+export function BackLink({ to, children }: { to: "/wallet" | "/admin/blacklist"; children: ReactNode }) {
   return (
     <Link to={to} activeOptions={{ exact: true }} className="back-link">
       <ArrowLeft size={15} /> {children}

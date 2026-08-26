@@ -80,6 +80,21 @@ describe("deployment operation gating", () => {
     expect(select).not.toHaveBeenCalled();
   });
 
+  it("reconciles custom-registry deployments against their pinned source", async () => {
+    const custom = localDeploymentSchema.parse({ ...base, publication: "published", registryRepository: "example/registry" });
+    const customCatalog = vi.fn(() => Promise.resolve([{ deploymentId: custom.deploymentId, manifest: publicManifest(custom) }]));
+    const state = await loadDeploymentState({
+      catalog: () => Promise.resolve([]),
+      customCatalog,
+      local: () => Promise.resolve([custom]),
+      activeId: () => Promise.resolve(custom.deploymentId),
+      select: vi.fn(() => Promise.resolve()),
+      validate: () => Promise.resolve(custom.deploymentId),
+    });
+    expect(customCatalog).toHaveBeenCalledWith("example/registry");
+    expect(state.active?.registryRepository).toBe("example/registry");
+  });
+
   it("retains unpublished issuer work without treating stale published records as supported", async () => {
     const canonical = localDeploymentSchema.parse({ ...base, publication: "published" });
     const pending = localDeploymentSchema.parse({

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://blockstreamresearch.github.io/simplicity-amp/schemas/deployment.schema.json",
-  "title": "Simplicity AMP v0.1 deployment manifest",
+  "title": "DAMP v0.1 deployment manifest",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "protocol", "network", "policyAsset", "regulatedAsset", "verifierAsset", "verifierAssetAmount", "issuerPublicKey", "deploymentSalt", "genesisAnchor", "asset", "issuedSupply", "supplyMode", "reissuanceToken", "reissuanceEntropy", "userProgramHash", "governanceProgramHash", "contractBundleHash"],

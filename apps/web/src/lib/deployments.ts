@@ -20,6 +20,7 @@ export type DeploymentState = {
 
 export type DeploymentStateDependencies = {
   catalog: () => Promise<CanonicalDeployment[]>;
+  customCatalog: (repository: string) => Promise<CanonicalDeployment[]>;
   local: () => Promise<Deployment[]>;
   activeId: () => Promise<string | null>;
   select: (deploymentId: string) => Promise<void>;
@@ -28,6 +29,7 @@ export type DeploymentStateDependencies = {
 
 const defaultDependencies: DeploymentStateDependencies = {
   catalog: fetchCanonicalDeploymentCatalog,
+  customCatalog: (repository) => fetchCanonicalDeploymentCatalog(fetch, repository),
   local: listDeployments,
   activeId: getActiveDeploymentId,
   select: setActiveDeploymentId,
@@ -49,6 +51,18 @@ export async function loadDeploymentState(
     deps.local(),
     deps.activeId(),
   ]);
+  const customCatalogs = new Map<string, Map<string, CanonicalDeployment>>();
+  for (const repository of [...new Set(local.flatMap((deployment) => deployment.registryRepository ? [deployment.registryRepository] : []))].sort()) {
+    const entries = await deps.customCatalog(repository);
+    const byId = new Map<string, CanonicalDeployment>();
+    for (const entry of entries) {
+      const derivedId = await deps.validate(entry.manifest);
+      if (derivedId !== entry.deploymentId) throw new Error(`Custom registry filename does not match manifest ${entry.deploymentId}.`);
+      if (byId.has(entry.deploymentId)) throw new Error("Custom registry contains a duplicate deployment ID.");
+      byId.set(entry.deploymentId, entry);
+    }
+    customCatalogs.set(repository, byId);
+  }
   const canonical = new Map<string, CanonicalDeployment>();
   for (const entry of catalog) {
     const derivedId = await deps.validate(entry.manifest);
@@ -61,6 +75,11 @@ export async function loadDeploymentState(
 
   const deployments = local.filter((deployment) => {
     if (deployment.publication !== "published") return true;
+    if (deployment.registryRepository) {
+      const entry = customCatalogs.get(deployment.registryRepository)?.get(deployment.deploymentId);
+      return entry !== undefined
+        && canonicalRegistryContent(publicManifest(deployment)) === canonicalRegistryContent(entry.manifest);
+    }
     const entry = canonical.get(deployment.deploymentId);
     return entry !== undefined
       && canonicalRegistryContent(publicManifest(deployment)) === canonicalRegistryContent(entry.manifest);

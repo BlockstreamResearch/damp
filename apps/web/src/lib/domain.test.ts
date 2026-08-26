@@ -4,7 +4,6 @@ import {
   blacklistEntrySchema,
   deploymentManifestSchema,
   parseUnits,
-  receiveRecordSchema,
   smallestTreeDepth,
   userFacingError,
 } from "./domain";
@@ -65,21 +64,6 @@ describe("registry schemas", () => {
   it("parses decimal units without unsafe number conversion", () => {
     expect(parseUnits("1.25", 8)).toBe(125_000_000n);
     expect(() => parseUnits("1.000000001", 8)).toThrow();
-  });
-
-  it("rejects receive records without a compressed blinding key", () => {
-    expect(() => receiveRecordSchema.parse({
-      schema: "simplicity-amp-registry-v1",
-      protocol: "simplicity-amp/v0.1",
-      deploymentId: hash,
-      alias: "holder",
-      ownerPublicKey: xonly,
-      scriptPubkey: `5120${xonly}`,
-      confidentialAddress: "tlq1" + "q".repeat(60),
-      blindingPublicKey: xonly,
-      proofAddress: "tex1" + "q".repeat(60),
-      bip322Signature: "proof",
-    })).toThrow();
   });
 
   it("turns strict schema failures into concise field-specific feedback", () => {

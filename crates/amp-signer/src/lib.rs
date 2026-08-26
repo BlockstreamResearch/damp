@@ -10,6 +10,7 @@ mod policy_update;
 mod protocol;
 mod receive;
 mod reissuance;
+mod split;
 mod transaction;
 mod transfer;
 
@@ -17,9 +18,7 @@ const CONTRACT_BUNDLE_HASH: &str =
     "00a50b7658d5914170286b75b95200687b7773c7082c02e3da1dd20012401b74";
 
 use amp_core::policy::{PolicySet, TreeDepth, outpoint_key};
-use amp_core::registry::{
-    BlacklistEntryV1, DeploymentManifestV1, PolicySnapshotV1, ReceiveRecordV1,
-};
+use amp_core::registry::{BlacklistEntryV1, DeploymentManifestV1, PolicySnapshotV1};
 use lwk_signer::SwSigner;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -78,19 +77,27 @@ impl AmpSigner {
         to_js_value(&transaction::inspect_utxos(&self.inner, &utxos).map_err(js_error)?)
     }
 
-    #[wasm_bindgen(js_name = createReceiveRecord)]
-    pub fn create_receive_record_js(&self, value: JsValue) -> Result<JsValue, JsError> {
-        let request: CreateReceiveRecordRequest = serde_wasm_bindgen::from_value(value)?;
+    #[wasm_bindgen(js_name = deriveHolderAddress)]
+    pub fn derive_holder_address_js(&self, value: JsValue) -> Result<JsValue, JsError> {
+        let deployment: DeploymentManifestV1 = serde_wasm_bindgen::from_value(value)?;
         to_js_value(
-            &receive::create_receive_record(&self.inner, self.network, request)
+            &receive::derive_holder_address(&self.inner, self.network, deployment)
                 .map_err(js_error)?,
         )
     }
 
-    #[wasm_bindgen(js_name = validateReceiveRecord)]
-    pub fn validate_receive_record_js(&self, value: JsValue) -> Result<(), JsError> {
-        let request: ValidateReceiveRecordRequest = serde_wasm_bindgen::from_value(value)?;
-        receive::validate_receive_record(self.network, request).map_err(js_error)
+    #[wasm_bindgen(js_name = validateRecipientAddress)]
+    pub fn validate_recipient_address_js(
+        &self,
+        deployment: JsValue,
+        address: &str,
+    ) -> Result<String, JsError> {
+        let deployment: DeploymentManifestV1 = serde_wasm_bindgen::from_value(deployment)?;
+        Ok(
+            receive::validate_recipient_address(self.network, &deployment, address)
+                .map_err(js_error)?
+                .to_string(),
+        )
     }
 
     #[wasm_bindgen(js_name = signTransfer)]
@@ -112,6 +119,12 @@ impl AmpSigner {
     pub fn bootstrap_js(&self, value: JsValue) -> Result<JsValue, JsError> {
         let request: BootstrapRequest = serde_wasm_bindgen::from_value(value)?;
         to_js_value(&bootstrap::bootstrap(&self.inner, self.network, request).map_err(js_error)?)
+    }
+
+    #[wasm_bindgen(js_name = splitFunding)]
+    pub fn split_funding_js(&self, value: JsValue) -> Result<JsValue, JsError> {
+        let request: SplitFundingRequest = serde_wasm_bindgen::from_value(value)?;
+        to_js_value(&split::split_funding(&self.inner, self.network, request).map_err(js_error)?)
     }
 
     #[wasm_bindgen(js_name = reissue)]
@@ -138,13 +151,6 @@ pub fn validate_policy_snapshot(value: JsValue) -> Result<JsValue, JsError> {
     let snapshot: PolicySnapshotV1 = serde_wasm_bindgen::from_value(value)?;
     let tree = snapshot.validate().map_err(js_error)?;
     to_js_value(&tree.commitment())
-}
-
-#[wasm_bindgen(js_name = validateReceiveRecordShape)]
-pub fn validate_receive_record_shape(value: JsValue) -> Result<JsValue, JsError> {
-    let record: ReceiveRecordV1 = serde_wasm_bindgen::from_value(value)?;
-    record.validate_shape().map_err(js_error)?;
-    to_js_value(&record.signing_message())
 }
 
 #[wasm_bindgen(js_name = buildBlacklist)]
@@ -267,7 +273,6 @@ mod tests {
                 policy_utxos: funding.to_vec(),
                 fee: "500".to_owned(),
                 required_confirmations: 1,
-                receive_alias: "alice".to_owned(),
             },
         )?;
         bootstrapped.deployment.validate()?;
@@ -279,19 +284,59 @@ mod tests {
             bootstrap_transaction.output[1].asset.explicit(),
             Some(regulated_asset)
         );
-        assert_eq!(bootstrap_transaction.output[1].value.explicit(), Some(999));
+        assert_eq!(bootstrap_transaction.output[1].value.explicit(), Some(1000));
         assert_eq!(
-            bootstrap_transaction.output[2].asset.explicit(),
-            Some(regulated_asset)
+            bootstrap_transaction
+                .output
+                .iter()
+                .filter(|output| output.asset.explicit() == Some(regulated_asset))
+                .count(),
+            1
         );
-        assert_eq!(bootstrap_transaction.output[2].value.explicit(), Some(1));
-        receive::validate_receive_record(
+        receive::validate_recipient_address(
             network,
-            ValidateReceiveRecordRequest {
-                deployment: bootstrapped.deployment.clone(),
-                record: bootstrapped.initial_receive_record.clone(),
-            },
+            &bootstrapped.deployment,
+            &bootstrapped.initial_holder_address.confidential_address,
         )?;
+        assert!(
+            receive::validate_recipient_address(
+                network,
+                &bootstrapped.deployment,
+                "not-an-address",
+            )
+            .is_err()
+        );
+        let parsed_holder =
+            Address::from_str(&bootstrapped.initial_holder_address.confidential_address)?;
+        let unconfidential =
+            Address::from_script(&parsed_holder.script_pubkey(), None, parsed_holder.params)
+                .ok_or_else(|| anyhow::anyhow!("holder script has no unconfidential address"))?;
+        assert!(
+            receive::validate_recipient_address(
+                network,
+                &bootstrapped.deployment,
+                &unconfidential.to_string(),
+            )
+            .is_err()
+        );
+        let mut incompatible = bootstrapped.deployment.clone();
+        incompatible.regulated_asset = "de".repeat(32);
+        assert!(
+            receive::validate_recipient_address(
+                network,
+                &incompatible,
+                &bootstrapped.initial_holder_address.confidential_address,
+            )
+            .is_err()
+        );
+        assert!(
+            receive::validate_recipient_address(
+                SignerNetwork::LiquidTestnet,
+                &bootstrapped.deployment,
+                &bootstrapped.initial_holder_address.confidential_address,
+            )
+            .is_err()
+        );
 
         let bootstrap_tx = bootstrapped.transaction.clone();
         let verifier = parent_utxo(&bootstrapped.txid, 0, &bootstrap_tx, None, None);
@@ -302,12 +347,12 @@ mod tests {
             None,
             Some(HolderKeyLocator {
                 derivation_index: bootstrapped.holder_derivation_index,
-                owner_public_key: bootstrapped.initial_receive_record.owner_public_key.clone(),
+                owner_public_key: bootstrapped.initial_holder_address.owner_public_key.clone(),
             }),
         );
         let token = parent_utxo(
             &bootstrapped.txid,
-            3,
+            2,
             &bootstrap_tx,
             Some(WalletKeyLocator {
                 branch: 0,
@@ -317,7 +362,7 @@ mod tests {
         );
         let bootstrap_fee_change = parent_utxo(
             &bootstrapped.txid,
-            4,
+            3,
             &bootstrap_tx,
             Some(WalletKeyLocator {
                 branch: 0,
@@ -334,7 +379,10 @@ mod tests {
                 verifier_utxo: verifier,
                 regulated_utxos: vec![holder],
                 fee_utxos: vec![bootstrap_fee_change],
-                recipient: bootstrapped.initial_receive_record.clone(),
+                recipient_address: bootstrapped
+                    .initial_holder_address
+                    .confidential_address
+                    .clone(),
                 amount: "600".to_owned(),
                 fee: "500".to_owned(),
             },
@@ -351,7 +399,7 @@ mod tests {
             transfer_transaction.output[2].asset.explicit(),
             Some(regulated_asset)
         );
-        assert_eq!(transfer_transaction.output[2].value.explicit(), Some(399));
+        assert_eq!(transfer_transaction.output[2].value.explicit(), Some(400));
         let transfer_anchor = parent_utxo(&transfer.txid, 0, &transfer.transaction, None, None);
         let transfer_fee_change = parent_utxo(
             &transfer.txid,
@@ -429,7 +477,7 @@ mod tests {
                 verifier_utxo: update_anchor,
                 token_utxo: token,
                 fee_utxos: vec![update_fee_change],
-                recipient: bootstrapped.initial_receive_record,
+                recipient_address: bootstrapped.initial_holder_address.confidential_address,
                 amount: "100".to_owned(),
                 fee: "500".to_owned(),
                 issuer_derivation_index: bootstrapped.issuer_derivation_index,
@@ -442,12 +490,15 @@ mod tests {
             reissuance_transaction.output[1].asset.explicit(),
             Some(regulated_asset)
         );
-        assert_eq!(reissuance_transaction.output[1].value.explicit(), Some(99));
+        assert_eq!(reissuance_transaction.output[1].value.explicit(), Some(100));
         assert_eq!(
-            reissuance_transaction.output[2].asset.explicit(),
-            Some(regulated_asset)
+            reissuance_transaction
+                .output
+                .iter()
+                .filter(|output| output.asset.explicit() == Some(regulated_asset))
+                .count(),
+            1
         );
-        assert_eq!(reissuance_transaction.output[2].value.explicit(), Some(1));
         Ok(())
     }
 
@@ -502,7 +553,6 @@ mod tests {
                 policy_utxos: funding.clone(),
                 fee: "2000".to_owned(),
                 required_confirmations: 1,
-                receive_alias: "holder".to_owned(),
             },
         )?;
 
@@ -536,12 +586,15 @@ mod tests {
             transaction.output[1].asset.explicit(),
             Some(regulated_asset)
         );
-        assert_eq!(transaction.output[1].value.explicit(), Some(999));
+        assert_eq!(transaction.output[1].value.explicit(), Some(1000));
         assert_eq!(
-            transaction.output[2].asset.explicit(),
-            Some(regulated_asset)
+            transaction
+                .output
+                .iter()
+                .filter(|output| output.asset.explicit() == Some(regulated_asset))
+                .count(),
+            1
         );
-        assert_eq!(transaction.output[2].value.explicit(), Some(1));
         let spent_outputs = transaction
             .input
             .iter()
@@ -567,7 +620,7 @@ mod tests {
             .collect::<anyhow::Result<Vec<_>>>()?;
         transaction::verify_transaction_amounts(&transaction, &spent_outputs)?;
         let mut change_total = 0u64;
-        for (vout, index) in [(4, 0), (5, 1)] {
+        for (vout, index) in [(3, 0), (4, 1)] {
             let change = transaction
                 .output
                 .get(vout as usize)
@@ -615,14 +668,14 @@ mod tests {
                     Some(HolderKeyLocator {
                         derivation_index: bootstrapped.holder_derivation_index,
                         owner_public_key: bootstrapped
-                            .initial_receive_record
+                            .initial_holder_address
                             .owner_public_key
                             .clone(),
                     }),
                 )],
                 fee_utxos: vec![parent_utxo(
                     &bootstrapped.txid,
-                    4,
+                    3,
                     &bootstrapped.transaction,
                     Some(WalletKeyLocator {
                         branch: 1,
@@ -630,7 +683,7 @@ mod tests {
                     }),
                     None,
                 )],
-                recipient: bootstrapped.initial_receive_record,
+                recipient_address: bootstrapped.initial_holder_address.confidential_address,
                 amount: "600".to_owned(),
                 fee: "2000".to_owned(),
             },
@@ -647,7 +700,7 @@ mod tests {
             transfer_transaction.output[2].asset.explicit(),
             Some(regulated_asset)
         );
-        assert_eq!(transfer_transaction.output[2].value.explicit(), Some(399));
+        assert_eq!(transfer_transaction.output[2].value.explicit(), Some(400));
         Ok(())
     }
 
@@ -677,7 +730,6 @@ mod tests {
                 policy_utxos: funding,
                 fee: "2000".to_owned(),
                 required_confirmations: 1,
-                receive_alias: "holder".to_owned(),
             },
         )?;
         assert!(bootstrapped.deployment.reissuance_token.is_none());
@@ -722,7 +774,6 @@ mod tests {
                 policy_utxos: funding,
                 fee: "2000".to_owned(),
                 required_confirmations: 1,
-                receive_alias: "holder".to_owned(),
             },
         )?;
         let transaction: elements::Transaction =
