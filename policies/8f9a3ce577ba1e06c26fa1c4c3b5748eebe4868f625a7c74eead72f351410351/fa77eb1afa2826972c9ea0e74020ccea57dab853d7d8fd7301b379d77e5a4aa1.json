@@ -1,0 +1,31 @@
+{
+  "schema": "simplicity-amp-registry-v1",
+  "protocol": "simplicity-amp/v0.1",
+  "deploymentId": "8f9a3ce577ba1e06c26fa1c4c3b5748eebe4868f625a7c74eead72f351410351",
+  "sequence": 2,
+  "parentPolicyRoot": "bf518d165897c89894ed06a454e0bc442feaf1d215b665b59edd41e5c0a79062",
+  "parentVerifierScriptHash": "e0a1c1a811ab85c011e14327eafbfef8cad92a59a21af7825e5ba0bf69bdbd38",
+  "treeDepth": 4,
+  "setRoot": "fdcf95d5436376d8783a8426d68e079e40d31342fa4ae11a410915cc599bf4af",
+  "entryCount": 3,
+  "policyRoot": "cf97df1662144850740d1b48ecaa479666356798c862543810557c4f2ddc55e5",
+  "verifierProgramHash": "abd54b089484db29e92ed7aaee973cd8281eb1f40d3eaf8537d2b71431909355",
+  "verifierScriptPubkey": "5120db8477333cbe0f9e944e1324c4d4852a0afe6eb6ba451681ff13a2692a761698",
+  "entries": [
+    {
+      "txid": "014da47d1fb511a426e771eb440cdcbd0ae4c17b31ee6b32447c2bca5dcb0508",
+      "vout": 2,
+      "note": "Added from Holder outputs"
+    },
+    {
+      "txid": "c58be0931a97cb35ef37572686e264a524baba9097891fa13f147950f3f17e9e",
+      "vout": 2,
+      "note": "Added from Holder outputs"
+    },
+    {
+      "txid": "ccbf930cccb5e20c6d6a7ade1100e9939f8a3e4200296e93713aba4e83068bf3",
+      "vout": 1,
+      "note": "Test blocking 18 tokens"
+    }
+  ]
+}
