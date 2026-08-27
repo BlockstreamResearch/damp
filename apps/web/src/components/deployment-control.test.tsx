@@ -28,4 +28,12 @@ describe("active deployment control", () => {
     fireEvent.change(select, { target: { value: second.deploymentId } });
     expect(onSelect).toHaveBeenCalledWith(second.deploymentId);
   });
+
+  it("exposes a readable disabled state while switching deployments", () => {
+    render(<DeploymentControl deployments={[first, second]} activeId={first.deploymentId} busy onSelect={vi.fn()} />);
+    const select = screen.getByRole("combobox", { name: "Active deployment" });
+    expect(select).toBeDisabled();
+    expect(select).toHaveAttribute("aria-busy", "true");
+    expect(select).toHaveAttribute("title", "Switching active deployment…");
+  });
 });

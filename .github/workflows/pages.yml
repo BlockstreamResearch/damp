@@ -19,6 +19,7 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     env:
       VITE_GITHUB_REGISTRY_REPO: BlockstreamResearch/damp
+      VITE_GITHUB_REGISTRY_REF: main
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -143,7 +143,7 @@ export function AppShell({
             <span><small>Current mode</small><strong>{role === "holder" ? "Holder Wallet" : "Issuer Console"}</strong></span>
             <span className="workspace-switch-label">Switch</span>
           </Link>
-          <div className="workspace-deployment"><small>Current deployment</small><DeploymentSelector /></div>
+          <div className="workspace-deployment"><DeploymentSelector /></div>
         </div>
         <header className="page-header">
           <div>
@@ -162,10 +162,14 @@ function DeploymentSelector() {
   const deployments = useDeployments();
   const activeId = useActiveDeploymentId();
   const selectDeployment = useSelectDeployment();
-  if (deployments.isPending) return <small role="status">Checking asset registry…</small>;
-  if (deployments.error) return <small role="alert" title={deployments.error instanceof Error ? deployments.error.message : String(deployments.error)}>Asset registry unavailable</small>;
-  if (!deployments.data?.length) return <small>Choose a trusted source below</small>;
-  return <DeploymentControl deployments={deployments.data} activeId={activeId.data ?? undefined} onSelect={(deploymentId) => selectDeployment.mutate(deploymentId)} />;
+  if (deployments.isPending) return <DeploymentStatus state="loading">Checking asset registry…</DeploymentStatus>;
+  if (deployments.error) return <DeploymentStatus state="error" title={deployments.error instanceof Error ? deployments.error.message : String(deployments.error)}>Registry unavailable</DeploymentStatus>;
+  if (!deployments.data?.length) return <DeploymentStatus>Choose a trusted source</DeploymentStatus>;
+  return <DeploymentControl deployments={deployments.data} activeId={activeId.data ?? undefined} busy={selectDeployment.isPending} onSelect={(deploymentId) => selectDeployment.mutate(deploymentId)} />;
+}
+
+function DeploymentStatus({ children, state = "empty", title }: { children: ReactNode; state?: "empty" | "loading" | "error"; title?: string }) {
+  return <div className={`deployment-selector deployment-status ${state}`} aria-live={state === "loading" ? "polite" : undefined}><span>Active deployment</span><strong role={state === "error" ? "alert" : "status"} title={title}>{children}</strong></div>;
 }
 
 export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" } = {}) {

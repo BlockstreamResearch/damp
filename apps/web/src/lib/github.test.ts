@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  bundledRegistryIndexUrl,
   canonicalRegistryContent,
   customGitHubManifestSource,
   deploymentRegistryPath,
@@ -37,13 +38,6 @@ const catalogManifest: DeploymentManifest = {
 
 function registryRequest(content?: string) {
   return vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "https://api.github.com/repos/BlockstreamResearch/damp") {
-      return new Response(JSON.stringify({ default_branch: "dev" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
     return content === undefined
       ? new Response("not found", { status: 404 })
       : new Response(content, { status: 200, headers: { "Content-Type": "application/json" } });
@@ -72,7 +66,7 @@ describe("manual registry publication", () => {
     const request = registryRequest(canonicalRegistryContent(manifest));
     await expect(verifyCanonicalRegistryFile(path, manifest, request)).resolves.toBe(canonicalRegistryContent(manifest));
     expect(request).toHaveBeenLastCalledWith(
-      `https://raw.githubusercontent.com/BlockstreamResearch/damp/dev/${path}`,
+      `https://raw.githubusercontent.com/BlockstreamResearch/damp/main/${path}`,
       { cache: "no-store", headers: { Accept: "application/json" } },
     );
   });
@@ -90,6 +84,12 @@ describe("manual registry publication", () => {
     expect(() => localDevelopmentRegistryUrl(true, "file:///tmp/registry")).toThrow("loopback host");
   });
 
+  it("keeps the bundled official index under the configured Pages base", () => {
+    expect(bundledRegistryIndexUrl("/damp/")).toBe("/damp/registry/deployments/index.json");
+    expect(bundledRegistryIndexUrl("/damp")).toBe("/damp/registry/deployments/index.json");
+    expect(() => bundledRegistryIndexUrl("https://example.com/damp/")).toThrow(/root-relative/i);
+  });
+
   it("builds repository links for validated custom registry identifiers", () => {
     expect(registryRepositoryUrlFor("example/custom-registry")).toBe("https://github.com/example/custom-registry");
     expect(() => registryRepositoryUrlFor("https://github.com/example/custom-registry")).toThrow(/owner\/repository/i);
@@ -98,15 +98,7 @@ describe("manual registry publication", () => {
   it("enumerates only canonical deployment manifests from the default branch", async () => {
     const request = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "https://api.github.com/repos/BlockstreamResearch/damp") {
-        return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
-      }
-      if (url === "https://api.github.com/repos/BlockstreamResearch/damp/contents/deployments?ref=main") {
-        return new Response(JSON.stringify([
-          { name: `${catalogDeploymentId}.json`, type: "file" },
-          { name: "README.md", type: "file" },
-        ]), { status: 200 });
-      }
+      if (url === "/registry/deployments/index.json") return new Response(JSON.stringify([catalogDeploymentId]), { status: 200 });
       if (url === `https://raw.githubusercontent.com/BlockstreamResearch/damp/main/deployments/${catalogDeploymentId}.json`) {
         return new Response(canonicalRegistryContent(catalogManifest), { status: 200 });
       }
@@ -116,34 +108,26 @@ describe("manual registry publication", () => {
     await expect(fetchCanonicalDeploymentCatalog(request)).resolves.toEqual([
       { deploymentId: catalogDeploymentId, manifest: catalogManifest },
     ]);
+    expect(request).not.toHaveBeenCalledWith(expect.stringContaining("api.github.com"), expect.anything());
   });
 
-  it("treats a missing deployments directory as an authoritative empty catalog", async () => {
-    const request = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "https://api.github.com/repos/BlockstreamResearch/damp") {
-        return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
-      }
-      if (url === "https://api.github.com/repos/BlockstreamResearch/damp/contents/deployments?ref=main") {
-        return new Response("not found", { status: 404 });
-      }
-      return new Response("unexpected request", { status: 500 });
-    }) as typeof fetch;
-
+  it("accepts an authoritative empty bundled deployment index", async () => {
+    const request = vi.fn(async () => new Response("[]", { status: 200 })) as typeof fetch;
     await expect(fetchCanonicalDeploymentCatalog(request)).resolves.toEqual([]);
   });
 
   it("rejects a catalog manifest that is not encoded as exact canonical bytes", async () => {
     const request = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "https://api.github.com/repos/BlockstreamResearch/damp") {
-        return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
-      }
-      if (url.includes("/contents/deployments?")) {
-        return new Response(JSON.stringify([{ name: `${catalogDeploymentId}.json`, type: "file" }]), { status: 200 });
-      }
+      if (url === "/registry/deployments/index.json") return new Response(JSON.stringify([catalogDeploymentId]), { status: 200 });
       return new Response(JSON.stringify(catalogManifest), { status: 200 });
     }) as typeof fetch;
     await expect(fetchCanonicalDeploymentCatalog(request)).rejects.toThrow("canonical bytes");
+  });
+
+  it("explains GitHub API rate limits for custom registries", async () => {
+    const reset = Math.floor(Date.now() / 1000) + 3600;
+    const request = vi.fn(async () => new Response("rate limited", { status: 403, headers: { "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": String(reset) } })) as typeof fetch;
+    await expect(customGitHubManifestSource(`https://github.com/example/registry/blob/main/deployments/${"ab".repeat(32)}.json`, request)).rejects.toThrow(/public API rate limit.*official DAMP registry/i);
   });
 });

@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { AlertTriangle, ArrowRight, Check, ClipboardCopy, Download, ExternalLink, FileText, Fuel, GitPullRequest, ListFilter, Minus, Plus, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ClipboardCopy, Download, ExternalLink, FileText, Fuel, GitPullRequest, Info, ListFilter, Minus, Plus, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
 
 import { AppShell, BackLink, Panel, Pill, SafetyNote, SectionHeading, TechnicalDetails } from "../components/ui";
 import { BlacklistTable } from "../components/blacklist-table";
@@ -545,29 +545,32 @@ export function AdminHolders() {
   const active = new Set(current?.entries.map((entry) => `${entry.txid}:${entry.vout}`));
   const drafted = new Set(draft?.map((entry) => `${entry.txid}:${entry.vout}`));
   return (
-    <AppShell eyebrow="Issuer Console / Holder" title="Known holder outputs">
-      <div className="flow-layout">
-        <Panel className="flow-main">
-          <SectionHeading label="Selected regulated asset" title="Review outputs and prepare blocks" />
+    <AppShell eyebrow="Issuer Console / Holder" title="Holder covenant monitor">
+        <Panel className="holder-output-panel">
+          <SectionHeading label="Selected regulated asset" title={selected ? `Known outputs for ${selected.asset.ticker}` : "Known outputs"} aside={selected ? <Pill tone="neutral">{regulated.length} output{regulated.length === 1 ? "" : "s"}</Pill> : undefined} />
+          <div className="future-capability" role="note">
+            <Info size={18} aria-hidden="true" />
+            <div><strong>One view for every covenant</strong><p>When Simplicity descriptors are supported, this view will present all relevant covenant information without requiring a separate connection or workflow. Today, it shows signer-observed regulated outputs and available blacklist draft actions.</p></div>
+          </div>
           {!selected ? <p>Select a deployment to inspect its outputs.</p> : !signer.connected ? <p role="status">Connect the DAMP signer to load holder outputs observed by its wallet.</p> : anchor.error || policy.error || wallet.error ? <p role="alert">{userFacingError(anchor.error ?? policy.error ?? wallet.error)}</p> : anchor.isPending || policy.isPending || wallet.isPending || draft === undefined ? <p role="status">Loading holder outputs…</p> : regulated.length === 0 ? <p>No known regulated-asset outputs were found for this signer.</p> : (
-            <div className="table-wrap"><table className="blacklist-table holder-output-table"><caption>Known outputs for {selected.asset.ticker}</caption><thead><tr><th scope="col">Outpoint</th><th scope="col">State</th><th scope="col">Amount</th><th scope="col">Holder information</th><th scope="col">Draft action</th></tr></thead><tbody>{regulated.map((utxo) => {
+            <div className="blacklist-table holder-output-table-wrap"><table className="holder-output-table"><caption className="sr-only">Known outputs for {selected.asset.ticker}</caption><thead><tr><th scope="col">Output</th><th scope="col">State</th><th scope="col">Amount</th><th scope="col">Holder</th><th scope="col">Action</th></tr></thead><tbody>{regulated.map((utxo) => {
               const outpoint = `${utxo.txid}:${utxo.vout}`;
               const isActive = active.has(outpoint);
               const isDrafted = drafted.has(outpoint);
               const eligible = utxo.status === "confirmed" && !isActive;
-              return <tr key={outpoint}><td data-label="Outpoint"><code title={outpoint}>{shortHash(utxo.txid, 10, 8)}:{utxo.vout}</code></td><td data-label="State"><Pill tone={isActive ? "warn" : utxo.status === "confirmed" ? "good" : "blue"}>{isActive ? "Active blacklist" : utxo.status}</Pill></td><td data-label="Amount">{formatUnits(BigInt(utxo.amount), selected.asset.precision)} {selected.asset.ticker}</td><td data-label="Holder information">{utxo.source === "holder" ? `Local holder ${shortHash(utxo.holderKey.ownerPublicKey, 10, 8)}` : "Ownership identity unavailable"}</td><td data-label="Draft action">{isActive ? <span>Already blocked</span> : isDrafted ? <button className="button secondary" type="button" onClick={() => void updateOutputDraft(utxo, "remove")}>Undo draft block</button> : <button className="button secondary" type="button" disabled={!eligible} onClick={() => void updateOutputDraft(utxo, "add")}>{eligible ? "Block in draft" : "Not eligible"}</button>}</td></tr>;
+              const stateLabel = isActive ? "Blocked" : isDrafted ? "Draft block" : utxo.status === "confirmed" ? "Confirmed" : "Pending";
+              return <tr key={outpoint}><td data-label="Output"><code title={`Full outpoint: ${outpoint}`}>{shortHash(utxo.txid, 10, 8)}:{utxo.vout}</code></td><td data-label="State"><span title={isActive ? "Included in the active blacklist" : isDrafted ? "Added to the unpublished blacklist draft" : undefined}><Pill tone={isActive || isDrafted ? "warn" : utxo.status === "confirmed" ? "good" : "blue"}>{stateLabel}</Pill></span></td><td className="holder-output-amount" data-label="Amount">{formatUnits(BigInt(utxo.amount), selected.asset.precision)} <span>{selected.asset.ticker}</span></td><td data-label="Holder">{utxo.source === "holder" ? <span className="holder-identity"><strong>Local signer holder</strong><code title={`Full holder key: ${utxo.holderKey.ownerPublicKey}`}>{shortHash(utxo.holderKey.ownerPublicKey, 10, 8)}</code></span> : <span className="holder-unavailable">Identity unavailable</span>}</td><td data-label="Action">{isActive ? <span className="holder-action-state">Already blocked</span> : isDrafted ? <button className="button secondary holder-output-action" type="button" aria-label={`Undo draft block for ${outpoint}`} onClick={() => void updateOutputDraft(utxo, "remove")}>Undo draft</button> : <button className="button secondary holder-output-action" type="button" aria-label={eligible ? `Add ${outpoint} to blacklist draft` : `${outpoint} is not eligible for the blacklist draft`} title={eligible ? undefined : "Only confirmed, unspent outputs can be added to the blacklist draft."} disabled={!eligible} onClick={() => void updateOutputDraft(utxo, "add")}>{eligible ? "Add to draft" : "Not eligible"}</button>}</td></tr>;
             })}</tbody></table></div>
           )}
           {draft && current && draft.some((entry) => !active.has(`${entry.txid}:${entry.vout}`)) ? <p className="inline-message" role="status">Added to draft only. <Link to="/admin/blacklist">Open Blacklist to review and publish.</Link></p> : null}
           {message && <p className={messageTone === "error" ? "field-error" : "inline-message"} role={messageTone === "error" ? "alert" : "status"} aria-live={messageTone === "error" ? "assertive" : "polite"}>{message}</p>}
         </Panel>
-      </div>
     </AppShell>
   );
 }
 
 export function AdminReport() {
-  return <AppShell eyebrow="Issuer Console / Report" title="Regulator report"><Panel className="report-placeholder"><span className="report-placeholder-icon"><FileText size={24} /></span><div><span className="overline">Future workspace</span><h2>Regulatory reporting</h2><p>TODO: In the future, this tab can support reporting to the regulator.</p></div></Panel></AppShell>;
+  return <AppShell eyebrow="Issuer Console / Report" title="Regulator report"><Panel className="report-placeholder"><span className="report-placeholder-icon"><FileText size={24} /></span><div><span className="overline">Planned capability</span><h2>Regulatory reporting</h2><p>This workspace is reserved for a future regulator-facing review flow. No report is generated or submitted today.</p></div></Panel></AppShell>;
 }
 
 function PolicyChangeReview({ label, entries, empty }: { label: string; entries: BlacklistEntry[]; empty: string }) {

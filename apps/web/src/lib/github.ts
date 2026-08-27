@@ -1,6 +1,7 @@
 import { deploymentManifestSchema, HASH, type DeploymentManifest } from "./domain";
 
 const configuredRegistryRepository = (import.meta.env.VITE_GITHUB_REGISTRY_REPO as string | undefined) ?? "BlockstreamResearch/damp";
+const configuredRegistryRef = registryRef((import.meta.env.VITE_GITHUB_REGISTRY_REF as string | undefined) ?? "main");
 const localRegistryBaseUrl = localDevelopmentRegistryUrl(
   import.meta.env.DEV,
   import.meta.env.VITE_LOCAL_REGISTRY_BASE_URL as string | undefined,
@@ -49,6 +50,32 @@ function repositoryParts(repository = configuredRegistryRepository) {
   return { owner: match[1], repository: match[2] };
 }
 
+function registryRef(value: string) {
+  if (!/^[A-Za-z0-9._/-]{1,255}$/.test(value) || value.includes("..")) {
+    throw new Error("VITE_GITHUB_REGISTRY_REF must be a valid Git ref.");
+  }
+  return value;
+}
+
+export function bundledRegistryIndexUrl(baseUrl = import.meta.env.BASE_URL) {
+  if (!baseUrl.startsWith("/") || baseUrl.includes("..")) throw new Error("Vite base URL must be a root-relative path.");
+  return `${baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`}registry/deployments/index.json`;
+}
+
+function rawRegistryFileUrl(owner: string, repository: string, ref: string, path: string) {
+  return `https://raw.githubusercontent.com/${owner}/${repository}/${ref}/${path}`;
+}
+
+function githubApiFailure(response: Response, repository: string) {
+  if (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0") {
+    const resetSeconds = Number(response.headers.get("x-ratelimit-reset"));
+    const retry = Number.isFinite(resetSeconds) ? ` after ${new Date(resetSeconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : " later";
+    return new Error(`GitHub's public API rate limit was reached while checking ${repository}. Try again${retry}, or use the official DAMP registry.`);
+  }
+  if (response.status === 403) return new Error(`GitHub denied access to ${repository}. Confirm that the custom registry is public and try again.`);
+  return new Error(`Could not resolve custom GitHub registry ${repository} (${response.status}).`);
+}
+
 async function boundedResponseText(response: Response, maximum: number, label: string) {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maximum) throw new Error(`${label} exceeds its size limit.`);
@@ -63,7 +90,7 @@ async function resolveCanonicalRepository(request: typeof fetch, sourceRepositor
     cache: "no-store",
     headers: { Accept: "application/vnd.github+json" },
   });
-  if (!response.ok) throw new Error(`Could not resolve canonical registry (${response.status}).`);
+  if (!response.ok) throw githubApiFailure(response, sourceRepository);
   const raw = JSON.parse(await boundedResponseText(response, MAX_REPOSITORY_RESPONSE_BYTES, "Registry metadata")) as unknown;
   if (!raw || typeof raw !== "object" || !("default_branch" in raw) || typeof raw.default_branch !== "string") {
     throw new Error("Canonical registry metadata has no default branch.");
@@ -110,9 +137,11 @@ export async function fetchCanonicalRegistryFile(path: string, request: typeof f
     if (!response.ok) throw new Error(`Local test registry fetch failed (${response.status}).`);
     return boundedResponseText(response, MAX_MANIFEST_RESPONSE_BYTES, "Local registry file");
   }
-  const { owner, repository, defaultBranch } = await resolveCanonicalRepository(request, sourceRepository);
+  const resolved = sourceRepository === configuredRegistryRepository
+    ? { ...repositoryParts(sourceRepository), defaultBranch: configuredRegistryRef }
+    : await resolveCanonicalRepository(request, sourceRepository);
   const raw = await request(
-    `https://raw.githubusercontent.com/${owner}/${repository}/${defaultBranch}/${path}`,
+    rawRegistryFileUrl(resolved.owner, resolved.repository, resolved.defaultBranch, path),
     { cache: "no-store", headers: { Accept: "application/json" } },
   );
   if (raw.status === 404) return undefined;
@@ -136,6 +165,27 @@ export async function fetchCanonicalDeploymentCatalog(request: typeof fetch = fe
     if (uniqueIds.length !== raw.length) throw new Error("Local registry deployment index contains duplicate IDs.");
     const catalog: CanonicalDeployment[] = [];
     for (const deploymentId of uniqueIds) {
+      const text = await fetchCanonicalRegistryFile(deploymentRegistryPath(deploymentId), request, sourceRepository);
+      if (text === undefined) throw new Error(`Indexed registry manifest ${deploymentId} is missing.`);
+      catalog.push({ deploymentId, manifest: parseCanonicalManifest(deploymentId, text) });
+    }
+    return catalog;
+  }
+
+  if (sourceRepository === configuredRegistryRepository) {
+    const response = await request(bundledRegistryIndexUrl(), {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new Error(`Bundled DAMP registry index failed (${response.status}).`);
+    const raw = JSON.parse(await boundedResponseText(response, MAX_CATALOG_RESPONSE_BYTES, "Bundled registry deployment index")) as unknown;
+    if (!Array.isArray(raw) || raw.length > MAX_CANONICAL_DEPLOYMENTS || raw.some((id) => typeof id !== "string" || !HASH.test(id))) {
+      throw new Error("Bundled registry deployment index must contain at most 128 deployment IDs.");
+    }
+    const deploymentIds = [...new Set(raw)].sort();
+    if (deploymentIds.length !== raw.length) throw new Error("Bundled registry deployment index contains duplicate IDs.");
+    const catalog: CanonicalDeployment[] = [];
+    for (const deploymentId of deploymentIds) {
       const text = await fetchCanonicalRegistryFile(deploymentRegistryPath(deploymentId), request, sourceRepository);
       if (text === undefined) throw new Error(`Indexed registry manifest ${deploymentId} is missing.`);
       catalog.push({ deploymentId, manifest: parseCanonicalManifest(deploymentId, text) });
