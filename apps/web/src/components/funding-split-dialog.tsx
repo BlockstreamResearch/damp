@@ -274,7 +274,7 @@ export function FundingSplitDialog({
   return (
     <div className="funding-split">
       <div className="funding-split-callout">
-        <div><Fuel size={18} /><span><strong>One confirmed output needs to be split</strong><small>Issuance needs two distinct inputs. Split this output once instead of returning to the faucet.</small></span></div>
+        <div><Fuel size={18} /><span><strong>Required next step: split the single confirmed output</strong><small>Asset issuance cannot continue with one input. Review and broadcast this one-time wallet split to create the two distinct inputs it requires.</small></span></div>
         <button ref={triggerRef} className="button issuer-primary" type="button" disabled={disabled || !loaded} aria-haspopup="dialog" aria-expanded={open} aria-controls="funding-split-dialog" onClick={() => setOpen(true)}>{receipt ? "View split status" : "Split this output into two"}</button>
       </div>
       {open && <div className="dialog-backdrop" onPointerDown={(event) => { if (!busy && event.target === event.currentTarget) { setOpen(false); triggerRef.current?.focus(); } }}>

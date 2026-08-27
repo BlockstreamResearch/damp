@@ -416,7 +416,10 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       source,
       gapLimit: 1,
       request,
-      dependencies: { deriveAddress: (branch, index) => Promise.resolve(derivedAddress(branch, index)) },
+      dependencies: {
+        deriveAddress: (branch, index) => Promise.resolve(derivedAddress(branch, index)),
+        inspect: () => Promise.resolve([]),
+      },
     })).rejects.toMatchObject({ code: "WALLET_DISCOVERY_SAFETY_LIMIT", limit: "fallback-requests" });
     expect(request.mock.calls.length).toBeLessThanOrEqual(walletDiscoveryLimits.maxRequests);
   });
@@ -440,13 +443,13 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
     expect(request.mock.calls.length).toBeLessThanOrEqual(11);
   });
 
-  it("cancels in-flight address requests and never starts queued scans", async () => {
+  it("cancels an in-flight batched address request", async () => {
     const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
     const controller = new AbortController();
     let startedResolve!: () => void;
     const started = new Promise<void>((resolve) => { startedResolve = resolve; });
     const request = vi.fn<typeof fetch>((_input, init) => new Promise<Response>((_resolve, reject) => {
-      if (request.mock.calls.length === 8) startedResolve();
+      if (request.mock.calls.length === 1) startedResolve();
       init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     }));
     const discovery = discoverWalletSnapshot({
@@ -462,16 +465,15 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
     await started;
     controller.abort();
     await expect(discovery).rejects.toBeInstanceOf(WalletDiscoveryCancelledError);
-    expect(request).toHaveBeenCalledTimes(8);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
-  it("aborts concurrent sibling requests when one provider response fails", async () => {
+  it("fails a batched address window without starting redundant sibling requests", async () => {
     const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
     const signals: AbortSignal[] = [];
     const request = vi.fn<typeof fetch>((_input, init) => {
-      if (request.mock.calls.length === 1) return Promise.resolve(new Response("not-json"));
       signals.push(init?.signal as AbortSignal);
-      return new Promise<Response>(() => undefined);
+      return Promise.resolve(new Response("not-json"));
     });
 
     await expect(discoverWalletSnapshot({
@@ -483,9 +485,39 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       dependencies: { deriveAddress: (branch, index) => Promise.resolve(derivedAddress(branch, index)) },
     })).rejects.toBeInstanceOf(Error);
 
-    expect(request).toHaveBeenCalledTimes(8);
-    expect(signals).toHaveLength(7);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(signals).toHaveLength(1);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it("uses one Waterfalls request per empty gap window instead of one per address", async () => {
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const request = vi.fn<typeof fetch>(async (input) => {
+      const requested = new URL(String(input)).searchParams.get("addresses")?.split(",") ?? [];
+      return Response.json({
+        txs_seen: { addresses: requested.map(() => []) },
+        page: 0,
+        tip_meta: { b: blockHash, t: 1_787_222_831, h: 2_581_109 },
+      });
+    });
+
+    const snapshot = await discoverWalletSnapshot({
+      profileId,
+      network: "liquid-testnet",
+      scope: "base",
+      source,
+      gapLimit: 10,
+      request,
+      dependencies: {
+        deriveAddress: (branch, index) => Promise.resolve(derivedAddress(branch, index)),
+        inspect: () => Promise.resolve([]),
+      },
+    });
+
+    expect(snapshot.discoveryProvider).toBe("waterfalls-v4");
+    expect(snapshot.addresses).toHaveLength(20);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(new URL(String(request.mock.calls[0][0])).searchParams.get("addresses")?.split(",")).toHaveLength(10);
   });
 
   it("does not abort provider request signals after a successful scan", async () => {

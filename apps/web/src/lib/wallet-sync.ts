@@ -197,7 +197,7 @@ const waterfallsTxSeenSchema = z.object({
 }).strict();
 
 const waterfallsResponseSchema = z.object({
-  txs_seen: z.object({ addresses: z.array(z.array(waterfallsTxSeenSchema)).length(1) }).strict(),
+  txs_seen: z.object({ addresses: z.array(z.array(waterfallsTxSeenSchema)).min(1).max(50) }).strict(),
   has_more: z.array(z.string().min(1)).max(1).optional(),
   page: z.number().int().nonnegative(),
   tip_meta: z.object({
@@ -221,6 +221,7 @@ export type OutspendResult = { exists: boolean; spent: boolean; txid?: string };
 export type WalletDiscoveryDependencies = {
   deriveAddress: (branch: 0 | 1, index: number, network: SignerNetwork) => Promise<DerivedWalletAddress>;
   scanAddress: (source: WalletDiscoverySource, address: WalletSyncAddress, request: typeof fetch, budget: WalletDiscoveryWorkBudget) => Promise<AddressScanResult>;
+  scanAddresses: (source: WalletDiscoverySource, addresses: WalletSyncAddress[], request: typeof fetch, budget: WalletDiscoveryWorkBudget) => Promise<AddressScanResult[]>;
   fetchTransaction: (source: WalletDiscoverySource, txid: string, request: typeof fetch, budget: WalletDiscoveryWorkBudget) => Promise<string>;
   fetchOutspend: (source: WalletDiscoverySource, txid: string, vout: number, request: typeof fetch, budget: WalletDiscoveryWorkBudget) => Promise<OutspendResult>;
   fetchTipHeight: (source: WalletDiscoverySource, request: typeof fetch, budget: WalletDiscoveryWorkBudget) => Promise<number>;
@@ -366,6 +367,7 @@ class WalletDiscoveryWorkBudget {
 const defaultDependencies: WalletDiscoveryDependencies = {
   deriveAddress: (branch, index, network) => deriveWalletAddress(branch, index, network),
   scanAddress: scanAddressWithSource,
+  scanAddresses: scanAddressesWithSource,
   fetchTransaction: fetchTransactionFromSource,
   fetchOutspend: fetchOutspendFromSource,
   fetchTipHeight: fetchTipHeightFromSource,
@@ -444,10 +446,12 @@ export async function discoverWalletSnapshot(input: {
         scriptPubkey: address.scriptPubkey,
         hasActivity: false,
       }));
-      const windowScans = await mapConcurrent(windowAddresses, transactionFetchConcurrency, async (address) => {
-        budget.assertActive();
-        return dependencies.scanAddress(input.source, address, request, budget);
-      }, budget);
+      const windowScans = input.dependencies?.scanAddress && !input.dependencies.scanAddresses
+        ? await mapConcurrent(windowAddresses, transactionFetchConcurrency, async (address) => {
+            budget.assertActive();
+            return dependencies.scanAddress(input.source, address, request, budget);
+          }, budget)
+        : await dependencies.scanAddresses(input.source, windowAddresses, request, budget);
       for (let offset = 0; offset < windowAddresses.length; offset += 1) {
         const scan = windowScans[offset];
         const address = walletAddressSchema.parse({ ...windowAddresses[offset], hasActivity: scan.hasActivity });
@@ -474,9 +478,11 @@ export async function discoverWalletSnapshot(input: {
   );
   if (holderAddresses.length > 100) throw new Error("Wallet has too many local holder records to synchronize safely.");
   budget.examineAddresses(holderAddresses.length);
-  const holderScans = await mapConcurrent(holderAddresses, transactionFetchConcurrency, (address) =>
-    dependencies.scanAddress(input.source, address, request, budget), budget
-  );
+  const holderScans = input.dependencies?.scanAddress && !input.dependencies.scanAddresses
+    ? await mapConcurrent(holderAddresses, transactionFetchConcurrency, (address) =>
+        dependencies.scanAddress(input.source, address, request, budget), budget
+      )
+    : await dependencies.scanAddresses(input.source, holderAddresses, request, budget);
   for (let index = 0; index < holderAddresses.length; index += 1) {
     const scan = holderScans[index];
     const address = { ...holderAddresses[index], hasActivity: scan.hasActivity } as WalletSyncAddress;
@@ -840,6 +846,21 @@ async function scanAddressWithSource(
     : scanEsploraAddress(source.baseUrl, address, request, budget);
 }
 
+async function scanAddressesWithSource(
+  source: WalletDiscoverySource,
+  addresses: WalletSyncAddress[],
+  request: typeof fetch,
+  budget: WalletDiscoveryWorkBudget,
+) {
+  if (addresses.length === 0) return [];
+  if (source.provider === "waterfalls-v4" && addresses.length > 1) {
+    return scanWaterfallsAddressesWithBudget(source, addresses, request, budget);
+  }
+  return mapConcurrent(addresses, transactionFetchConcurrency, (address) =>
+    scanAddressWithSource(source, address, request, budget), budget
+  );
+}
+
 async function scanEsploraAddress(
   esploraUrl: string,
   address: WalletSyncAddress,
@@ -882,18 +903,7 @@ async function scanWaterfallsAddressWithBudget(
   request: typeof fetch,
   budget: WalletDiscoveryWorkBudget,
 ): Promise<AddressScanResult> {
-  let decoded: ReturnType<typeof liquidAddress.fromConfidential>;
-  try {
-    decoded = liquidAddress.fromConfidential(address.confidentialAddress);
-  } catch {
-    throw new Error("The signer returned an invalid confidential address for Waterfalls discovery.");
-  }
-  if (!decoded.scriptPubKey || decoded.scriptPubKey.toString("hex") !== address.scriptPubkey) {
-    throw new Error("The Waterfalls address does not match the signer-derived scriptPubKey.");
-  }
-  if (liquidAddress.getNetwork(decoded.unconfidentialAddress) !== liquidNetworks.testnet) {
-    throw new Error("Waterfalls wallet discovery accepts only Liquid testnet addresses.");
-  }
+  const decoded = decodeWaterfallsAddress(address);
 
   const base = source.baseUrl.replace(/\/$/, "");
   const history = new Set<string>();
@@ -1014,6 +1024,74 @@ async function scanWaterfallsAddressWithBudget(
     tipHash: tip.hash,
     tipHeight: tip.height,
   };
+}
+
+/**
+ * Waterfalls accepts up to 50 comma-separated unconfidential addresses. Use
+ * that native batch path for the overwhelmingly common empty gap window, then
+ * run the strict per-address history/UTXO proof only for addresses that have
+ * activity or pagination. This changes a fresh 20-address wallet scan from 20
+ * provider round trips to two branch-window requests (plus the holder script).
+ */
+async function scanWaterfallsAddressesWithBudget(
+  source: Extract<WalletDiscoverySource, { provider: "waterfalls-v4" }>,
+  addresses: WalletSyncAddress[],
+  request: typeof fetch,
+  budget: WalletDiscoveryWorkBudget,
+): Promise<AddressScanResult[]> {
+  if (addresses.length < 1 || addresses.length > 50) throw new Error("Waterfalls address batches must contain between 1 and 50 addresses.");
+  const decoded = addresses.map(decodeWaterfallsAddress);
+  const requested = decoded.map((value) => value.unconfidentialAddress);
+  const query = new URLSearchParams({ addresses: requested.join(","), page: "0" });
+  const response = await budget.fetch(request, `${source.baseUrl.replace(/\/$/, "")}/v4/waterfalls?${query}`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`Waterfalls batch request failed (${response.status}).`);
+  const parsed = waterfallsResponseSchema.parse(await readJsonResponse(response, "Waterfalls", budget));
+  if (parsed.page !== 0 || parsed.txs_seen.addresses.length !== addresses.length) {
+    throw new Error("Waterfalls batch response did not preserve the requested address order.");
+  }
+  if (parsed.has_more?.some((address) => !requested.includes(address))) {
+    throw new Error("Waterfalls returned pagination metadata for an unrequested address.");
+  }
+  budget.retainHistoryEntries(parsed.txs_seen.addresses.reduce((total, entries) => total + entries.length, 0));
+  const batchTip = { hash: parsed.tip_meta.b, height: parsed.tip_meta.h };
+  return mapConcurrent(addresses, transactionFetchConcurrency, async (address, index) => {
+    const entries = parsed.txs_seen.addresses[index] ?? [];
+    const hasMore = parsed.has_more?.includes(requested[index]!) === true;
+    if (entries.length === 0 && !hasMore) {
+      return {
+        hasActivity: false,
+        utxos: [],
+        historyTxids: [],
+        historyComplete: true,
+        tipHash: batchTip.hash,
+        tipHeight: batchTip.height,
+      } satisfies AddressScanResult;
+    }
+    const result = await scanWaterfallsAddressWithBudget(source, address, request, budget);
+    if (result.tipHash !== batchTip.hash || result.tipHeight !== batchTip.height) {
+      throw new Error("Waterfalls chain tip changed after the batched wallet scan; retry the synchronization.");
+    }
+    return result;
+  }, budget);
+}
+
+function decodeWaterfallsAddress(address: WalletSyncAddress) {
+  let decoded: ReturnType<typeof liquidAddress.fromConfidential>;
+  try {
+    decoded = liquidAddress.fromConfidential(address.confidentialAddress);
+  } catch {
+    throw new Error("The signer returned an invalid confidential address for Waterfalls discovery.");
+  }
+  if (!decoded.scriptPubKey || decoded.scriptPubKey.toString("hex") !== address.scriptPubkey) {
+    throw new Error("The Waterfalls address does not match the signer-derived scriptPubKey.");
+  }
+  if (liquidAddress.getNetwork(decoded.unconfidentialAddress) !== liquidNetworks.testnet) {
+    throw new Error("Waterfalls wallet discovery accepts only Liquid testnet addresses.");
+  }
+  return decoded;
 }
 
 async function getWaterfallsPage(

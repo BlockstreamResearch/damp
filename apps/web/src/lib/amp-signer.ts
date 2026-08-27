@@ -138,10 +138,18 @@ let activationRevision = 0;
 const listeners = new Set<() => void>();
 
 async function loadModule() {
-  modulePromise ??= import("../generated/amp-signer/simplicity_amp_signer").then(async (module) => {
-    await module.default();
-    return module;
-  });
+  modulePromise ??= import("../generated/amp-signer/simplicity_amp_signer")
+    .then(async (module) => {
+      await module.default();
+      return module;
+    })
+    .catch((error: unknown) => {
+      // A transient asset/network failure must not poison every later signer attempt in this tab.
+      // Clearing the rejected promise lets an explicit retry load a fresh WASM module instance.
+      modulePromise = undefined;
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`The LWK signer module could not be initialized: ${reason}`);
+    });
   return modulePromise;
 }
 

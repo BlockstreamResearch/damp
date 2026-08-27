@@ -86,6 +86,7 @@ describe("FundingSplitDialog", () => {
 
   it("previews exact values and signs only once on repeated activation", async () => {
     renderDialog();
+    expect(await screen.findByText("Required next step: split the single confirmed output")).toBeInTheDocument();
     const trigger = await screen.findByRole("button", { name: "Split this output into two" });
     fireEvent.click(trigger);
     expect(screen.getByText("0.000005 L-BTC · 500 sats")).toBeInTheDocument();

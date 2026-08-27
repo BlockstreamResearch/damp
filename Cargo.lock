@@ -884,9 +884,9 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "lwk_common"
-version = "0.18.1"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2ec5f85eaae085e409b793608f3179873cecf12bc9a31e863b5ede2f03930ad"
+checksum = "7529eac506599f2b7bb77d8feeb71cbfb50b6c1ae603ee49ff0cbba69fdf41fb"
 dependencies = [
  "aes-gcm-siv",
  "base64 0.21.7",
@@ -903,9 +903,9 @@ dependencies = [
 
 [[package]]
 name = "lwk_signer"
-version = "0.18.1"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8ea2884beef1389739acbd41cfae09900c965df7b56d517faa67643e1f2a333"
+checksum = "72ef5cf71a4d3164177e102aada44461b4835261de32f4c49cc05d7cfa9f1823"
 dependencies = [
  "base64 0.21.7",
  "bip39",

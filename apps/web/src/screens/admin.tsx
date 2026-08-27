@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { AlertTriangle, ArrowRight, Check, ClipboardCopy, Download, ExternalLink, Fuel, GitPullRequest, ListFilter, Minus, Plus, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ClipboardCopy, Download, ExternalLink, FileText, Fuel, GitPullRequest, ListFilter, Minus, Plus, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
 
 import { AppShell, BackLink, Panel, Pill, SafetyNote, SectionHeading, TechnicalDetails } from "../components/ui";
 import { BlacklistTable } from "../components/blacklist-table";
@@ -79,7 +79,7 @@ import {
   verifyCanonicalRegistryFile,
 } from "../lib/github";
 import { buildSuccessorPolicy, resolvePolicySnapshot, sha256Hex } from "../lib/policy-registry";
-import { reissueSchema, setupFormDefaults, setupSchema, type ReissueForm, type SetupForm } from "../lib/form-schemas";
+import { displaySupplyToBaseUnits, reissueSchema, setupFormDefaults, setupSchema, type ReissueForm, type SetupForm } from "../lib/form-schemas";
 import {
   createOperationReceipt,
   dismissOperationReceipt,
@@ -567,7 +567,7 @@ export function AdminHolders() {
 }
 
 export function AdminReport() {
-  return <AppShell eyebrow="Issuer Console / Report" title="Regulator report"><Panel><p>TODO: In the future, this tab can support reporting to the regulator.</p></Panel></AppShell>;
+  return <AppShell eyebrow="Issuer Console / Report" title="Regulator report"><Panel className="report-placeholder"><span className="report-placeholder-icon"><FileText size={24} /></span><div><span className="overline">Future workspace</span><h2>Regulatory reporting</h2><p>TODO: In the future, this tab can support reporting to the regulator.</p></div></Panel></AppShell>;
 }
 
 function PolicyChangeReview({ label, entries, empty }: { label: string; entries: BlacklistEntry[]; empty: string }) {
@@ -712,7 +712,6 @@ export function AdminSetup() {
     setFundingAddresses([]);
     setReviewIssuance(false);
     setMessage(undefined);
-    form.reset(setupFormDefaults(signer.network));
   }, [form, signer.network, signer.profileId]);
 
   useEffect(() => {
@@ -813,7 +812,7 @@ export function AdminSetup() {
         policyAsset: configuration.policyAsset,
         deploymentSalt: salt,
         asset: { name: configuration.name, ticker: configuration.ticker, precision: configuration.precision },
-        issuedSupply: configuration.supply,
+        issuedSupply: displaySupplyToBaseUnits(configuration.supply, configuration.precision).toString(),
         supplyMode: configuration.supplyMode,
         policyUtxos,
         fee: "2000",
@@ -1027,7 +1026,7 @@ export function AdminSetup() {
                 <label>Asset name<input aria-invalid={Boolean(form.formState.errors.name)} aria-describedby={form.formState.errors.name ? "setup-name-error" : undefined} {...form.register("name")} />{form.formState.errors.name && <small id="setup-name-error" className="field-error">{form.formState.errors.name.message}</small>}</label>
                 <label>Ticker<input aria-invalid={Boolean(form.formState.errors.ticker)} aria-describedby={form.formState.errors.ticker ? "setup-ticker-error" : undefined} {...form.register("ticker")} />{form.formState.errors.ticker && <small id="setup-ticker-error" className="field-error">{form.formState.errors.ticker.message}</small>}</label>
                 <label>Precision<input aria-invalid={Boolean(form.formState.errors.precision)} aria-describedby={form.formState.errors.precision ? "setup-precision-error" : undefined} type="number" {...form.register("precision", { valueAsNumber: true })} />{form.formState.errors.precision && <small id="setup-precision-error" className="field-error">{form.formState.errors.precision.message}</small>}</label>
-                <label>Initial supply<input aria-invalid={Boolean(form.formState.errors.supply)} aria-describedby={form.formState.errors.supply ? "setup-supply-error" : undefined} inputMode="numeric" {...form.register("supply")} />{form.formState.errors.supply && <small id="setup-supply-error" className="field-error">{form.formState.errors.supply.message}</small>}</label>
+                <label>Initial supply <span className="field-qualifier">display units</span><input aria-invalid={Boolean(form.formState.errors.supply)} aria-describedby={form.formState.errors.supply ? "setup-supply-error" : "setup-supply-help"} inputMode="numeric" {...form.register("supply")} />{form.formState.errors.supply ? <small id="setup-supply-error" className="field-error">{form.formState.errors.supply.message}</small> : <small id="setup-supply-help">The signer issues this value × 10<sup>precision</sup> exact base units.</small>}</label>
               </div>
               <label>Network<select aria-invalid={Boolean(form.formState.errors.network)} aria-describedby={form.formState.errors.network ? "setup-network-error" : undefined} {...form.register("network")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select>{form.formState.errors.network && <small id="setup-network-error" className="field-error">{form.formState.errors.network.message}</small>}</label>
               <fieldset>
@@ -1065,7 +1064,7 @@ export function AdminSetup() {
                   <div className="review-row"><span>Network</span><strong>{configuration.network === "liquid-testnet" ? "Liquid testnet" : "Elements regtest"}</strong></div>
                   <div className="review-row"><span>Funding</span><strong>{fundingPlan.confirmedOutputs} confirmed outputs · {formatUnits(fundingPlan.confirmedBalance, 8)} L-BTC</strong></div>
                   <div className="review-row"><span>Network fee</span><strong>0.00002 L-BTC</strong></div>
-                  <div className="review-row"><span>Issued supply</span><strong>{configuration.supply} {configuration.ticker} base units</strong></div>
+                  <div className="review-row"><span>Issued supply</span><strong>{configuration.supply} {configuration.ticker} display units · {displaySupplyToBaseUnits(configuration.supply, configuration.precision).toString()} base units</strong></div>
                   <div className="review-row"><span>Destinations</span><strong>Signer holder covenant{configuration.supplyMode === "issuer-managed" ? " + signer reissuance token" : ""}</strong></div>
                   <div className="review-buttons"><button className="button secondary" disabled={Boolean(busyAction)} type="button" onClick={() => setReviewIssuance(false)}>Back</button><button className="button issuer-primary" disabled={Boolean(busyAction) || Boolean(bootstrapped) || !signer.walletReady || !fundingReady} type="button" onClick={bootstrap}>{bootstrapped ? "Already broadcast" : busyAction === "issue" ? "Validating and signing…" : !signer.walletReady ? "Sync wallet before signing" : "Sign and broadcast"}</button></div>
                 </div>}

@@ -130,13 +130,16 @@ describe("DAMP signer wallet popover content", () => {
 
   it("switches a saved disposable debug profile directly without an unlock form", () => {
     const onProfileSelect = vi.fn();
-    render(<WalletPopoverContent profiles={[{ ...profileA, active: false }, profileB]} selectedProfileId={profileA.id} connectionNetworkLocked onProfileSelect={onProfileSelect} onConnect={vi.fn()} onRefresh={vi.fn()} onDisconnect={vi.fn()} />);
+    const stableProps = { profiles: [{ ...profileA, active: false }, profileB], connectionNetworkLocked: true, onProfileSelect, onConnect: vi.fn(), onRefresh: vi.fn(), onDisconnect: vi.fn() };
+    const { rerender } = render(<WalletPopoverContent {...stableProps} selectedProfileId={profileA.id} />);
     fireEvent.click(screen.getByRole("button", { name: "Saved debug profile" }));
     fireEvent.click(screen.getByRole("option", { name: /QA Bob.*11223344.*Liquid testnet/ }));
     expect(onProfileSelect).toHaveBeenCalledWith(profileB.id);
-    expect(screen.getByLabelText("Recovery phrase or NEW")).toHaveValue("");
+    rerender(<WalletPopoverContent {...stableProps} selectedProfileId={profileB.id} connecting />);
+    expect(screen.queryByLabelText("Recovery phrase or NEW")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Connecting QA Bob");
     expect(screen.queryByText(/unlock|locked/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/stored unencrypted/i)).toBeInTheDocument();
+    expect(screen.getByText(/browser-stored test phrase/i)).toBeInTheDocument();
   });
 
   it("keeps identity compact and profile management secondary", () => {

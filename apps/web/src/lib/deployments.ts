@@ -10,6 +10,7 @@ export const deploymentQueryKeys = {
   state: ["deployments", "authoritative-state"] as const,
   activeId: ["deployments", "authoritative-state"] as const,
   active: ["deployments", "authoritative-state"] as const,
+  official: ["deployments", "official-catalog"] as const,
 };
 
 export type DeploymentState = {
@@ -106,6 +107,14 @@ export function useDeployments() {
   });
 }
 
+export function useOfficialDeployments() {
+  return useQuery({
+    queryKey: deploymentQueryKeys.official,
+    queryFn: () => fetchCanonicalDeploymentCatalog(),
+    staleTime: 60_000,
+  });
+}
+
 export function useActiveDeployment() {
   return useQuery({
     queryKey: deploymentQueryKeys.state,
@@ -127,10 +136,17 @@ export function useActiveDeploymentId() {
 export function useSelectDeployment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: setActiveDeploymentId,
-    onSuccess: async () => {
+    mutationFn: async (deploymentId: string) => {
+      await setActiveDeploymentId(deploymentId);
+      return deploymentId;
+    },
+    onSuccess: async (deploymentId) => {
+      queryClient.setQueryData<DeploymentState>(deploymentQueryKeys.state, (current) => {
+        if (!current) return current;
+        const active = current.deployments.find((deployment) => deployment.deploymentId === deploymentId);
+        return active ? { ...current, activeId: deploymentId, active } : current;
+      });
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.all }),
         queryClient.invalidateQueries({ queryKey: ["anchor"] }),
         queryClient.invalidateQueries({ queryKey: ["wallet-sync"] }),
         queryClient.invalidateQueries({ queryKey: ["policy"] }),

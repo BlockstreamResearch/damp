@@ -164,7 +164,7 @@ function DeploymentSelector() {
   const selectDeployment = useSelectDeployment();
   if (deployments.isPending) return <small role="status">Checking asset registry…</small>;
   if (deployments.error) return <small role="alert" title={deployments.error instanceof Error ? deployments.error.message : String(deployments.error)}>Asset registry unavailable</small>;
-  if (!deployments.data?.length) return <small>No deployment selected</small>;
+  if (!deployments.data?.length) return <small>Choose a trusted source below</small>;
   return <DeploymentControl deployments={deployments.data} activeId={activeId.data ?? undefined} onSelect={(deploymentId) => selectDeployment.mutate(deploymentId)} />;
 }
 
@@ -542,6 +542,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
           })}
           onDisconnect={() => {
             disconnectSigner();
+            setSelectedProfileId(undefined);
             setProfileAction(undefined);
             setPendingProfileSwitch(undefined);
             setConnectionNotice(undefined);
@@ -648,19 +649,22 @@ export function WalletPopoverContent({
   const profileManagementTriggerRef = useRef<HTMLButtonElement>(null);
 
   if (!model) {
+    const selectedSavedProfile = profiles.find((profile) => profile.id === selectedProfileId);
     return (
       <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="DAMP signer wallet" tabIndex={-1} ref={panelRef}>
         <span className="overline">DAMP Signer SDK</span>
         <h2>No signer connected</h2>
         <p>Choose a saved disposable debug profile, or add another test-only recovery phrase.</p>
-        <form className="wallet-connect-form" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}>
-          {profiles.length > 0 && <div className="wallet-profile-remembered"><SignerProfilePicker label="Saved debug profile" profiles={profiles} selectedId={selectedProfileId} onSelect={onProfileSelect} onUseDifferentProfile={onUseDifferentProfile} /><small>Choosing a saved profile switches directly. Its test-only recovery phrase is stored unencrypted in this browser.</small></div>}
-          <label>Network<select aria-label="Signer network" disabled={connecting || connectionNetworkLocked} value={connectionNetwork} onChange={(event) => onConnectionNetwork(event.target.value as "liquid-testnet" | "elements-regtest")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label>
-          {connectionNetworkLocked && <small>The selected deployment locks the signer network to {networkLabel(connectionNetwork)}.</small>}
-          <label>Recovery phrase or NEW<input aria-describedby="wallet-connect-help" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label>
-          <small id="wallet-connect-help"><strong>Debug only:</strong> every profile phrase is saved unencrypted for direct switching and reload testing. Never use a profile that controls real funds. Profiles are different signer phrases, not BIP account indexes.</small>
-          <button className="button primary wide" type="submit" disabled={connecting}>{connecting ? "Connecting…" : "Connect and save debug signer"}</button>
-        </form>
+        <div className="wallet-connect-form">
+          {profiles.length > 0 && <div className="wallet-profile-remembered"><SignerProfilePicker label="Saved debug profile" profiles={profiles} selectedId={selectedProfileId} onSelect={onProfileSelect} onUseDifferentProfile={onUseDifferentProfile} /><small>Choosing a saved profile connects it directly using its browser-stored test phrase; no phrase re-entry is required.</small></div>}
+          {selectedSavedProfile ? <p className="saved-profile-connecting" role="status">{connecting ? `Connecting ${selectedSavedProfile.label}…` : `${selectedSavedProfile.label} selected. Wallet synchronization is starting.`}</p> : <form className="wallet-fresh-connect-form" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}>
+            <label>Network<select aria-label="Signer network" disabled={connecting || connectionNetworkLocked} value={connectionNetwork} onChange={(event) => onConnectionNetwork(event.target.value as "liquid-testnet" | "elements-regtest")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label>
+            {connectionNetworkLocked && <small>The selected deployment locks the signer network to {networkLabel(connectionNetwork)}.</small>}
+            <label>Recovery phrase or NEW<input aria-describedby="wallet-connect-help" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label>
+            <small id="wallet-connect-help"><strong>Debug only:</strong> every profile phrase is saved unencrypted for direct switching and reload testing. Never use a profile that controls real funds. Profiles are different signer phrases, not BIP account indexes.</small>
+            <button className="button primary wide" type="submit" disabled={connecting}>{connecting ? "Connecting…" : "Connect and save debug signer"}</button>
+          </form>}
+        </div>
         {connectionNotice && <p className={`wallet-popover-status ${connectionNotice.tone}`} role="status" aria-live="polite">{connectionNotice.message}</p>}
       </div>
     );

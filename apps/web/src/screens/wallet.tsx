@@ -27,7 +27,7 @@ import {
   broadcastTransaction,
   liveAnchorUtxo,
 } from "../lib/chain-wallet";
-import { deploymentQueryKeys, useActiveDeployment, useDeployments } from "../lib/deployments";
+import { deploymentQueryKeys, useActiveDeployment, useOfficialDeployments } from "../lib/deployments";
 import {
   formatUnits,
   networkLabel,
@@ -47,7 +47,7 @@ import {
 } from "../lib/deployment-import";
 import { esploraUrlForDeployment, requireFreshAnchor, traverseLiveAnchor } from "../lib/esplora";
 import { liquidTestnetFaucetUrl } from "../lib/faucet";
-import { customGitHubManifestSource, registryRepositoryUrl } from "../lib/github";
+import { canonicalRegistryContent, customGitHubManifestSource, registryRepositoryUrl, type CanonicalDeployment } from "../lib/github";
 import { resolvePolicySnapshot } from "../lib/policy-registry";
 import { classifyRegulatedFunds, type RegulatedFunds } from "../lib/regulated-funds";
 import { sendSchema, type SendForm } from "../lib/form-schemas";
@@ -150,12 +150,7 @@ export function WalletDashboard() {
   return (
     <AppShell eyebrow="Holder wallet" title="Your regulated assets">
       {!deployment.data ? (
-        <div className="empty-state">
-          <span className="empty-icon"><WalletCards size={24} /></span>
-          <h2>No deployment selected</h2>
-          <p>Import and verify canonical public deployment data without an issuer key.</p>
-          <Link className="button primary" to="/wallet/import">Import public deployment</Link>
-        </div>
+        <HolderOnboarding />
       ) : (
         <>
           {!signer.connected && <div className="first-run-callout" role="status"><div><strong>Connect a test signer to use this deployment</strong><p>The selected network is prefilled. Create or restore a disposable debug profile to synchronize balances and enable receiving and sending.</p></div><button className="button primary" type="button" onClick={() => document.getElementById("damp-signer-trigger")?.click()}>Connect test signer</button></div>}
@@ -203,29 +198,52 @@ export function WalletDashboard() {
 }
 
 export function WalletImport() {
+  return (
+    <AppShell eyebrow="Holder wallet / Import" title="Import public deployment data">
+      <BackLink to="/wallet">Back to wallet</BackLink>
+      <HolderOnboarding />
+    </AppShell>
+  );
+}
+
+function HolderOnboarding() {
   const queryClient = useQueryClient();
-  const deployments = useDeployments();
+  const official = useOfficialDeployments();
   const [source, setSource] = useState("");
   const [sourceKind, setSourceKind] = useState<"custom" | "manual">("custom");
   const [busy, setBusy] = useState(false);
+  const [busyOfficialId, setBusyOfficialId] = useState<string>();
+  const [officialImportError, setOfficialImportError] = useState<string>();
   const [error, setError] = useState<string>();
   const [imported, setImported] = useState<Deployment>();
   const sourceRef = useRef<HTMLTextAreaElement>(null);
   const customSourceRef = useRef<HTMLInputElement>(null);
+
+  async function finishImport(value: string, registryRepository?: string) {
+    const result = await validatePublicDeploymentImport(value, {}, registryRepository);
+    const deployment = await persistPublicDeploymentImport(result);
+    setImported(deployment);
+    await queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.all });
+  }
+
+  async function importOfficialDeployment(entry: CanonicalDeployment) {
+    setBusyOfficialId(entry.deploymentId);
+    setOfficialImportError(undefined);
+    try {
+      await finishImport(canonicalRegistryContent(entry.manifest));
+    } catch (failure) {
+      setOfficialImportError(userFacingError(failure));
+    } finally {
+      setBusyOfficialId(undefined);
+    }
+  }
 
   async function importPublicDeployment() {
     setBusy(true);
     setError(undefined);
     try {
       const custom = sourceKind === "custom" ? await customGitHubManifestSource(source) : undefined;
-      const result = await validatePublicDeploymentImport(custom?.manifestUrl ?? source, {}, custom?.sourceRepository);
-      const deployment = await persistPublicDeploymentImport(result);
-      setImported(deployment);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.all }),
-        queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.activeId }),
-        queryClient.invalidateQueries({ queryKey: deploymentQueryKeys.active }),
-      ]);
+      await finishImport(custom?.manifestUrl ?? source, custom?.sourceRepository);
     } catch (failure) {
       setError(userFacingError(failure));
       requestAnimationFrame(() => {
@@ -238,24 +256,22 @@ export function WalletImport() {
   }
 
   return (
-    <AppShell eyebrow="Holder wallet / Import" title="Import public deployment data">
-      <BackLink to="/wallet">Back to wallet</BackLink>
-      <div className="flow-layout">
+      <div className="flow-layout holder-onboarding">
         <Panel className="flow-main">
           <SectionHeading label="Choose a trusted source" title="Add a public deployment" />
           {imported ? <div className="operation-receipt" role="status"><Check size={26} /><h3>Deployment ready</h3><p>The source manifest, live anchor, and live policy were verified. No issuer-key locator was created.</p><dl><div><dt>Deployment</dt><dd><code>{shortHash(imported.deploymentId, 12, 10)}</code></dd></div><div><dt>Registry state</dt><dd>{publicationLabel(imported.publication)}</dd></div></dl><Link className="button primary wide" to="/wallet">Open holder wallet</Link></div> : <>
             <div className="onboarding-source-grid">
-              <section><ShieldCheck size={20} /><div><strong>Official public registry</strong><p>Automatically synchronized from the product repository. Published records are removed locally if they disappear or change.</p><small role={deployments.error ? "alert" : "status"}>{deployments.isPending ? "Synchronizing…" : deployments.error ? `Sync failed: ${userFacingError(deployments.error)}` : `${deployments.data?.length ?? 0} deployment${deployments.data?.length === 1 ? "" : "s"} available`}</small></div><a className="button secondary" href={registryRepositoryUrl} target="_blank" rel="noreferrer">View source <ExternalLink size={14} /></a></section>
+              <section className="official-registry-source"><ShieldCheck size={20} /><div><strong>Official public registry</strong><p>Discover and verify deployments published in the official GitHub repository.</p><small role={official.error ? "alert" : "status"}>{official.isPending ? "Synchronizing official GitHub deployments…" : official.error ? `Official sync failed: ${userFacingError(official.error)}` : `${official.data?.length ?? 0} deployment${official.data?.length === 1 ? "" : "s"} available`}</small></div><a className="button secondary" href={registryRepositoryUrl} target="_blank" rel="noreferrer">View source <ExternalLink size={14} /></a>{official.data?.length ? <div className="official-deployment-list" aria-label="Official deployments">{official.data.map((entry) => <button className="official-deployment-choice" disabled={Boolean(busyOfficialId) || busy} key={entry.deploymentId} type="button" onClick={() => void importOfficialDeployment(entry)}><span><strong>{entry.manifest.asset.name}</strong><small>{entry.manifest.asset.ticker} · {shortHash(entry.deploymentId, 10, 8)}</small></span><span>{busyOfficialId === entry.deploymentId ? "Verifying…" : "Import"}</span></button>)}</div> : null}{officialImportError ? <small className="field-error" role="alert">Official import failed: {officialImportError}</small> : null}</section>
               <section><Upload size={20} /><div><strong>Custom GitHub registry</strong><p>Trusts the repository you specify. The manifest must be on its default branch; DAMP pins that repository for later policy resolution.</p></div><button className={`button ${sourceKind === "custom" ? "primary" : "secondary"}`} type="button" onClick={() => { setSourceKind("custom"); setSource(""); setError(undefined); }}>Use custom GitHub</button></section>
+              <section><Info size={20} /><div><strong>Advanced manual import</strong><p>Paste canonical manifest JSON or a direct HTTPS URL, then verify it against the official registry.</p></div><button className="button secondary" type="button" onClick={() => { setSourceKind("manual"); setSource(""); setError(undefined); requestAnimationFrame(() => sourceRef.current?.focus()); }}>Open manual import</button></section>
               <section><WalletCards size={20} /><div><strong>Create your own asset</strong><p>Switch to Issuer Console Setup to create a new regulated asset and deployment.</p></div><Link className="button secondary" to="/admin/setup">Open Issuer Setup</Link></section>
             </div>
             {sourceKind === "custom" ? <div className="form-stack source-entry"><label>Custom GitHub manifest URL<input ref={customSourceRef} aria-invalid={Boolean(error)} aria-describedby={error ? "holder-import-error" : "holder-import-help"} placeholder="https://github.com/owner/repo/blob/main/deployments/….json" value={source} onChange={(event) => { setSource(event.target.value); setError(undefined); }} />{error ? <small id="holder-import-error" className="field-error">{error}</small> : <small id="holder-import-help">The repository becomes a trusted policy source for this deployment. Its default branch and canonical bytes are verified.</small>}</label><button className="button primary wide" disabled={busy || !source.trim()} type="button" onClick={() => void importPublicDeployment()}>{busy ? "Verifying custom registry…" : "Import from custom GitHub"} <Upload size={16} /></button></div> : null}
-            <details className="advanced-import"><summary>Advanced: manual manifest import</summary><div className="form-stack"><label>Manifest JSON or HTTPS URL<textarea ref={sourceKind === "manual" ? sourceRef : undefined} aria-invalid={Boolean(error)} aria-describedby={error ? "holder-import-error" : "holder-import-help"} rows={10} value={sourceKind === "manual" ? source : ""} onFocus={() => { if (sourceKind !== "manual") { setSourceKind("manual"); setSource(""); setError(undefined); } }} onChange={(event) => { setSourceKind("manual"); setSource(event.target.value); setError(undefined); }} />{sourceKind === "manual" && error ? <small id="holder-import-error" className="field-error">{error}</small> : <small id="holder-import-help">Advanced import still requires byte-identical publication in the official registry.</small>}</label><button className="button secondary wide" disabled={busy || sourceKind !== "manual" || !source.trim()} type="button" onClick={() => void importPublicDeployment()}>{busy ? "Verifying public data…" : "Verify and import manifest"}</button></div></details>
+            {sourceKind === "manual" ? <div className="form-stack source-entry"><label>Manifest JSON or HTTPS URL<textarea ref={sourceRef} aria-invalid={Boolean(error)} aria-describedby={error ? "holder-import-error" : "holder-import-help"} rows={10} value={source} onChange={(event) => { setSource(event.target.value); setError(undefined); }} />{error ? <small id="holder-import-error" className="field-error">{error}</small> : <small id="holder-import-help">Manual import still requires byte-identical publication in the official registry.</small>}</label><button className="button secondary wide" disabled={busy || !source.trim()} type="button" onClick={() => void importPublicDeployment()}>{busy ? "Verifying public data…" : "Verify and import manifest"}</button></div> : null}
           </>}
         </Panel>
         <aside className="flow-aside"><SafetyNote title="Source and authority">Importing trusts the selected public repository for deployment and policy bytes. It stores no issuer authority; governance requires a separate local issuer-key attachment in Issuer Setup.</SafetyNote></aside>
       </div>
-    </AppShell>
   );
 }
 
@@ -652,6 +668,7 @@ export function WalletSend() {
     && signerMatchesDeployment,
   );
   const walletReady = Boolean(synchronizedSnapshot && !walletError && !wallet.isPending && !wallet.isFetching);
+  const hasSpendableFunds = Boolean(transferFunds && transferFunds.spendable > 0n);
   const policyReady = Boolean(liveState.data && !liveState.error && !liveState.isPending && !liveState.isFetching);
   const recipientValidating = recipientValidation.status === "validating";
   const canReview = form.formState.isValid
@@ -662,7 +679,7 @@ export function WalletSend() {
     && recipientValidation.source === form.getValues("recipient").trim()
     && !contextError
     && !reviewBusy
-    && Boolean(transferFunds && transferFunds.spendable > 0n);
+    && hasSpendableFunds;
 
   return (
     <AppShell eyebrow="Holder wallet / Send" title="Build a regulated transfer">
@@ -678,7 +695,7 @@ export function WalletSend() {
               <div className="transfer-readiness" aria-label="Transfer readiness">
                 <div><span>Deployment</span><Pill tone="good">Published + canonical</Pill></div>
                 <div><span>Signer profile</span><Pill tone={signerReady ? "good" : "warn"}>{signerReady ? "Connected + synced" : "Action needed"}</Pill></div>
-                <div><span>Wallet funds</span><Pill tone={walletReady ? "good" : walletError ? "warn" : "blue"}>{walletReady ? "Verified" : walletError ? "Sync error" : "Synchronizing"}</Pill></div>
+                <div><span>Wallet funds</span><Pill tone={walletReady && hasSpendableFunds ? "good" : walletReady || walletError ? "warn" : "blue"}>{walletReady ? hasSpendableFunds ? "Spendable asset ready" : "No spendable asset" : walletError ? "Sync error" : "Synchronizing"}</Pill></div>
                 <div><span>Live policy + anchor</span><Pill tone={policyReady ? "good" : liveState.error ? "warn" : "blue"}>{policyReady ? `D${liveState.data!.policy.treeDepth} current` : liveState.error ? "Check failed" : "Checking"}</Pill></div>
               </div>
               {(contextError || walletError || liveState.error) && <div className="transfer-error-summary" role="alert" tabIndex={-1} ref={contextErrorRef}><strong>Transfer is not ready</strong><p>{contextError ?? walletError ?? userFacingError(liveState.error)}</p><div><button className="button secondary" type="button" disabled={wallet.isFetching} onClick={() => void wallet.refetch()}>Refresh wallet</button><button className="button secondary" type="button" disabled={liveState.isFetching} onClick={() => void liveState.refetch()}>Recheck policy</button></div></div>}
