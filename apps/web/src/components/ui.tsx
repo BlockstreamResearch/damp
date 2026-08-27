@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   ArrowLeft,
   BadgeCheck,
@@ -143,7 +143,7 @@ export function AppShell({
             <span><small>Current mode</small><strong>{role === "holder" ? "Holder Wallet" : "Issuer Console"}</strong></span>
             <span className="workspace-switch-label">Switch</span>
           </Link>
-          <div className="workspace-deployment"><DeploymentSelector /></div>
+          <div className="workspace-deployment"><DeploymentSelector role={role} /></div>
         </div>
         <header className="page-header">
           <div>
@@ -158,14 +158,15 @@ export function AppShell({
   );
 }
 
-function DeploymentSelector() {
+function DeploymentSelector({ role }: { role: "holder" | "issuer" }) {
   const deployments = useDeployments();
   const activeId = useActiveDeploymentId();
   const selectDeployment = useSelectDeployment();
+  const navigate = useNavigate();
   if (deployments.isPending) return <DeploymentStatus state="loading">Checking asset registry…</DeploymentStatus>;
   if (deployments.error) return <DeploymentStatus state="error" title={deployments.error instanceof Error ? deployments.error.message : String(deployments.error)}>Registry unavailable</DeploymentStatus>;
   if (!deployments.data?.length) return <DeploymentStatus>Choose a trusted source</DeploymentStatus>;
-  return <DeploymentControl deployments={deployments.data} activeId={activeId.data ?? undefined} busy={selectDeployment.isPending} onSelect={(deploymentId) => selectDeployment.mutate(deploymentId)} />;
+  return <DeploymentControl deployments={deployments.data} activeId={activeId.data ?? undefined} busy={selectDeployment.isPending} onImport={role === "holder" ? () => void navigate({ to: "/wallet/import" }) : undefined} onSelect={(deploymentId) => selectDeployment.mutate(deploymentId)} />;
 }
 
 function DeploymentStatus({ children, state = "empty", title }: { children: ReactNode; state?: "empty" | "loading" | "error"; title?: string }) {

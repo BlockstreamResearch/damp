@@ -8,12 +8,27 @@ vi.mock("./wallet-sync", () => ({
   synchronizeDeploymentWallet: vi.fn(),
 }));
 
-import { walletSyncPresentation } from "./wallet-query";
+import { shouldShowPolicyBalanceChecking, walletSyncPresentation } from "./wallet-query";
 import type { WalletSyncSnapshot } from "./wallet-sync";
 
 const snapshot = { utxos: [], addresses: [] } as unknown as WalletSyncSnapshot;
 
 describe("wallet synchronization presentation", () => {
+  it("shows policy balance progress only for a connected matching signer", () => {
+    const pending = {
+      signerConnected: true,
+      signerMatchesDeployment: true,
+      deploymentPublished: true,
+      policyPending: true,
+      hasPolicy: false,
+    };
+
+    expect(shouldShowPolicyBalanceChecking(pending)).toBe(true);
+    expect(shouldShowPolicyBalanceChecking({ ...pending, signerConnected: false })).toBe(false);
+    expect(shouldShowPolicyBalanceChecking({ ...pending, signerMatchesDeployment: false })).toBe(false);
+    expect(shouldShowPolicyBalanceChecking({ ...pending, hasPolicy: true })).toBe(false);
+  });
+
   it("never presents a first-sync failure as a healthy zero or last-good state", () => {
     expect(walletSyncPresentation({ connected: true, error: new Error("Waterfalls unavailable") })).toEqual({
       state: "error",

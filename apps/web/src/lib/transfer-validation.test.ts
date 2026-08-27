@@ -188,6 +188,12 @@ describe("transfer funding selection", () => {
     expect(result.fee).toBeGreaterThanOrEqual(500n);
   });
 
+  it("prices the conservative finalized shape at LWK's default fee rate", () => {
+    expect(estimateTransferFee(1)).toBe(500n);
+    expect(estimateTransferFee(6)).toBe(500n);
+    expect(estimateTransferFee(10)).toBe(570n);
+  });
+
   it("distinguishes pending balance, the ten-input limit, blacklist exclusion, and fee recovery", () => {
     expect(() => selectTransferFunding({ snapshot: snapshot([holderUtxo("1", 0, 100n), holderUtxo("2", 0, 100n, "unconfirmed"), feeUtxo("3", 0, 5_000n)]), deployment, policy, profileId, amount: 150n }))
       .toThrow(/wait for pending funds/i);

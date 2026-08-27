@@ -8,7 +8,7 @@ vi.mock("./store", () => ({
 }));
 
 import { localDeploymentSchema, publicManifest, requirePublishedDeployment } from "./domain";
-import { loadDeploymentState } from "./deployments";
+import { deploymentImportState, loadDeploymentState } from "./deployments";
 
 const base = {
   schema: "simplicity-amp-registry-v1",
@@ -35,6 +35,15 @@ const base = {
 } as const;
 
 describe("deployment operation gating", () => {
+  it("distinguishes active, imported, and available registry deployments", () => {
+    const imported = localDeploymentSchema.parse({ ...base, publication: "published" });
+    const otherId = "0a".repeat(32);
+
+    expect(deploymentImportState(imported.deploymentId, [imported], imported.deploymentId)).toBe("active");
+    expect(deploymentImportState(imported.deploymentId, [imported], otherId)).toBe("imported");
+    expect(deploymentImportState(otherId, [imported], imported.deploymentId)).toBe("available");
+  });
+
   it("allows only canonical-published deployments", () => {
     const published = localDeploymentSchema.parse({ ...base, publication: "published" });
     expect(requirePublishedDeployment(published)).toBe(published);

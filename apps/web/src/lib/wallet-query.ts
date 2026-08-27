@@ -24,6 +24,20 @@ export type WalletSyncPresentation = {
   message?: string;
 };
 
+export function shouldShowPolicyBalanceChecking(input: {
+  signerConnected: boolean;
+  signerMatchesDeployment: boolean;
+  deploymentPublished: boolean;
+  policyPending: boolean;
+  hasPolicy: boolean;
+}) {
+  return input.signerConnected
+    && input.signerMatchesDeployment
+    && input.deploymentPublished
+    && input.policyPending
+    && !input.hasPolicy;
+}
+
 export function walletSyncPresentation(input: {
   connected: boolean;
   snapshot?: WalletSyncSnapshot;

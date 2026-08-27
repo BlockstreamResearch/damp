@@ -16,7 +16,7 @@ describe("blacklist table semantics", () => {
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
     expect(container.querySelector('td[data-label="Outpoint"]')).toBeInTheDocument();
     expect(container.querySelector('td[data-label="Note"]')).toHaveTextContent("Compliance case");
-    expect(screen.getByText("Blacklisted — cannot be spent")).toBeInTheDocument();
+    expect(screen.getByText("Blocklisted")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Draft removal of outpoint/ }));
     expect(onRemove).toHaveBeenCalledWith(entry);
   });

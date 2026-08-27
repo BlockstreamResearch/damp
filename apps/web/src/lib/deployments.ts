@@ -19,6 +19,19 @@ export type DeploymentState = {
   active: Deployment | null;
 };
 
+export type DeploymentImportState = "active" | "imported" | "available";
+
+export function deploymentImportState(
+  deploymentId: string,
+  deployments: readonly Deployment[] | undefined,
+  activeDeploymentId: string | undefined,
+): DeploymentImportState {
+  if (deploymentId === activeDeploymentId) return "active";
+  return deployments?.some((deployment) => deployment.deploymentId === deploymentId)
+    ? "imported"
+    : "available";
+}
+
 export type DeploymentStateDependencies = {
   catalog: () => Promise<CanonicalDeployment[]>;
   customCatalog: (repository: string) => Promise<CanonicalDeployment[]>;

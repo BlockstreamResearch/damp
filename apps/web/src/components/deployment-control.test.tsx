@@ -29,6 +29,17 @@ describe("active deployment control", () => {
     expect(onSelect).toHaveBeenCalledWith(second.deploymentId);
   });
 
+  it("offers the holder import flow without changing the active deployment", () => {
+    const onImport = vi.fn();
+    const onSelect = vi.fn();
+    render(<DeploymentControl deployments={[first]} activeId={first.deploymentId} onImport={onImport} onSelect={onSelect} />);
+    const select = screen.getByRole("combobox", { name: "Active deployment" });
+    expect(screen.getByRole("option", { name: "Import new deployment…" })).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "import-deployment" } });
+    expect(onImport).toHaveBeenCalledOnce();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("exposes a readable disabled state while switching deployments", () => {
     render(<DeploymentControl deployments={[first, second]} activeId={first.deploymentId} busy onSelect={vi.fn()} />);
     const select = screen.getByRole("combobox", { name: "Active deployment" });

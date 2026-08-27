@@ -35,7 +35,7 @@ export function BlacklistTable({
               <tr key={outpoint}>
                 <td data-label="Outpoint"><code>{shortHash(entry.txid, 10, 8)}:{entry.vout}</code></td>
                 <td data-label="Note">{entry.note ?? "—"}</td>
-                <td data-label="State"><span className={`pill ${removed ? "warn" : active ? "danger" : "warn"}`}>{removed ? "Removal drafted" : active ? "Blacklisted — cannot be spent" : "Addition drafted"}</span></td>
+                <td data-label="State"><span className={`pill ${removed ? "warn" : active ? "danger" : "warn"}`}>{removed ? "Removal drafted" : active ? "Blocklisted" : "Addition drafted"}</span></td>
                 <td data-label="Actions">{removed
                   ? <button aria-label={`Undo removal of outpoint ${shortHash(entry.txid, 8, 6)}:${entry.vout}`} className="icon-button" disabled={disabled} type="button" onClick={() => onUndoRemoval(entry)}><RotateCcw size={15} /></button>
                   : <button aria-label={`Draft removal of outpoint ${shortHash(entry.txid, 8, 6)}:${entry.vout}`} className="icon-button" disabled={disabled} type="button" onClick={() => onRemove(entry)}><Trash2 size={15} /></button>}

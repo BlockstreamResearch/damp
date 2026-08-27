@@ -27,7 +27,7 @@ import {
   broadcastTransaction,
   liveAnchorUtxo,
 } from "../lib/chain-wallet";
-import { deploymentQueryKeys, useActiveDeployment, useOfficialDeployments } from "../lib/deployments";
+import { deploymentImportState, deploymentQueryKeys, useActiveDeployment, useDeployments, useOfficialDeployments } from "../lib/deployments";
 import {
   formatUnits,
   networkLabel,
@@ -51,7 +51,7 @@ import { canonicalRegistryContent, customGitHubManifestSource, registryRepositor
 import { resolvePolicySnapshot } from "../lib/policy-registry";
 import { classifyRegulatedFunds, type RegulatedFunds } from "../lib/regulated-funds";
 import { sendSchema, type SendForm } from "../lib/form-schemas";
-import { useDeploymentWalletSync, walletSyncPresentation, walletSyncQueryKeys } from "../lib/wallet-query";
+import { shouldShowPolicyBalanceChecking, useDeploymentWalletSync, walletSyncPresentation, walletSyncQueryKeys } from "../lib/wallet-query";
 import {
   createOperationReceipt,
   dismissOperationReceipt,
@@ -62,6 +62,7 @@ import {
   tryBeginOperation,
 } from "../lib/operation-receipt";
 import { hasPendingSignerOperation, setSignerOperationPending } from "../lib/signer-operation-state";
+import { createWalletAssetCatalog, walletAssetDetails, type WalletAssetDetails } from "../lib/wallet-asset-catalog";
 import {
   assetBalances,
   ensureSignerHolderAddress,
@@ -81,6 +82,7 @@ import {
 
 export function WalletDashboard() {
   const deployment = useActiveDeployment();
+  const deployments = useDeployments();
   const signer = useSyncExternalStore(subscribeSigner, signerSnapshot, signerSnapshot);
   const signerMatchesDeployment = !deployment.data || signer.network === deployment.data.network;
   const wallet = useDeploymentWalletSync(
@@ -102,6 +104,7 @@ export function WalletDashboard() {
   const [feeMessage, setFeeMessage] = useState<string>();
   const snapshot = wallet.data?.snapshot;
   const balances = useMemo(() => assetBalances(snapshot), [snapshot]);
+  const assetCatalog = useMemo(() => createWalletAssetCatalog(deployments.data ?? (deployment.data ? [deployment.data] : [])), [deployment.data, deployments.data]);
   const regulated = balances.find((balance) => balance.assetId === deployment.data?.regulatedAsset);
   const regulatedFunds = useMemo(() => deployment.data && snapshot && policyVerification.data
     ? classifyRegulatedFunds(snapshot, deployment.data, policyVerification.data.policy)
@@ -122,7 +125,7 @@ export function WalletDashboard() {
   const feeState = deployment.data ? feeFundingState({
     snapshot,
     assetId: deployment.data.policyAsset,
-    minimum: 1_500n,
+    minimum: 500n,
     syncing: wallet.isFetching,
     syncError: networkError ?? syncError,
   }) : "loading";
@@ -130,7 +133,13 @@ export function WalletDashboard() {
   const canRequestTestFunds = presentation.state === "synced"
     && deployment.data?.network === "liquid-testnet"
     && Boolean(fundingAddress);
-  const policyChecking = deployment.data?.publication === "published" && policyVerification.isPending && !policyVerification.data;
+  const policyChecking = shouldShowPolicyBalanceChecking({
+    signerConnected: signer.connected,
+    signerMatchesDeployment,
+    deploymentPublished: deployment.data?.publication === "published",
+    policyPending: policyVerification.isPending,
+    hasPolicy: Boolean(policyVerification.data),
+  });
 
   async function refreshPortfolio() {
     if (!signer.connected) {
@@ -174,7 +183,7 @@ export function WalletDashboard() {
             </Panel>
             <Panel className="activity-card">
               <SectionHeading label="Wallet inventory" title="Assets" aside={<Pill tone={presentation.state === "error" || presentation.state === "stale" ? "warn" : presentation.state === "loading" || presentation.state === "syncing" ? "blue" : presentation.state === "synced" ? "good" : "neutral"}>{presentation.state === "stale" ? "Last good state" : presentation.state === "error" ? "Sync error" : presentation.state === "loading" ? "Loading" : presentation.state === "syncing" ? "Syncing" : presentation.state === "synced" ? "Synced" : "Disconnected"}</Pill>} />
-              {presentation.state === "disconnected" ? <p>Connect the signer to restore the wallet identified by its collision-resistant public account identity.</p> : presentation.state === "error" ? <div className="wallet-sync-error" role="alert"><p>Wallet balance is unknown because no verified snapshot is available.</p><small>{presentation.message}</small><button className="button secondary" type="button" onClick={() => void wallet.refetch()}>Retry synchronization</button></div> : balances.length === 0 && !snapshot ? <p>Discovering wallet addresses and outputs…</p> : balances.length === 0 ? <p>No wallet assets found.</p> : <div className="asset-list">{balances.map((balance) => <AssetRow key={balance.assetId} balance={balance} deployment={deployment.data!} regulatedFunds={balance.assetId === deployment.data!.regulatedAsset ? regulatedFunds : undefined} />)}</div>}
+              {presentation.state === "disconnected" ? <p>Connect the signer to restore the wallet identified by its collision-resistant public account identity.</p> : presentation.state === "error" ? <div className="wallet-sync-error" role="alert"><p>Wallet balance is unknown because no verified snapshot is available.</p><small>{presentation.message}</small><button className="button secondary" type="button" onClick={() => void wallet.refetch()}>Retry synchronization</button></div> : balances.length === 0 && !snapshot ? <p>Discovering wallet addresses and outputs…</p> : balances.length === 0 ? <p>No wallet assets found.</p> : <div className="asset-list">{balances.map((balance) => <AssetRow key={balance.assetId} balance={balance} activeDeployment={deployment.data!} asset={walletAssetDetails(assetCatalog, balance.assetId)} regulatedFunds={balance.assetId === deployment.data!.regulatedAsset ? regulatedFunds : undefined} />)}</div>}
               {snapshot && <small className="sync-time">Last successful sync {new Date(snapshot.syncedAt).toLocaleTimeString()} · through external #{snapshot.scannedThrough.external} and change #{snapshot.scannedThrough.change}</small>}
             </Panel>
           </div>
@@ -189,7 +198,7 @@ export function WalletDashboard() {
             </div>
           </Panel>
           {feeMessage && <p className="inline-message" role="status">{feeMessage}</p>}
-          {snapshot && <TechnicalDetails label="Wallet UTXOs"><div className="table-wrap"><table className="utxo-table"><caption>Current unspent and pending wallet outputs</caption><thead><tr><th scope="col">Outpoint</th><th scope="col">State</th><th scope="col">Asset</th><th scope="col">Amount</th></tr></thead><tbody>{snapshot.utxos.filter((utxo) => utxo.status !== "spent" && utxo.status !== "orphaned").map((utxo) => { const blacklisted = blacklistedOutpoints.has(`${utxo.txid}:${utxo.vout}`); const asset = walletUtxoAsset(utxo.assetId, deployment.data!); return <tr key={`${utxo.txid}:${utxo.vout}`}><td data-label="Outpoint"><code title={`${utxo.txid}:${utxo.vout}`}>{shortHash(utxo.txid)}:{utxo.vout}</code></td><td data-label="State">{blacklisted ? <Pill tone="danger">Blacklisted — cannot be spent</Pill> : <Pill tone={utxo.status === "confirmed" ? "good" : "warn"}>{utxo.status}</Pill>}</td><td data-label="Asset"><strong>{asset.label}</strong><code title={utxo.assetId}>{shortHash(utxo.assetId)}</code></td><td data-label="Amount">{formatUnits(utxo.amount, asset.precision)} {asset.ticker}</td></tr>; })}{snapshot.utxos.every((utxo) => utxo.status === "spent" || utxo.status === "orphaned") && <tr><td className="table-empty" colSpan={4}>No current outputs.</td></tr>}</tbody></table></div></TechnicalDetails>}
+          {snapshot && <TechnicalDetails label="Wallet UTXOs"><div className="table-wrap"><table className="utxo-table"><caption>Current unspent and pending wallet outputs</caption><thead><tr><th scope="col">Outpoint</th><th scope="col">State</th><th scope="col">Asset</th><th scope="col">Amount</th></tr></thead><tbody>{snapshot.utxos.filter((utxo) => utxo.status !== "spent" && utxo.status !== "orphaned").map((utxo) => { const blacklisted = blacklistedOutpoints.has(`${utxo.txid}:${utxo.vout}`); const asset = walletAssetDetails(assetCatalog, utxo.assetId); return <tr key={`${utxo.txid}:${utxo.vout}`}><td data-label="Outpoint"><code title={`${utxo.txid}:${utxo.vout}`}>{shortHash(utxo.txid)}:{utxo.vout}</code></td><td data-label="State">{blacklisted ? <Pill tone="danger">Blocklisted</Pill> : <Pill tone={utxo.status === "confirmed" ? "good" : "warn"}>{utxo.status}</Pill>}</td><td data-label="Asset"><strong>{asset.label}</strong><code title={utxo.assetId}>{shortHash(utxo.assetId)}</code></td><td data-label="Amount">{formatUnits(utxo.amount, asset.precision)} {asset.ticker}</td></tr>; })}{snapshot.utxos.every((utxo) => utxo.status === "spent" || utxo.status === "orphaned") && <tr><td className="table-empty" colSpan={4}>No current outputs.</td></tr>}</tbody></table></div></TechnicalDetails>}
           <TechnicalDetails label="Deployment details"><dl className="detail-grid"><div><dt>Asset ID</dt><dd>{deployment.data.regulatedAsset}</dd></div><div><dt>Genesis anchor</dt><dd>{deployment.data.genesisAnchor}</dd></div><div><dt>User program</dt><dd>{deployment.data.userProgramHash}</dd></div><div><dt>Governance program</dt><dd>{deployment.data.governanceProgramHash}</dd></div></dl></TechnicalDetails>
         </>
       )}
@@ -209,6 +218,8 @@ export function WalletImport() {
 function HolderOnboarding() {
   const queryClient = useQueryClient();
   const official = useOfficialDeployments();
+  const deployments = useDeployments();
+  const activeDeployment = useActiveDeployment();
   const [source, setSource] = useState("");
   const [sourceKind, setSourceKind] = useState<"custom" | "manual">("custom");
   const [busy, setBusy] = useState(false);
@@ -261,7 +272,7 @@ function HolderOnboarding() {
           <SectionHeading label="Choose a trusted source" title="Add a public deployment" />
           {imported ? <div className="operation-receipt" role="status"><Check size={26} /><h3>Deployment ready</h3><p>The source manifest, live anchor, and live policy were verified. No issuer-key locator was created.</p><dl><div><dt>Deployment</dt><dd><code>{shortHash(imported.deploymentId, 12, 10)}</code></dd></div><div><dt>Registry state</dt><dd>{publicationLabel(imported.publication)}</dd></div></dl><Link className="button primary wide" to="/wallet">Open holder wallet</Link></div> : <>
             <div className="onboarding-source-grid">
-              <section className="official-registry-source"><ShieldCheck size={20} /><div><strong>Official public registry</strong><p>Discover and verify deployments published in the official GitHub repository.</p><small role={official.error ? "alert" : "status"}>{official.isPending ? "Synchronizing official GitHub deployments…" : official.error ? `Official sync failed: ${userFacingError(official.error)}` : `${official.data?.length ?? 0} deployment${official.data?.length === 1 ? "" : "s"} available`}</small></div><a className="button secondary" href={registryRepositoryUrl} target="_blank" rel="noreferrer">View source <ExternalLink size={14} /></a>{official.data?.length ? <div className="official-deployment-list" aria-label="Official deployments">{official.data.map((entry) => <button className="official-deployment-choice" disabled={Boolean(busyOfficialId) || busy} key={entry.deploymentId} type="button" onClick={() => void importOfficialDeployment(entry)}><span><strong>{entry.manifest.asset.name}</strong><small>{entry.manifest.asset.ticker} · {shortHash(entry.deploymentId, 10, 8)}</small></span><span>{busyOfficialId === entry.deploymentId ? "Verifying…" : "Import"}</span></button>)}</div> : null}{officialImportError ? <small className="field-error" role="alert">Official import failed: {officialImportError}</small> : null}</section>
+              <section className="official-registry-source"><ShieldCheck size={20} /><div><strong>Official public registry</strong><p>Discover and verify deployments published in the official GitHub repository.</p><small role={official.error ? "alert" : "status"}>{official.isPending ? "Synchronizing official GitHub deployments…" : official.error ? `Official sync failed: ${userFacingError(official.error)}` : `${official.data?.length ?? 0} deployment${official.data?.length === 1 ? "" : "s"} available`}</small></div><a className="button secondary" href={registryRepositoryUrl} target="_blank" rel="noreferrer">View source <ExternalLink size={14} /></a>{official.data?.length ? <div className="official-deployment-list" aria-label="Official deployments">{official.data.map((entry) => { const state = deploymentImportState(entry.deploymentId, deployments.data, activeDeployment.data?.deploymentId); return <button className={`official-deployment-choice ${state}`} disabled={state !== "available" || Boolean(busyOfficialId) || busy} key={entry.deploymentId} type="button" onClick={() => void importOfficialDeployment(entry)}><span><strong>{entry.manifest.asset.name}</strong><small>{entry.manifest.asset.ticker} · {shortHash(entry.deploymentId, 10, 8)}</small></span><span>{busyOfficialId === entry.deploymentId ? "Verifying…" : state === "active" ? "Active" : state === "imported" ? "Imported" : "Import"}</span></button>; })}</div> : null}{officialImportError ? <small className="field-error" role="alert">Official import failed: {officialImportError}</small> : null}</section>
               <section><Upload size={20} /><div><strong>Custom GitHub registry</strong><p>Trusts the repository you specify. The manifest must be on its default branch; DAMP pins that repository for later policy resolution.</p></div><button className={`button ${sourceKind === "custom" ? "primary" : "secondary"}`} type="button" onClick={() => { setSourceKind("custom"); setSource(""); setError(undefined); }}>Use custom GitHub</button></section>
               <section><Info size={20} /><div><strong>Advanced manual import</strong><p>Paste canonical manifest JSON or a direct HTTPS URL, then verify it against the official registry.</p></div><button className="button secondary" type="button" onClick={() => { setSourceKind("manual"); setSource(""); setError(undefined); requestAnimationFrame(() => sourceRef.current?.focus()); }}>Open manual import</button></section>
               <section><WalletCards size={20} /><div><strong>Create your own asset</strong><p>Switch to Issuer Console Setup to create a new regulated asset and deployment.</p></div><Link className="button secondary" to="/admin/setup">Open Issuer Setup</Link></section>
@@ -275,21 +286,9 @@ function HolderOnboarding() {
   );
 }
 
-function AssetRow({ balance, deployment, regulatedFunds }: { balance: AssetBalance; deployment: Deployment; regulatedFunds?: RegulatedFunds }) {
-  const regulated = balance.assetId === deployment.regulatedAsset;
-  const policy = balance.assetId === deployment.policyAsset;
-  const token = balance.assetId === deployment.reissuanceToken;
-  const label = regulated ? deployment.asset.name : policy ? "Liquid Bitcoin" : token ? "Reissuance token" : shortHash(balance.assetId);
-  const ticker = regulated ? deployment.asset.ticker : policy ? "L-BTC" : token ? "TOKEN" : "units";
-  const precision = regulated ? deployment.asset.precision : policy ? 8 : 0;
-  return <div><span><strong>{label}</strong><small>{shortHash(balance.assetId)}</small></span><span><strong>{regulated && regulatedFunds ? `${formatUnits(regulatedFunds.spendable, precision)} ${ticker} spendable` : `${formatUnits(balance.confirmed, precision)} ${ticker}`}</strong>{regulated && regulatedFunds?.blacklisted ? <small className="asset-blacklisted">{formatUnits(regulatedFunds.blacklisted, precision)} blacklisted — cannot be spent</small> : balance.pending > 0n ? <small>+{formatUnits(balance.pending, precision)} pending</small> : <small>{balance.confirmedUtxos} confirmed output{balance.confirmedUtxos === 1 ? "" : "s"}</small>}</span></div>;
-}
-
-function walletUtxoAsset(assetId: string, deployment: Deployment) {
-  if (assetId === deployment.regulatedAsset) return { label: deployment.asset.name, ticker: deployment.asset.ticker, precision: deployment.asset.precision };
-  if (assetId === deployment.policyAsset) return { label: "Liquid Bitcoin", ticker: "L-BTC", precision: 8 };
-  if (assetId === deployment.reissuanceToken) return { label: "Reissuance token", ticker: "TOKEN", precision: 0 };
-  return { label: "Unknown asset", ticker: "base units", precision: 0 };
+function AssetRow({ balance, activeDeployment, asset, regulatedFunds }: { balance: AssetBalance; activeDeployment: Deployment; asset: WalletAssetDetails; regulatedFunds?: RegulatedFunds }) {
+  const activeRegulatedAsset = balance.assetId === activeDeployment.regulatedAsset;
+  return <div><span><strong>{asset.label}</strong><small>{shortHash(balance.assetId)}</small></span><span><strong>{activeRegulatedAsset && regulatedFunds ? `${formatUnits(regulatedFunds.spendable, asset.precision)} ${asset.ticker} spendable` : `${formatUnits(balance.confirmed, asset.precision)} ${asset.ticker}`}</strong>{activeRegulatedAsset && regulatedFunds?.blacklisted ? <small className="asset-blacklisted">{formatUnits(regulatedFunds.blacklisted, asset.precision)} blacklisted — cannot be spent</small> : balance.pending > 0n ? <small>+{formatUnits(balance.pending, asset.precision)} pending</small> : <small>{balance.confirmedUtxos} confirmed output{balance.confirmedUtxos === 1 ? "" : "s"}</small>}</span></div>;
 }
 
 type SendReview = SendForm & {

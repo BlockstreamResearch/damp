@@ -280,6 +280,8 @@ mod tests {
         let regulated_asset = AssetId::from_str(&bootstrapped.deployment.regulated_asset)?;
         let bootstrap_transaction: elements::Transaction =
             elements::encode::deserialize(&hex::decode(&bootstrapped.transaction)?)?;
+        transaction::validate_network_fee(&bootstrap_transaction, 500)?;
+        assert!(transaction::validate_network_fee(&bootstrap_transaction, 499).is_err());
         assert_eq!(
             bootstrap_transaction.output[1].asset.explicit(),
             Some(regulated_asset)

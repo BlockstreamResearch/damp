@@ -120,6 +120,8 @@ const entryFormSchema = z.object({
   note: z.string().trim().max(280).optional(),
 });
 type EntryForm = z.infer<typeof entryFormSchema>;
+const issuerNetworkFee = 500n;
+const issuerNetworkFeeLabel = `${formatUnits(issuerNetworkFee, 8)} L-BTC (${issuerNetworkFee} sats)`;
 
 function useLivePolicy(deployment: Deployment | null | undefined) {
   const anchor = useQuery({
@@ -354,7 +356,7 @@ export function AdminDashboard() {
         successorPolicy: successor,
         verifierUtxo,
         feeUtxos: fees,
-        fee: "1500",
+        fee: issuerNetworkFee.toString(),
         issuerDerivationIndex: selected.issuerDerivationIndex,
       });
       requireCurrentBlacklistScope(activeScope.current, scope);
@@ -458,7 +460,7 @@ export function AdminDashboard() {
             <PolicyChangeReview label="Will be blacklisted" entries={pendingChanges.added} empty="No new outpoints" />
             <PolicyChangeReview label="Will be removed" entries={pendingChanges.removed} empty="No removals" />
             <div className="review-row"><span>Current anchor</span><strong>{anchor.data ? `${shortHash(anchor.data.live.txid)}:0` : "Resolving…"}</strong></div>
-            <div className="review-row"><span>Network fee</span><strong>0.000015 L-BTC</strong></div>
+            <div className="review-row"><span>Network fee</span><strong>{issuerNetworkFeeLabel}</strong></div>
             <p className="irreversible-note">Activation broadcasts a policy-update transaction after the exact merged snapshot is verified.</p><div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReviewUpdate(false)}>Back</button><button className="button issuer-primary" aria-busy={busy} disabled={busy || !signerState.walletReady} type="button" onClick={() => void activate()}>{activationPhase === "validating" ? "Validating…" : activationPhase === "broadcasting" ? "Signing and broadcasting…" : activationPhase === "confirming" ? "Broadcast — waiting for confirmation…" : !signerState.walletReady ? "Synchronize wallet before signing" : "Sign and activate"} <ArrowRight size={15} /></button></div>
           </div>}
         </Panel>}
@@ -533,7 +535,7 @@ export function AdminHolders() {
       draftRef.current = next;
       setDraft(next);
       setMessageTone("status");
-      setMessage(action === "add" ? "Added to the draft only. Review and explicitly publish it from Blacklist." : "Removed from the draft.");
+      setMessage(action === "add" ? undefined : "Removed from the draft.");
     }).catch((error: unknown) => {
       setMessageTone("error");
       setMessage(userFacingError(error));
@@ -792,7 +794,7 @@ export function AdminSetup() {
     const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `simplicity-amp-${configuration.ticker.toLowerCase()}-recovery.json`;
+    link.download = `damp-${configuration.ticker.toLowerCase()}-recovery.json`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -818,7 +820,7 @@ export function AdminSetup() {
         issuedSupply: displaySupplyToBaseUnits(configuration.supply, configuration.precision).toString(),
         supplyMode: configuration.supplyMode,
         policyUtxos,
-        fee: "2000",
+        fee: issuerNetworkFee.toString(),
         requiredConfirmations: 1,
       });
       // Validate every signer-returned public artifact before the irreversible
@@ -1066,7 +1068,7 @@ export function AdminSetup() {
                 {reviewIssuance && <div className="review-stack issuance-review" aria-label="Issuance review">
                   <div className="review-row"><span>Network</span><strong>{configuration.network === "liquid-testnet" ? "Liquid testnet" : "Elements regtest"}</strong></div>
                   <div className="review-row"><span>Funding</span><strong>{fundingPlan.confirmedOutputs} confirmed outputs · {formatUnits(fundingPlan.confirmedBalance, 8)} L-BTC</strong></div>
-                  <div className="review-row"><span>Network fee</span><strong>0.00002 L-BTC</strong></div>
+                  <div className="review-row"><span>Network fee</span><strong>{issuerNetworkFeeLabel}</strong></div>
                   <div className="review-row"><span>Issued supply</span><strong>{configuration.supply} {configuration.ticker} display units · {displaySupplyToBaseUnits(configuration.supply, configuration.precision).toString()} base units</strong></div>
                   <div className="review-row"><span>Destinations</span><strong>Signer holder covenant{configuration.supplyMode === "issuer-managed" ? " + signer reissuance token" : ""}</strong></div>
                   <div className="review-buttons"><button className="button secondary" disabled={Boolean(busyAction)} type="button" onClick={() => setReviewIssuance(false)}>Back</button><button className="button issuer-primary" disabled={Boolean(busyAction) || Boolean(bootstrapped) || !signer.walletReady || !fundingReady} type="button" onClick={bootstrap}>{bootstrapped ? "Already broadcast" : busyAction === "issue" ? "Validating and signing…" : !signer.walletReady ? "Sync wallet before signing" : "Sign and broadcast"}</button></div>
@@ -1159,7 +1161,7 @@ export function AdminReissue() {
         feeUtxos: fees,
         recipientAddress: recipient.confidentialAddress,
         amount: review.amount,
-        fee: "2000",
+        fee: issuerNetworkFee.toString(),
         issuerDerivationIndex: selected.issuerDerivationIndex,
       });
       if (signerSnapshot().profileId !== signer.profileId) {
@@ -1217,7 +1219,7 @@ export function AdminReissue() {
   return (
     <AppShell eyebrow="Issuer console / Reissue" title="Mint governed supply">
       <BackLink to="/admin/blacklist">Back to policy workspace</BackLink>
-      <div className="setup-layout"><Panel className="setup-main"><SectionHeading label="Managed supply" title={receipt ? "Reissuance receipt" : review ? "Review the mint" : "Define the reissuance"} aside={<Pill tone="warn">Issuer governed</Pill>} />{!deployment.data ? <p>No deployment is selected. Create or import one in Setup before reissuing.</p> : deployment.data.publication !== "published" ? <div className="generate-record"><ShieldCheck size={26} /><p>The deployment is confirmed, but reissuance remains locked until canonical registry publication is verified.</p><Link className="button issuer-primary" to="/admin/setup">Finish registry publication</Link></div> : deployment.data.supplyMode !== "issuer-managed" ? <p>This deployment has fixed supply; reissuance is disabled.</p> : receipt ? <OperationReceiptPanel receipt={receipt} network={deployment.data.network} amountLabel={`${receipt.amount} ${receipt.ticker} base units`} resetLabel="Start a new reissuance" tone="issuer" onReset={() => void startNewReissuance()} /> : !review ? <form className="form-stack" onSubmit={form.handleSubmit(setReview)}><label>New base units<input aria-invalid={Boolean(form.formState.errors.amount)} aria-describedby={form.formState.errors.amount ? "reissue-amount-error" : "reissue-amount-help"} inputMode="numeric" {...form.register("amount")} />{form.formState.errors.amount ? <small id="reissue-amount-error" className="field-error">{form.formState.errors.amount.message}</small> : <small id="reissue-amount-help">The protocol reviews and commits the amount; it has no public reason field.</small>}</label><button className="button issuer-primary wide" type="submit">Review reissuance <ArrowRight size={16} /></button></form> : <div className="review-stack"><div className="review-row"><span>New units</span><strong>{review.amount}</strong></div><div className="review-row"><span>Verifier</span><strong>Same script, governance spend</strong></div><div className="review-row"><span>Destination</span><strong>Your signer profile's holder covenant</strong></div><div className="review-row"><span>Network fee</span><strong>0.00002 L-BTC (2,000 sats)</strong></div><p className="irreversible-note">This signs and broadcasts a reissuance transaction that creates new regulated units.</p><div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReview(undefined)}>Edit</button><button className="button issuer-primary" aria-busy={busy} disabled={busy || receiptQuery.isPending || !signerState.walletReady} type="button" onClick={authorize}>{reissuePhase === "validating" ? "Validating…" : reissuePhase === "broadcasting" ? "Signing and broadcasting…" : !signerState.walletReady ? "Synchronize wallet before signing" : "Sign and broadcast reissuance"} <ArrowRight size={16} /></button></div></div>}{message && <p className="inline-message" role="status" aria-live="polite">{message}</p>}</Panel><aside className="setup-aside"><div className="risk-note"><AlertTriangle size={18} /><p><strong>Issuer authority</strong>The DAMP Signer SDK verifies the current anchor, token, holder destination, recreated script, explicit assets, and exact fee before using issuer secrets.</p></div><Panel><h3>Required checks</h3><ul className="check-list"><li><RefreshCw size={15} /> Fresh winning anchor</li><li><Check size={15} /> Token returned</li><li><Check size={15} /> Same verifier script</li><li><Check size={15} /> Holder-only new supply</li></ul></Panel></aside></div>
+      <div className="setup-layout"><Panel className="setup-main"><SectionHeading label="Managed supply" title={receipt ? "Reissuance receipt" : review ? "Review the mint" : "Define the reissuance"} aside={<Pill tone="warn">Issuer governed</Pill>} />{!deployment.data ? <p>No deployment is selected. Create or import one in Setup before reissuing.</p> : deployment.data.publication !== "published" ? <div className="generate-record"><ShieldCheck size={26} /><p>The deployment is confirmed, but reissuance remains locked until canonical registry publication is verified.</p><Link className="button issuer-primary" to="/admin/setup">Finish registry publication</Link></div> : deployment.data.supplyMode !== "issuer-managed" ? <p>This deployment has fixed supply; reissuance is disabled.</p> : receipt ? <OperationReceiptPanel receipt={receipt} network={deployment.data.network} amountLabel={`${receipt.amount} ${receipt.ticker} base units`} resetLabel="Start a new reissuance" tone="issuer" onReset={() => void startNewReissuance()} /> : !review ? <form className="form-stack" onSubmit={form.handleSubmit(setReview)}><label>New base units<input aria-invalid={Boolean(form.formState.errors.amount)} aria-describedby={form.formState.errors.amount ? "reissue-amount-error" : "reissue-amount-help"} inputMode="numeric" {...form.register("amount")} />{form.formState.errors.amount ? <small id="reissue-amount-error" className="field-error">{form.formState.errors.amount.message}</small> : <small id="reissue-amount-help">The protocol reviews and commits the amount; it has no public reason field.</small>}</label><button className="button issuer-primary wide" type="submit">Review reissuance <ArrowRight size={16} /></button></form> : <div className="review-stack"><div className="review-row"><span>New units</span><strong>{review.amount}</strong></div><div className="review-row"><span>Verifier</span><strong>Same script, governance spend</strong></div><div className="review-row"><span>Destination</span><strong>Your signer profile's holder covenant</strong></div><div className="review-row"><span>Network fee</span><strong>{issuerNetworkFeeLabel}</strong></div><p className="irreversible-note">This signs and broadcasts a reissuance transaction that creates new regulated units.</p><div className="review-buttons"><button className="button secondary" disabled={busy} type="button" onClick={() => setReview(undefined)}>Edit</button><button className="button issuer-primary" aria-busy={busy} disabled={busy || receiptQuery.isPending || !signerState.walletReady} type="button" onClick={authorize}>{reissuePhase === "validating" ? "Validating…" : reissuePhase === "broadcasting" ? "Signing and broadcasting…" : !signerState.walletReady ? "Synchronize wallet before signing" : "Sign and broadcast reissuance"} <ArrowRight size={16} /></button></div></div>}{message && <p className="inline-message" role="status" aria-live="polite">{message}</p>}</Panel><aside className="setup-aside"><div className="risk-note"><AlertTriangle size={18} /><p><strong>Issuer authority</strong>The DAMP Signer SDK verifies the current anchor, token, holder destination, recreated script, explicit assets, and exact fee before using issuer secrets.</p></div><Panel><h3>Required checks</h3><ul className="check-list"><li><RefreshCw size={15} /> Fresh winning anchor</li><li><Check size={15} /> Token returned</li><li><Check size={15} /> Same verifier script</li><li><Check size={15} /> Holder-only new supply</li></ul></Panel></aside></div>
     </AppShell>
   );
 }

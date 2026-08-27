@@ -314,6 +314,9 @@ pub fn finish(
     let transaction = pset.extract_tx()?;
     crate::transaction::verify_transaction_amounts(&transaction, &spent_utxos)
         .with_context(|| format!("{} transaction proof validation failed", review.operation))?;
+    let reviewed_fee = crate::transaction::parse_amount(&review.fee, "reviewed fee")?;
+    crate::transaction::validate_network_fee(&transaction, reviewed_fee)
+        .with_context(|| format!("{} transaction fee validation failed", review.operation))?;
     Ok(SignedOperation {
         sdk: SIGNER_SDK_VERSION,
         operation: review.operation,

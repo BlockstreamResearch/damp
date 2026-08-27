@@ -56,8 +56,14 @@ export function estimateTransferFee(regulatedInputCount: number) {
   if (!Number.isSafeInteger(regulatedInputCount) || regulatedInputCount < 1 || regulatedInputCount > maxTransferInputs) {
     throw new TransferValidationError("context", "input-count", `Transfers require between 1 and ${maxTransferInputs} regulated inputs.`);
   }
-  const estimatedWeight = 650n + BigInt(regulatedInputCount) * 180n + 5n * 100n;
-  const fee = (estimatedWeight * 125n + 99n) / 100n;
+  // Finalized signer fixtures measure 15,415 WU for one regulated input and roughly 787 WU
+  // for each additional input. Round both upward, then mirror LWK's default 100 sats/kvB
+  // calculation over Liquid's discounted transaction weight. Keep a 500-sat floor so small
+  // model variance cannot turn a successfully reviewed transfer into a relay rejection.
+  const estimatedWeight = 15_600n + BigInt(regulatedInputCount - 1) * 800n;
+  const estimatedVsize = (estimatedWeight + 3n) / 4n;
+  const lwkDefaultFee = (estimatedVsize * 100n + 999n) / 1_000n;
+  const fee = lwkDefaultFee < minimumTransferFee ? minimumTransferFee : lwkDefaultFee;
   if (fee < minimumTransferFee || fee > maximumTransferFee) {
     throw new TransferValidationError("context", "fee-bounds", "Network fee is outside the supported test transaction bounds.");
   }
