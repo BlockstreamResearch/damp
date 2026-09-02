@@ -623,7 +623,7 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
   .page-header { min-height: 64px; padding: 8px 16px; -webkit-backdrop-filter: none; backdrop-filter: none; }
   .poc-warning { padding: 4px 14px; }
   .workspace-bar { min-height: 50px; padding: 4px 12px; gap: 7px; }
-  .workspace-mode, .workspace-deployment { min-height: 42px; height: 42px; }
+  .workspace-mode, .workspace-deployment { min-height: 44px; height: 44px; }
   .workspace-mode { flex: 0 1 148px; padding-inline: 9px; gap: 7px; }
   .workspace-mode small { display: none; }
   .workspace-mode strong { font-size: 12px; }
@@ -631,6 +631,7 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
   .workspace-deployment { flex: 1 1 190px; display: flex; padding-inline: 6px; }
   .workspace-deployment .deployment-selector { width: 100%; display: block; }
   .workspace-deployment .deployment-selector > span { display: none; }
+  .workspace-deployment .deployment-selector select { height: 44px; min-height: 44px; }
   .workspace-deployment .deployment-selector select, .workspace-deployment .deployment-current strong, .workspace-deployment .deployment-status strong { padding-block: 4px; font-size: 10px; }
   .page-header h1 { font-size: 24px; }
   .wallet-status { min-width: 42px; width: 42px; min-height: 42px; height: 42px; padding: 0; justify-content: center; }

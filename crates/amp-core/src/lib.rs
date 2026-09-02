@@ -1,5 +1,9 @@
 //! Consensus-adjacent, platform-independent AMP policy and registry logic.
 
+/// SHA-256 of the exact bundled v0.1 Simplicity contract sources and generated artifacts.
+pub const CONTRACT_BUNDLE_HASH: &str =
+    "00a50b7658d5914170286b75b95200687b7773c7082c02e3da1dd20012401b74";
+
 pub mod policy;
 pub mod registry;
 

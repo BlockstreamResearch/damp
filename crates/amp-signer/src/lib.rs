@@ -14,9 +14,7 @@ mod split;
 mod transaction;
 mod transfer;
 
-const CONTRACT_BUNDLE_HASH: &str =
-    "00a50b7658d5914170286b75b95200687b7773c7082c02e3da1dd20012401b74";
-
+use amp_core::CONTRACT_BUNDLE_HASH;
 use amp_core::policy::{PolicySet, TreeDepth, outpoint_key};
 use amp_core::registry::{BlacklistEntryV1, DeploymentManifestV1, PolicySnapshotV1};
 use lwk_signer::SwSigner;
