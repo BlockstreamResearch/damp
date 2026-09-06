@@ -11,6 +11,14 @@ use crate::policy::{PolicySet, TreeDepth, decode_hex_32, outpoint_key};
 
 pub const REGISTRY_SCHEMA_V1: &str = "simplicity-amp-registry-v1";
 pub const PROTOCOL_ID_V1: &str = "simplicity-amp/v0.1";
+pub const PROTOCOL_ID_V2: &str = "simplicity-amp/v0.2";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeAuditConfig {
+    pub public_key: String,
+    pub epoch: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -65,11 +73,26 @@ pub struct DeploymentManifestV1 {
     pub user_program_hash: String,
     pub governance_program_hash: String,
     pub contract_bundle_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<NativeAuditConfig>,
 }
 
 impl DeploymentManifestV1 {
     pub fn validate(&self) -> anyhow::Result<String> {
         require_header(&self.schema, &self.protocol)?;
+        anyhow::ensure!(
+            (self.protocol == PROTOCOL_ID_V2) == self.audit.is_some(),
+            "v0.2 requires an audit key; v0.1 must not contain one"
+        );
+        if let Some(audit) = &self.audit {
+            anyhow::ensure!(audit.epoch > 0, "audit epoch must be nonzero");
+            let key = secp256k1_zkp::PublicKey::from_str(&audit.public_key)
+                .context("invalid audit key")?;
+            anyhow::ensure!(
+                audit.public_key == hex::encode(key.serialize()),
+                "audit key must be canonical compressed SEC1"
+            );
+        }
         anyhow::ensure!(
             self.verifier_asset_amount == 1,
             "v0.1 requires one verifier unit"
@@ -79,6 +102,14 @@ impl DeploymentManifestV1 {
             .parse::<u64>()
             .context("issued supply must fit u64")?;
         anyhow::ensure!(issued_supply > 0, "issued supply must be non-zero");
+        anyhow::ensure!(
+            self.audit.is_none() || issued_supply <= crate::native_audit::MAX_AUDIT_VALUE,
+            "v0.2 initial issuance exceeds the application cap"
+        );
+        anyhow::ensure!(
+            self.issued_supply == issued_supply.to_string(),
+            "issued supply must be canonical decimal"
+        );
         anyhow::ensure!(
             (1..=80).contains(&self.asset.name.trim().len()),
             "asset name must be 1..=80 characters"
@@ -158,6 +189,10 @@ impl DeploymentManifestV1 {
             SupplyMode::Fixed => 0,
             SupplyMode::IssuerManaged => 1,
         }]);
+        if let Some(audit) = &self.audit {
+            hash_len_prefixed(&mut hasher, audit.public_key.as_bytes());
+            hasher.update(audit.epoch.to_be_bytes());
+        }
         hex::encode(hasher.finalize())
     }
 }
@@ -271,7 +306,10 @@ impl PolicySnapshotV1 {
 
 fn require_header(schema: &str, protocol: &str) -> anyhow::Result<()> {
     anyhow::ensure!(schema == REGISTRY_SCHEMA_V1, "unsupported registry schema");
-    anyhow::ensure!(protocol == PROTOCOL_ID_V1, "unsupported AMP protocol");
+    anyhow::ensure!(
+        protocol == PROTOCOL_ID_V1 || protocol == PROTOCOL_ID_V2,
+        "unsupported AMP protocol"
+    );
     Ok(())
 }
 

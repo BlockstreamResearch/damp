@@ -55,7 +55,7 @@ export async function buildSuccessorPolicy(
   });
   const snapshot = policySnapshotSchema.parse({
     schema: "simplicity-amp-registry-v1",
-    protocol: "simplicity-amp/v0.1",
+    protocol: deployment.protocol,
     deploymentId: deployment.deploymentId,
     sequence: current ? current.sequence + 1 : 0,
     parentPolicyRoot: current?.policyRoot ?? null,

@@ -1,0 +1,108 @@
+{
+  "network": "liquid-testnet",
+  "steps": [
+    {
+      "step": "issuer-normalize-faucet",
+      "txid": "ec972c3f76f7ba57cc159b74c7b93ed88978f67245b897d20061f8f0bf9eef69",
+      "height": 2605614,
+      "block_hash": "e1ddfddd251d4ced3f19841504f8573b7628eb6f27efa681533003fccdf10305",
+      "confirmed": true
+    },
+    {
+      "step": "recipient-normalize-faucet",
+      "txid": "4da0c31b6cb770fbec703b2f381796b5068884ab06d192033dddec11871b93b2",
+      "height": 2605616,
+      "block_hash": "132bf90ef5c880bc2559777254319a12285422181b4487ccc7f2968626d50ab6",
+      "confirmed": true
+    },
+    {
+      "step": "bootstrap-v2",
+      "txid": "9d7adbc591880f8857ed898961f6916a70d2ec6d94cfb72d923cb69a71ce1acb",
+      "height": 2605618,
+      "block_hash": "3e36971fdd0b9af28864c2332942e36a016501c76f7de27b1939b0b1eee0ab9f",
+      "confirmed": true
+    },
+    {
+      "step": "confidential-transfer",
+      "txid": "fd2e7f22dae3ea0a9e7e43349988a9f55e874a39987b62c58797e4c520a13453",
+      "height": 2605620,
+      "block_hash": "6d68af63519c462988e50d8f0dec6d5d61d1c67eda879b0db6874075fb21d1f2",
+      "confirmed": true
+    },
+    {
+      "step": "recipient-autonomous-spend",
+      "txid": "a89534038e9b05e986662f691e06ddd9657594ee847793a8bbbfc739facd9b48",
+      "height": 2605622,
+      "block_hash": "3a4c2ff6c75f7add3d005c8760a93754bdc7e71d2993278557c67d59cb846a43",
+      "confirmed": true
+    },
+    {
+      "step": "issuer-reissuance-own-output",
+      "txid": "91233692c8b5c9dd0b50471bf9e54a3e41f03f41191a90aeac9376363e224b94",
+      "height": 2605624,
+      "block_hash": "7f8e3fd5588cece93ad36f097557b370f69f461966e3b488d83af5afd3ab2ae8",
+      "confirmed": true
+    },
+    {
+      "step": "block-exact-recipient-output",
+      "txid": "8d4b16c544d1b357a2f95b8ae67c7c7da47099554ece724475d262843673c020",
+      "height": 2605653,
+      "block_hash": "ded4c35da1a60877143c317ba9e563d8dba6af09944e8cadee9f9bbecc757084",
+      "confirmed": true
+    },
+    {
+      "step": "listed-outpoint-spend-rejected",
+      "sdk_rejected": true
+    },
+    {
+      "step": "audited-reissue-distribution-to-same-recipient",
+      "txid": "db54862ab716d63c84f708122ece945dacaed8ec004c0f2c10f955e14b378edc",
+      "height": 2605655,
+      "block_hash": "8252c10b893a9be2bd2bf3f8c988c3e80b7f082ac20173da3626fbea5bf58477",
+      "confirmed": true
+    },
+    {
+      "step": "signed-confirmed-issuer-report",
+      "supply": {
+        "issued": "1100",
+        "knownUnspent": "1100",
+        "burned": "0",
+        "unresolvedOutputs": 0,
+        "conservation": "matches"
+      },
+      "complete": true,
+      "native_recovered_outputs": 6,
+      "report_key_separate_from_issuer": true,
+      "outspend_crosschecks": true
+    }
+  ],
+  "deployment": {
+    "asset": {
+      "name": "DAMP confidential audit test",
+      "precision": 0,
+      "ticker": "AUDT"
+    },
+    "audit": {
+      "epoch": 1,
+      "publicKey": "0211b40ccd848c6f7a27f30b1dc2704225313cadd9c9866693d37d5d3a29acb89c"
+    },
+    "contractBundleHash": "8697c7b919b0ce8bb2a52e3165931c2ca1fc284f4d9aee1b18c9be777763c2f8",
+    "deploymentSalt": "6014f739c168fe84d89a7975dde460b00c2a6fe7d1dda68ea1517cfaa895203b",
+    "genesisAnchor": "9d7adbc591880f8857ed898961f6916a70d2ec6d94cfb72d923cb69a71ce1acb:0",
+    "governanceProgramHash": "90452bde5a9679cbb5b839707470e0b0cec945d7fb1bdda4bd6ffc42dd2e8bf8",
+    "issuedSupply": "1000",
+    "issuerPublicKey": "626458e673045e10b85e3075b632469dc70d15ba4fd41f956397e81587ad42d7",
+    "network": "liquid-testnet",
+    "policyAsset": "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49",
+    "protocol": "simplicity-amp/v0.2",
+    "regulatedAsset": "7985b6a400384f11f035744c8b4f84151abc317e0646ea60d3279e98a3ec9be9",
+    "reissuanceEntropy": "3cbb5fae924552f6657087ab38607db33ae8d8f65ab8fb6e516648282a70fc3a",
+    "reissuanceToken": "45aed4bfdce035cfcce2ba54ebd55630dc1c2d322ae182944692f022bef461c1",
+    "schema": "simplicity-amp-registry-v1",
+    "supplyMode": "issuer-managed",
+    "userProgramHash": "2e9b366c55c3310dd23c85de0018221895e696d7326b2386f63f6cf4d76779b0",
+    "verifierAsset": "05a891b29fa463e70c5d9e600f7a8b66d733081223b145f086787ae006f13fca",
+    "verifierAssetAmount": 1
+  },
+  "all_passed": true
+}

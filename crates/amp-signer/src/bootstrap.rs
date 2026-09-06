@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use amp_core::policy::{PolicySet, TreeDepth};
@@ -10,7 +9,7 @@ use elements::bitcoin::PublicKey as BitcoinPublicKey;
 use elements::hashes::Hash as _;
 use elements::issuance::ContractHash;
 use elements::pset::{Output, PartiallySignedTransaction};
-use elements::{AssetId, Script, TxOutSecrets};
+use elements::{AssetId, Script};
 
 use crate::blinding;
 use crate::keys::{derive_key_index, derive_xprv, xonly_from_xprv};
@@ -50,6 +49,10 @@ pub fn bootstrap(
         "at least one confirmation is required"
     );
     let supply = parse_amount(&request.issued_supply, "issued supply")?;
+    anyhow::ensure!(
+        !request.confidential_audit || supply <= amp_core::native_audit::MAX_AUDIT_VALUE,
+        "issued supply exceeds application maximum"
+    );
     let fee = parse_amount(&request.fee, "fee")?;
     let policy_asset = AssetId::from_str(&request.policy_asset)?;
     let mut candidates = request
@@ -128,19 +131,51 @@ pub fn bootstrap(
             == 3,
         "bootstrap asset roles collide"
     );
-    let protocol = Protocol::new(ProtocolConfig {
+    let config = ProtocolConfig {
         regulated_asset,
         verifier_asset,
         verifier_asset_amount: 1,
         issuer,
         network: request.network,
-    })?;
+    };
+    let audit = if request.confidential_audit {
+        let index = derive_key_index(&request.deployment_salt, "audit")?;
+        let (_, key) = derive_xprv(signer, "audit", index)?;
+        Some(amp_core::registry::NativeAuditConfig {
+            public_key: key
+                .private_key
+                .public_key(elements::secp256k1_zkp::SECP256K1)
+                .to_string(),
+            epoch: 1,
+        })
+    } else {
+        None
+    };
+    let protocol = match &audit {
+        None => Protocol::new(config)?,
+        Some(audit) => Protocol::new_audited(
+            config,
+            crate::protocol::AuditParameters {
+                deployment: amp_core::policy::decode_hex_32(
+                    "deployment salt",
+                    &request.deployment_salt,
+                )?,
+                epoch: audit.epoch,
+                key: elements::secp256k1_zkp::PublicKey::from_str(&audit.public_key)?,
+            },
+        )?,
+    };
     let initial_set = PolicySet::new(TreeDepth::D4, [])?;
     let commitment = initial_set.commitment();
     let anchor = protocol.anchor(commitment)?;
     let provisional = DeploymentManifestV1 {
         schema: REGISTRY_SCHEMA_V1.to_owned(),
-        protocol: PROTOCOL_ID_V1.to_owned(),
+        protocol: if request.confidential_audit {
+            amp_core::registry::PROTOCOL_ID_V2
+        } else {
+            PROTOCOL_ID_V1
+        }
+        .to_owned(),
         network: request.network,
         policy_asset: policy_asset.to_string(),
         regulated_asset: regulated_asset.to_string(),
@@ -158,7 +193,13 @@ pub fn bootstrap(
             .then(|| regulated_entropy.to_string()),
         user_program_hash: hex::encode(protocol.user_executable_leaf_hash()),
         governance_program_hash: hex::encode(anchor.governance_program_hash()),
-        contract_bundle_hash: crate::CONTRACT_BUNDLE_HASH.to_owned(),
+        contract_bundle_hash: if request.confidential_audit {
+            amp_core::CONTRACT_BUNDLE_V2_HASH
+        } else {
+            crate::CONTRACT_BUNDLE_HASH
+        }
+        .to_owned(),
+        audit,
     };
     let holder_script = protocol.user_script(holder)?;
     let token_locator = selected[0]
@@ -191,12 +232,34 @@ pub fn bootstrap(
         verifier_asset,
         None,
     ));
-    pset.add_output(Output::new_explicit(
-        holder_script,
-        supply,
-        regulated_asset,
-        None,
-    ));
+    let mut value_only_outputs = Vec::new();
+    let blind_issuance = request.confidential_audit
+        && u128::from(supply) + u128::from(policy_total) + 1
+            > u128::from(crate::transaction::MAX_EXPLICIT_MONEY);
+    if blind_issuance {
+        let first = supply / 2;
+        for value in [first, supply - first] {
+            let index = pset.outputs().len();
+            pset.add_output(Output::new_explicit(
+                holder_script.clone(),
+                value,
+                regulated_asset,
+                Some(BitcoinPublicKey::new(
+                    holder_xprv
+                        .private_key
+                        .public_key(elements::secp256k1_zkp::SECP256K1),
+                )),
+            ));
+            value_only_outputs.push(index);
+        }
+    } else {
+        pset.add_output(Output::new_explicit(
+            holder_script,
+            supply,
+            regulated_asset,
+            None,
+        ));
+    }
     let token_output = if matches!(request.supply_mode, SupplyMode::IssuerManaged) {
         let index = pset.outputs().len();
         pset.add_output(Output::new_explicit(
@@ -213,7 +276,6 @@ pub fn bootstrap(
     } else {
         None
     };
-    let mut value_only_outputs = Vec::new();
     let confidential_funding = selected.iter().any(|utxo| {
         utxo.secrets.asset_bf != elements::confidential::AssetBlindingFactor::zero()
             || utxo.secrets.value_bf != elements::confidential::ValueBlindingFactor::zero()
@@ -272,7 +334,7 @@ pub fn bootstrap(
         .iter()
         .enumerate()
         .map(|(index, utxo)| (index, utxo.secrets))
-        .collect::<HashMap<usize, TxOutSecrets>>();
+        .collect::<crate::secrets::SecretMap>();
     if !value_only_outputs.is_empty() {
         blinding::blind_values(&mut pset, &secrets, &value_only_outputs)
             .context("bootstrap value-only blinding failed")?;
@@ -348,7 +410,7 @@ pub fn bootstrap(
     let deployment_id = deployment.validate()?;
     let initial_policy = PolicySnapshotV1 {
         schema: REGISTRY_SCHEMA_V1.to_owned(),
-        protocol: PROTOCOL_ID_V1.to_owned(),
+        protocol: deployment.protocol.clone(),
         deployment_id: deployment_id.clone(),
         sequence: 0,
         parent_policy_root: None,

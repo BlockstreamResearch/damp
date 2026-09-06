@@ -1,3 +1,4 @@
+pub const MAX_EXPLICIT_MONEY: u64 = 2_100_000_000_000_000;
 use std::str::FromStr;
 
 use amp_core::registry::{DeploymentManifestV1, DeploymentNetwork};
@@ -21,6 +22,12 @@ pub struct ValidatedUtxo {
     pub secrets: TxOutSecrets,
     pub wallet_key: Option<WalletKeyLocator>,
     pub holder_key: Option<HolderKeyLocator>,
+}
+
+impl Drop for ValidatedUtxo {
+    fn drop(&mut self) {
+        crate::secrets::erase_opening(&mut self.secrets);
+    }
 }
 
 pub fn parse_amount(value: &str, name: &str) -> anyhow::Result<u64> {
@@ -130,11 +137,28 @@ pub fn verify_transaction_amounts(
         }
     }
 
+    let explicit_total = transaction
+        .output
+        .iter()
+        .filter_map(|o| o.value.explicit())
+        .try_fold(0u128, |sum, value| sum.checked_add(u128::from(value)))
+        .context("explicit output total overflow")?;
+    anyhow::ensure!(
+        explicit_total <= u128::from(MAX_EXPLICIT_MONEY),
+        "explicit output total exceeds Elements MAX_MONEY; use confidential outputs"
+    );
     for (index, output) in transaction.output.iter().enumerate() {
-        anyhow::ensure!(
-            output.value != Value::Explicit(0),
-            "output {index} has an explicit zero value"
-        );
+        if output.value == Value::Explicit(0) {
+            anyhow::ensure!(
+                output.script_pubkey.is_op_return()
+                    && output.asset.is_explicit()
+                    && output.nonce == elements::confidential::Nonce::Null
+                    && output.witness.is_empty(),
+                "output {index} has an invalid explicit zero value"
+            );
+            // The zero commitment is infinity; omit it from both group sums.
+            continue;
+        }
         let generator = txout_asset_generator(output, index, "output")?;
         let value_commitment = txout_value_commitment(output, generator, index, "output")?;
         output_commitments.push(value_commitment);
@@ -317,14 +341,20 @@ fn decode_utxo_inner(
             ValueBlindingFactor::zero(),
         ),
         (Asset::Explicit(asset), Value::Confidential(_)) => {
-            let master = signer
-                .slip77_master_blinding_key()
-                .map_err(|error| anyhow::anyhow!("LWK SLIP77 key unavailable: {error:?}"))?;
-            unblind_value_only(
-                &txout,
-                asset,
-                master.blinding_private_key(&txout.script_pubkey),
-            )?
+            let key = if let Some(holder) = &value.holder_key {
+                let (_, key) = crate::keys::derive_xprv(signer, "holder", holder.derivation_index)?;
+                anyhow::ensure!(
+                    crate::keys::xonly_from_xprv(&key).to_string() == holder.owner_public_key,
+                    "holder locator key mismatch"
+                );
+                key.private_key
+            } else {
+                signer
+                    .slip77_master_blinding_key()
+                    .map_err(|error| anyhow::anyhow!("LWK SLIP77 key unavailable: {error:?}"))?
+                    .blinding_private_key(&txout.script_pubkey)
+            };
+            unblind_value_only(&txout, asset, key)?
         }
         (Asset::Confidential(_), Value::Confidential(_)) => {
             let master = signer
@@ -360,7 +390,7 @@ fn decode_utxo_inner(
     })
 }
 
-fn unblind_value_only(
+pub(crate) fn unblind_value_only(
     txout: &TxOut,
     asset: AssetId,
     blinding_key: SecretKey,

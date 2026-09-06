@@ -977,6 +977,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-integer"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-traits"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "object"
 version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1397,12 +1425,16 @@ dependencies = [
 name = "simplicity-amp-core"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm-siv",
  "anyhow",
  "hex",
+ "num-bigint",
+ "rand",
  "secp256k1-zkp",
  "serde",
  "serde_json",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]
@@ -1419,11 +1451,13 @@ dependencies = [
  "rand",
  "serde",
  "serde-wasm-bindgen",
+ "serde_json",
  "sha2",
  "simplicity-amp-core",
  "simplicityhl",
  "tempfile",
  "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]

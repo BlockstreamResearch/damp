@@ -42,6 +42,18 @@ const VERIFIER_D4_SOURCE: &str = include_str!("../../../src/artifacts/simf/verif
 const VERIFIER_D5_SOURCE: &str = include_str!("../../../src/artifacts/simf/verifier_d5.simf");
 const VERIFIER_D6_SOURCE: &str = include_str!("../../../src/artifacts/simf/verifier_d6.simf");
 
+const AUDIT_USER_SOURCE: &str = include_str!("../../../src/artifacts-v2/user.simf");
+const AUDIT_D4_SOURCE: &str = include_str!("../../../src/artifacts-v2/verifier.simf");
+const AUDIT_D5_SOURCE: &str = include_str!("../../../src/artifacts-v2/verifier_d5.simf");
+const AUDIT_D6_SOURCE: &str = include_str!("../../../src/artifacts-v2/verifier_d6.simf");
+pub const AUDIT_BUDGET_WORDS: usize = 4096;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuditParameters {
+    pub deployment: [u8; 32],
+    pub epoch: u64,
+    pub key: secp256k1::PublicKey,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProtocolConfig {
     pub regulated_asset: AssetId,
@@ -117,6 +129,39 @@ impl CompiledAnchor {
         )
     }
 
+    pub fn verify_transfer_witness(
+        &self,
+        pset: &PartiallySignedTransaction,
+        network: DeploymentNetwork,
+    ) -> anyhow::Result<(Arc<RedeemNode>, [u8; 32])> {
+        use simplicityhl::simplicity::{BitIter, jet::Elements};
+        let tx = pset.extract_tx()?;
+        let stack = &tx
+            .input
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("missing anchor input"))?
+            .witness
+            .script_witness;
+        anyhow::ensure!(stack.len() == 4, "unsupported anchor witness shape");
+        let program = RedeemNode::decode::<_, _, Elements>(
+            BitIter::from(stack[1].as_slice()),
+            BitIter::from(stack[0].as_slice()),
+        )?;
+        anyhow::ensure!(
+            program.cmr() == self.cmr(AnchorBranch::Verifier)
+                && stack[2] == program.cmr().as_ref()
+                && stack[3] == self.control_block(AnchorBranch::Verifier)?.serialize(),
+            "transaction does not execute the deployment verifier"
+        );
+        anyhow::ensure!(
+            program.bounds().cost.is_budget_valid(stack),
+            "insufficient witness budget"
+        );
+        let env = self.environment(pset, 0, AnchorBranch::Verifier, network)?;
+        BitMachine::for_program(&program)?.exec(&program, &env)?;
+        Ok((program, env.c_tx_env().sighash_all().to_byte_array()))
+    }
+
     pub fn finalize(
         &self,
         pset: &PartiallySignedTransaction,
@@ -186,6 +231,7 @@ impl CompiledUser {
 pub struct Protocol {
     config: ProtocolConfig,
     user_executable_leaf_hash: [u8; 32],
+    audit: Option<AuditParameters>,
 }
 
 impl Protocol {
@@ -202,7 +248,30 @@ impl Protocol {
         Ok(Self {
             config,
             user_executable_leaf_hash: leaf_hash(user.commit().cmr()).to_byte_array(),
+            audit: None,
         })
+    }
+
+    pub fn new_audited(config: ProtocolConfig, audit: AuditParameters) -> anyhow::Result<Self> {
+        let mut protocol = Self::new(config)?;
+        anyhow::ensure!(
+            audit.epoch > 0 && audit.deployment != [0; 32],
+            "audit deployment/epoch must be set"
+        );
+        let user = compile(AUDIT_USER_SOURCE, user_arguments(config))?;
+        protocol.user_executable_leaf_hash = leaf_hash(user.commit().cmr()).to_byte_array();
+        protocol.audit = Some(audit);
+        Ok(protocol)
+    }
+    pub fn audit(&self) -> Option<AuditParameters> {
+        self.audit
+    }
+    fn user_source(&self) -> &'static str {
+        if self.audit.is_some() {
+            AUDIT_USER_SOURCE
+        } else {
+            USER_SOURCE
+        }
     }
 
     #[must_use]
@@ -221,7 +290,7 @@ impl Protocol {
     }
 
     pub fn user_program(&self, owner: XOnlyPublicKey) -> anyhow::Result<CompiledUser> {
-        let program = compile(USER_SOURCE, user_arguments(self.config))?;
+        let program = compile(self.user_source(), user_arguments(self.config))?;
         let executable = Script::from(program.commit().cmr().as_ref().to_vec());
         let spend_info = TaprootBuilder::new()
             .add_leaf_with_ver(1, executable, leaf_version())
@@ -241,10 +310,13 @@ impl Protocol {
     }
 
     pub fn anchor(&self, policy: SetCommitment) -> anyhow::Result<CompiledAnchor> {
-        let verifier_source = match policy.depth {
-            TreeDepth::D4 => VERIFIER_D4_SOURCE,
-            TreeDepth::D5 => VERIFIER_D5_SOURCE,
-            TreeDepth::D6 => VERIFIER_D6_SOURCE,
+        let verifier_source = match (self.audit.is_some(), policy.depth) {
+            (true, TreeDepth::D4) => AUDIT_D4_SOURCE,
+            (true, TreeDepth::D5) => AUDIT_D5_SOURCE,
+            (true, TreeDepth::D6) => AUDIT_D6_SOURCE,
+            (false, TreeDepth::D4) => VERIFIER_D4_SOURCE,
+            (false, TreeDepth::D5) => VERIFIER_D5_SOURCE,
+            (false, TreeDepth::D6) => VERIFIER_D6_SOURCE,
         };
         let verifier = compile(verifier_source, verifier_arguments(self, policy))?;
         let governance = compile(GOVERNANCE_SOURCE, governance_arguments(self.config))?;
@@ -399,7 +471,14 @@ fn finalize_program(
     ];
     anyhow::ensure!(
         pruned.bounds().cost.is_budget_valid(&stack),
-        "Simplicity execution exceeds its deterministic witness budget"
+        "Simplicity execution exceeds its deterministic witness budget (cost {}, stack {}, extra {})",
+        pruned.bounds().cost,
+        elements::encode::serialize(&stack).len(),
+        pruned
+            .bounds()
+            .cost
+            .get_padding(&stack)
+            .map_or(0, |v| v.len())
     );
     Ok(stack)
 }
@@ -451,7 +530,7 @@ fn governance_arguments(config: ProtocolConfig) -> Arguments {
 }
 
 fn verifier_arguments(protocol: &Protocol, policy: SetCommitment) -> Arguments {
-    argument_map([
+    let base = argument_map([
         ("BLACKLIST_COUNT", Value::from(UIntValue::U32(policy.count))),
         ("BLACKLIST_ROOT", value_u256(policy.root)),
         (
@@ -470,7 +549,28 @@ fn verifier_arguments(protocol: &Protocol, policy: SetCommitment) -> Arguments {
             "VERIFIER_ASSET_ID",
             value_u256(protocol.config.verifier_asset.into_inner().0),
         ),
-    ])
+    ]);
+    let Some(audit) = protocol.audit else {
+        return base;
+    };
+    let mut map: HashMap<_, _> = base.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    map.insert(
+        WitnessName::from_str_unchecked("AUDIT_DEPLOYMENT"),
+        value_u256(audit.deployment),
+    );
+    map.insert(
+        WitnessName::from_str_unchecked("AUDIT_EPOCH"),
+        Value::from(UIntValue::U64(audit.epoch)),
+    );
+    let key = audit.key.serialize();
+    map.insert(
+        WitnessName::from_str_unchecked("AUDIT_KEY"),
+        Value::tuple([
+            Value::from(UIntValue::U1(key[0] & 1)),
+            value_u256(key[1..].try_into().expect("public key x")),
+        ]),
+    );
+    map.into()
 }
 
 fn proof_slots<const D: usize>(proofs: &[IndexedInputPolicyProof]) -> anyhow::Result<Value> {

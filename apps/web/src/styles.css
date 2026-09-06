@@ -730,3 +730,13 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
+
+.audit-report-panel { padding: 24px; font-size: 14px; line-height: 1.55; }
+.audit-report-panel .form-stack { margin: 24px 0 16px; }
+.audit-report-panel .audit-report-option { display: flex; flex-direction: row; align-items: center; gap: 10px; }
+.audit-report-panel .audit-report-option input { width: 18px; height: 18px; flex: 0 0 18px; padding: 0; }
+.audit-report-panel table small { display: block; color: var(--muted); font-size: 11px; }
+.audit-report-panel section { margin-top: 28px; }
+.audit-report-panel caption { text-align: left; padding: 12px; font-size: 13px; font-weight: 600; }
+.audit-report-panel details { margin-top: 18px; }
+@media (max-width: 600px) { .audit-report-panel { padding: 16px; } }

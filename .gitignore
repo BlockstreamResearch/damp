@@ -1,5 +1,5 @@
 /target/
-/paper/out/
+/papers/*/out/
 /node_modules/
 /.pnpm-store/
 /apps/web/dist/
@@ -8,3 +8,5 @@
 /apps/web/src/generated/amp-signer/
 /deps/
 .idea/
+__pycache__/
+*.pyc

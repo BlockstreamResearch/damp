@@ -1,6 +1,8 @@
 //! Standalone AMP signer SDK. LWK owns wallet key, SLIP77 and standard signing primitives;
 //! this crate owns AMP policy validation, covenant compilation and high-level operations.
 
+mod audit;
+mod audit_credentials;
 mod blinding;
 mod bootstrap;
 mod keys;
@@ -9,7 +11,9 @@ mod policy;
 mod policy_update;
 mod protocol;
 mod receive;
+mod recovery;
 mod reissuance;
+mod secrets;
 mod split;
 mod transaction;
 mod transfer;
@@ -21,7 +25,117 @@ use lwk_signer::SwSigner;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
+pub use audit_credentials::execute as execute_audit_credentials;
 pub use model::*;
+
+/// Native counterpart of the browser SDK for reproducible local/testnet workflows.
+/// The caller owns secret input handling; returned operation PSETs are private
+/// coordination material and should not be copied to public evidence reports.
+pub fn execute_native(
+    mnemonic: &str,
+    network: SignerNetwork,
+    operation: &str,
+    request: serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let signer = SwSigner::new(mnemonic, network.is_mainnet())?;
+    match operation {
+        "inspect-public-transaction" => recovery::public_transaction(
+            request["transaction"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("missing transaction"))?,
+        ),
+        "build-blacklist" => {
+            let depth = TreeDepth::try_from(
+                request["depth"]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("missing depth"))? as u8,
+            )?;
+            let mut entries: Vec<BlacklistEntryV1> =
+                serde_json::from_value(request["entries"].clone())?;
+            entries.sort_by(|a, b| (&a.txid, a.vout).cmp(&(&b.txid, b.vout)));
+            let keys = entries
+                .iter()
+                .map(BlacklistEntryV1::key)
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let set = PolicySet::new(depth, keys)?.commitment();
+            Ok(
+                serde_json::json!({"treeDepth":depth,"setRoot":hex::encode(set.root),"policyRoot":hex::encode(set.policy_digest()),"entryCount":set.count,"entries":entries}),
+            )
+        }
+        "sign-audit-report" => recovery::sign_report(&signer, serde_json::from_value(request)?),
+        "audit-leaf-hash" => {
+            use elements::hashes::Hash;
+            let cmr = hex::decode(
+                request["cmr"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing cmr"))?,
+            )?;
+            anyhow::ensure!(cmr.len() == 32, "wrong cmr size");
+            Ok(
+                serde_json::json!({"hash":elements::taproot::TapLeafHash::from_script(&elements::Script::from(cmr),simplicityhl::simplicity::leaf_version()).to_byte_array().map(|b|format!("{b:02x}")).concat()}),
+            )
+        }
+        "recover-audit" => Ok(serde_json::to_value(recovery::recover(
+            &signer,
+            serde_json::from_value(request)?,
+        )?)?),
+        "wallet-address" => Ok(serde_json::to_value(keys::derive_wallet_address(
+            &signer,
+            network,
+            request["branch"].as_u64().unwrap_or(0).try_into()?,
+            request["index"].as_u64().unwrap_or(0).try_into()?,
+        )?)?),
+        "holder-address" => Ok(serde_json::to_value(receive::derive_holder_address(
+            &signer,
+            network,
+            serde_json::from_value(request)?,
+        )?)?),
+        "bootstrap" => Ok(serde_json::to_value(bootstrap::bootstrap(
+            &signer,
+            network,
+            serde_json::from_value(request)?,
+        )?)?),
+        "transfer" => Ok(serde_json::to_value(transfer::sign_transfer(
+            &signer,
+            network,
+            serde_json::from_value(request)?,
+        )?)?),
+        "reissue" => Ok(serde_json::to_value(reissuance::reissue(
+            &signer,
+            network,
+            serde_json::from_value(request)?,
+        )?)?),
+        "policy-update" => Ok(serde_json::to_value(policy_update::sign_policy_update(
+            &signer,
+            network,
+            serde_json::from_value(request)?,
+        )?)?),
+        "prepare-policy" => Ok(serde_json::to_value(policy::prepare_policy(
+            serde_json::from_value(request)?,
+        )?)?),
+        "inspect" => Ok(serde_json::to_value(transaction::inspect_utxos(
+            &signer,
+            &serde_json::from_value::<Vec<SpendableUtxo>>(request)?,
+        )?)?),
+        "split-funding" => Ok(serde_json::to_value(split::split_funding(
+            &signer,
+            network,
+            serde_json::from_value(request)?,
+        )?)?),
+        _ => anyhow::bail!("unknown native operation"),
+    }
+}
+
+/// Export deployment-scoped audit/report credentials without retaining the
+/// serialized secret buffer after the caller writes it to its protected file.
+pub fn export_audit_credentials_json(
+    mnemonic: &str,
+    network: SignerNetwork,
+    request: serde_json::Value,
+) -> anyhow::Result<zeroize::Zeroizing<String>> {
+    let signer = SwSigner::new(mnemonic, network.is_mainnet())?;
+    audit_credentials::export_json(&signer, network, request)
+}
 
 #[wasm_bindgen]
 pub struct AmpSigner {
@@ -233,8 +347,7 @@ mod tests {
 
     use amp_core::policy::{PolicySet, TreeDepth};
     use amp_core::registry::{
-        AssetMetadata, DeploymentNetwork, PROTOCOL_ID_V1, PolicySnapshotV1, REGISTRY_SCHEMA_V1,
-        SupplyMode,
+        AssetMetadata, DeploymentNetwork, PolicySnapshotV1, REGISTRY_SCHEMA_V1, SupplyMode,
     };
     use anyhow::Context;
     use elements::confidential::{Asset, AssetBlindingFactor, Nonce, Value, ValueBlindingFactor};
@@ -247,6 +360,15 @@ mod tests {
 
     #[test]
     fn managed_lifecycle_builds_and_executes_every_operation() -> anyhow::Result<()> {
+        managed_lifecycle(false)
+    }
+
+    #[test]
+    fn audited_managed_lifecycle_builds_and_executes_every_operation() -> anyhow::Result<()> {
+        managed_lifecycle(true)
+    }
+
+    fn managed_lifecycle(audited: bool) -> anyhow::Result<()> {
         let signer = SwSigner::new(MNEMONIC, false)?;
         let network = SignerNetwork::ElementsRegtest;
         let policy_asset = AssetId::from_str(&"aa".repeat(32))?;
@@ -258,6 +380,7 @@ mod tests {
             &signer,
             network,
             BootstrapRequest {
+                confidential_audit: audited,
                 network: DeploymentNetwork::ElementsRegtest,
                 policy_asset: policy_asset.to_string(),
                 deployment_salt: "11".repeat(32),
@@ -269,16 +392,109 @@ mod tests {
                 issued_supply: "1000".to_owned(),
                 supply_mode: SupplyMode::IssuerManaged,
                 policy_utxos: funding.to_vec(),
-                fee: "500".to_owned(),
+                fee: if audited { "4000" } else { "500" }.to_owned(),
                 required_confirmations: 1,
             },
         )?;
         bootstrapped.deployment.validate()?;
         bootstrapped.initial_policy.validate()?;
+        if audited {
+            let credentials_json = export_audit_credentials_json(
+                MNEMONIC,
+                network,
+                serde_json::json!({
+                    "deployment": bootstrapped.deployment,
+                    "issuerTransactions": [bootstrapped.transaction],
+                }),
+            )?;
+            assert!(!credentials_json.contains("abandon"));
+            let report_json = serde_json::to_string(&serde_json::json!({
+                "deploymentId": bootstrapped.deployment_id,
+                "network": bootstrapped.deployment.network.as_str(),
+            }))?;
+            let signed = audit_credentials::execute(
+                &credentials_json,
+                network,
+                "sign-audit-report",
+                serde_json::json!({
+                    "deployment": bootstrapped.deployment,
+                    "reportJson": report_json,
+                }),
+            )?;
+            let report_public = signed["publicKey"].as_str().context("report key missing")?;
+            assert_ne!(report_public, bootstrapped.deployment.issuer_public_key);
+            verify_audit_report(
+                signed["certificateJson"]
+                    .as_str()
+                    .context("certificate missing")?,
+                signed["certificateSignature"]
+                    .as_str()
+                    .context("certificate signature missing")?,
+                &bootstrapped.deployment.issuer_public_key,
+            )
+            .map_err(|_| anyhow::anyhow!("issuer certificate did not verify"))?;
+            verify_audit_report(
+                &report_json,
+                signed["signature"]
+                    .as_str()
+                    .context("report signature missing")?,
+                report_public,
+            )
+            .map_err(|_| anyhow::anyhow!("report signature did not verify"))?;
+            for unavailable in ["transfer", "reissue", "policy-update"] {
+                let error = audit_credentials::execute(
+                    &credentials_json,
+                    network,
+                    unavailable,
+                    serde_json::json!({"deployment":bootstrapped.deployment}),
+                )
+                .expect_err("restricted credentials exposed a spending operation");
+                assert!(error.to_string().contains("operation unavailable"));
+            }
+            let mut tampered: serde_json::Value = serde_json::from_str(&credentials_json)?;
+            let signature = tampered["certificateSignature"]
+                .as_str()
+                .context("certificate signature missing")?;
+            tampered["certificateSignature"] = serde_json::Value::String(format!(
+                "{}{}",
+                if &signature[..1] == "0" { "1" } else { "0" },
+                &signature[1..]
+            ));
+            assert!(
+                audit_credentials::execute(
+                    &serde_json::to_string(&tampered)?,
+                    network,
+                    "sign-audit-report",
+                    serde_json::json!({
+                        "deployment":bootstrapped.deployment,
+                        "reportJson":report_json,
+                    }),
+                )
+                .is_err()
+            );
+            assert!(
+                audit_credentials::execute(
+                    &credentials_json,
+                    network,
+                    "sign-audit-report",
+                    serde_json::json!({
+                        "deployment":bootstrapped.deployment,
+                        "reportJson":serde_json::to_string(&serde_json::json!({
+                            "deploymentId":"00".repeat(32),
+                            "network":bootstrapped.deployment.network.as_str(),
+                        }))?,
+                    }),
+                )
+                .is_err()
+            );
+        }
         let regulated_asset = AssetId::from_str(&bootstrapped.deployment.regulated_asset)?;
         let bootstrap_transaction: elements::Transaction =
             elements::encode::deserialize(&hex::decode(&bootstrapped.transaction)?)?;
-        transaction::validate_network_fee(&bootstrap_transaction, 500)?;
+        transaction::validate_network_fee(
+            &bootstrap_transaction,
+            if audited { 4000 } else { 500 },
+        )?;
         assert!(transaction::validate_network_fee(&bootstrap_transaction, 499).is_err());
         assert_eq!(
             bootstrap_transaction.output[1].asset.explicit(),
@@ -384,7 +600,7 @@ mod tests {
                     .confidential_address
                     .clone(),
                 amount: "600".to_owned(),
-                fee: "500".to_owned(),
+                fee: if audited { "4000" } else { "500" }.to_owned(),
             },
         )?;
         assert_eq!(transfer.operation, "transfer");
@@ -394,14 +610,20 @@ mod tests {
             transfer_transaction.output[1].asset.explicit(),
             Some(regulated_asset)
         );
-        assert_eq!(transfer_transaction.output[1].value.explicit(), Some(600));
+        assert_eq!(
+            transfer_transaction.output[1].value.explicit(),
+            if audited { None } else { Some(600) }
+        );
         assert_eq!(
             transfer_transaction.output[2].asset.explicit(),
             Some(regulated_asset)
         );
-        assert_eq!(transfer_transaction.output[2].value.explicit(), Some(400));
-        let transfer_anchor = parent_utxo(&transfer.txid, 0, &transfer.transaction, None, None);
-        let transfer_fee_change = parent_utxo(
+        assert_eq!(
+            transfer_transaction.output[2].value.explicit(),
+            if audited { None } else { Some(400) }
+        );
+        let mut transfer_anchor = parent_utxo(&transfer.txid, 0, &transfer.transaction, None, None);
+        let mut transfer_fee_change = parent_utxo(
             &transfer.txid,
             3,
             &transfer.transaction,
@@ -411,6 +633,53 @@ mod tests {
             }),
             None,
         );
+
+        if audited {
+            let confidential_holder = parent_utxo(
+                &transfer.txid,
+                1,
+                &transfer.transaction,
+                None,
+                Some(HolderKeyLocator {
+                    derivation_index: bootstrapped.holder_derivation_index,
+                    owner_public_key: bootstrapped.initial_holder_address.owner_public_key.clone(),
+                }),
+            );
+            assert_eq!(
+                transaction::decode_utxo(&signer, &confidential_holder, regulated_asset)?
+                    .secrets
+                    .value,
+                600
+            );
+            let again = transfer::sign_transfer(
+                &signer,
+                network,
+                TransferRequest {
+                    deployment: bootstrapped.deployment.clone(),
+                    current_policy: bootstrapped.initial_policy.clone(),
+                    verifier_utxo: transfer_anchor,
+                    regulated_utxos: vec![confidential_holder],
+                    fee_utxos: vec![transfer_fee_change],
+                    recipient_address: bootstrapped
+                        .initial_holder_address
+                        .confidential_address
+                        .clone(),
+                    amount: "300".into(),
+                    fee: if audited { "4000" } else { "500" }.into(),
+                },
+            )?;
+            transfer_anchor = parent_utxo(&again.txid, 0, &again.transaction, None, None);
+            transfer_fee_change = parent_utxo(
+                &again.txid,
+                3,
+                &again.transaction,
+                Some(WalletKeyLocator {
+                    branch: 0,
+                    index: 0,
+                }),
+                None,
+            );
+        }
 
         let successor_set = PolicySet::new(TreeDepth::D5, [])?;
         let successor_commitment = successor_set.commitment();
@@ -422,7 +691,7 @@ mod tests {
         })?;
         let successor = PolicySnapshotV1 {
             schema: REGISTRY_SCHEMA_V1.to_owned(),
-            protocol: PROTOCOL_ID_V1.to_owned(),
+            protocol: bootstrapped.deployment.protocol.clone(),
             deployment_id: bootstrapped.deployment_id.clone(),
             sequence: 1,
             parent_policy_root: Some(bootstrapped.initial_policy.policy_root.clone()),
@@ -445,7 +714,7 @@ mod tests {
                 successor_policy: successor.clone(),
                 verifier_utxo: transfer_anchor,
                 fee_utxos: vec![transfer_fee_change],
-                fee: "500".to_owned(),
+                fee: if audited { "4000" } else { "500" }.to_owned(),
                 issuer_derivation_index: bootstrapped.issuer_derivation_index,
             },
         )?;
@@ -479,7 +748,7 @@ mod tests {
                 fee_utxos: vec![update_fee_change],
                 recipient_address: bootstrapped.initial_holder_address.confidential_address,
                 amount: "100".to_owned(),
-                fee: "500".to_owned(),
+                fee: if audited { "4000" } else { "500" }.to_owned(),
                 issuer_derivation_index: bootstrapped.issuer_derivation_index,
             },
         )?;
@@ -540,6 +809,7 @@ mod tests {
             &signer,
             network,
             BootstrapRequest {
+                confidential_audit: false,
                 network: DeploymentNetwork::ElementsRegtest,
                 policy_asset: policy_asset.to_string(),
                 deployment_salt: "22".repeat(32),
@@ -717,6 +987,7 @@ mod tests {
             &signer,
             network,
             BootstrapRequest {
+                confidential_audit: false,
                 network: DeploymentNetwork::ElementsRegtest,
                 policy_asset: policy_asset.to_string(),
                 deployment_salt: "33".repeat(32),
@@ -761,6 +1032,7 @@ mod tests {
             &signer,
             network,
             BootstrapRequest {
+                confidential_audit: false,
                 network: DeploymentNetwork::ElementsRegtest,
                 policy_asset: policy_asset.to_string(),
                 deployment_salt: "44".repeat(32),
@@ -872,4 +1144,28 @@ mod tests {
             holder_key,
         }
     }
+}
+
+/// Verify an issuer report against the selected deployment's known public key.
+#[wasm_bindgen(js_name = verifyAuditReport)]
+pub fn verify_audit_report(
+    report_json: &str,
+    signature: &str,
+    issuer_public_key: &str,
+) -> Result<(), JsError> {
+    use elements::{
+        hashes::{Hash, sha256},
+        secp256k1_zkp::{Message, Secp256k1, XOnlyPublicKey, schnorr::Signature},
+    };
+    use std::str::FromStr;
+    let mut bytes = b"DAMP/audit/report-signature/v2\0".to_vec();
+    bytes.extend(report_json.as_bytes());
+    let digest = sha256::Hash::hash(&bytes).to_byte_array();
+    Secp256k1::verification_only()
+        .verify_schnorr(
+            &Signature::from_str(signature).map_err(js_error)?,
+            &Message::from_digest(digest),
+            &XOnlyPublicKey::from_str(issuer_public_key).map_err(js_error)?,
+        )
+        .map_err(js_error)
 }

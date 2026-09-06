@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Context;
-use elements::confidential::{AssetBlindingFactor, Value, ValueBlindingFactor};
+use elements::confidential::{AssetBlindingFactor, ValueBlindingFactor};
 use elements::pset::PartiallySignedTransaction;
 use elements::secp256k1_zkp::{
     Generator, PedersenCommitment, RangeProof, SecretKey, SurjectionProof,
@@ -448,6 +448,17 @@ fn blind_explicit_asset_value<R: rand::RngCore + rand::CryptoRng>(
     value_bf: ValueBlindingFactor,
     rng: &mut R,
 ) -> anyhow::Result<()> {
+    blind_explicit_asset_value_bits(pset, index, asset, value_bf, rng, 52)
+}
+
+fn blind_explicit_asset_value_bits<R: rand::RngCore + rand::CryptoRng>(
+    pset: &mut PartiallySignedTransaction,
+    index: usize,
+    asset: AssetId,
+    value_bf: ValueBlindingFactor,
+    rng: &mut R,
+    bits: u8,
+) -> anyhow::Result<()> {
     let output = &pset.outputs()[index];
     let value = output.amount.context("output amount is missing")?;
     let blinding_key = output
@@ -461,17 +472,34 @@ fn blind_explicit_asset_value<R: rand::RngCore + rand::CryptoRng>(
         asset,
         bf: AssetBlindingFactor::zero(),
     };
-    let (commitment, nonce, rangeproof) = Value::Explicit(value).blind(
+    let mut ephemeral = SecretKey::new(rng);
+    let (nonce, mut shared) = elements::confidential::Nonce::with_ephemeral_sk(
         elements::secp256k1_zkp::SECP256K1,
-        value_bf,
-        blinding_key,
-        SecretKey::new(rng),
-        &script_pubkey,
-        &message,
-    )?;
-    let amount_commitment = commitment
-        .commitment()
-        .context("value blinding made no commitment")?;
+        ephemeral,
+        &blinding_key,
+    );
+    ephemeral.non_secure_erase();
+    let amount_commitment = PedersenCommitment::new(
+        elements::secp256k1_zkp::SECP256K1,
+        value,
+        value_bf.into_inner(),
+        asset_generator,
+    );
+    let rangeproof = RangeProof::new(
+        elements::secp256k1_zkp::SECP256K1,
+        1,
+        amount_commitment,
+        value,
+        value_bf.into_inner(),
+        &message.to_bytes(),
+        script_pubkey.as_bytes(),
+        shared,
+        0,
+        bits,
+        asset_generator,
+    );
+    shared.non_secure_erase();
+    let rangeproof = rangeproof?;
     let output = &mut pset.outputs_mut()[index];
     output.amount_comm = Some(amount_commitment);
     output.ecdh_pubkey = nonce.commitment().map(|key| elements::bitcoin::PublicKey {
@@ -488,4 +516,126 @@ fn blind_explicit_asset_value<R: rand::RngCore + rand::CryptoRng>(
         value_bf,
     )?));
     Ok(())
+}
+
+/// Generation-2 value-only blinding balances the G coefficient across assets.
+/// Including fee change permits a single regulated output to have a nonzero
+/// blinder even when its inputs (for example freshly issued self-funds) are explicit.
+pub fn blind_audited_values(
+    pset: &mut PartiallySignedTransaction,
+    input_secrets: &HashMap<usize, TxOutSecrets>,
+    indices: &[usize],
+    regulated_asset: AssetId,
+) -> anyhow::Result<crate::secrets::SecretMap> {
+    anyhow::ensure!(
+        indices.len() >= 2,
+        "audited blinding requires a balancing change output"
+    );
+    anyhow::ensure!(
+        input_secrets.len() == pset.inputs().len(),
+        "missing input opening"
+    );
+    anyhow::ensure!(
+        pset.inputs().iter().all(|i| !i.has_issuance()),
+        "ordinary audited transfers cannot issue assets"
+    );
+    let mut seen = std::collections::HashSet::new();
+    for &index in indices {
+        anyhow::ensure!(seen.insert(index), "duplicate blinding output");
+        let o = pset.outputs().get(index).context("blinding output index")?;
+        anyhow::ensure!(
+            o.asset.is_some()
+                && o.asset_comm.is_none()
+                && o.amount_comm.is_none()
+                && o.amount.is_some_and(|v| v > 0)
+                && o.blinding_key.is_some(),
+            "invalid value-only output"
+        );
+        if o.asset == Some(regulated_asset) {
+            anyhow::ensure!(
+                o.amount.unwrap() <= amp_core::native_audit::MAX_AUDIT_VALUE,
+                "regulated output exceeds application maximum"
+            );
+        }
+    }
+    let input_balance = input_secrets
+        .values()
+        .map(|s| (s.value, s.asset_bf, s.value_bf))
+        .collect::<Vec<_>>();
+    let last = *indices.last().expect("checked nonempty");
+    let mut rng = thread_rng();
+    let mut openings = crate::secrets::SecretMap::default();
+    let mut balance = Vec::new();
+    for (index, o) in pset.outputs().iter().enumerate() {
+        if index == last {
+            continue;
+        }
+        let value = o.amount.context("output amount before blinding")?;
+        let bf = if seen.contains(&index) {
+            ValueBlindingFactor::new(&mut rng)
+        } else {
+            ValueBlindingFactor::zero()
+        };
+        balance.push((value, AssetBlindingFactor::zero(), bf));
+        if seen.contains(&index) {
+            openings.insert(
+                index,
+                TxOutSecrets::new(
+                    o.asset.context("explicit output asset")?,
+                    AssetBlindingFactor::zero(),
+                    value,
+                    bf,
+                ),
+            );
+        }
+    }
+    let o = &pset.outputs()[last];
+    let value = o.amount.context("last output amount")?;
+    let bf = ValueBlindingFactor::last(
+        elements::secp256k1_zkp::SECP256K1,
+        value,
+        AssetBlindingFactor::zero(),
+        &input_balance,
+        &balance,
+    );
+    anyhow::ensure!(
+        bf != ValueBlindingFactor::zero(),
+        "zero balancing blinder; rebuild transfer"
+    );
+    openings.insert(
+        last,
+        TxOutSecrets::new(
+            o.asset.context("last output asset")?,
+            AssetBlindingFactor::zero(),
+            value,
+            bf,
+        ),
+    );
+    for &index in indices {
+        let secret = openings[&index];
+        blind_explicit_asset_value_bits(
+            pset,
+            index,
+            secret.asset,
+            secret.value_bf,
+            &mut rng,
+            if secret.asset == regulated_asset {
+                63
+            } else {
+                52
+            },
+        )?;
+        if secret.asset == regulated_asset {
+            let bytes = pset.outputs()[index]
+                .value_rangeproof
+                .as_ref()
+                .context("missing range")?
+                .serialize();
+            anyhow::ensure!(
+                bytes.len() == 5070 && bytes[..10] == [0x60, 0x3e, 0, 0, 0, 0, 0, 0, 0, 1],
+                "unexpected capped range encoding"
+            );
+        }
+    }
+    Ok(openings)
 }

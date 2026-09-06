@@ -113,3 +113,8 @@ export async function getWalletSyncRecord<T>(key: string): Promise<T | undefined
 export async function putWalletSyncRecord<T>(key: string, value: T) {
   return (await database).put("walletSync", value, key);
 }
+
+export async function listDeploymentPolicies(deploymentId: string): Promise<PolicySnapshot[]> {
+  const snapshots: PolicySnapshot[] = await (await database).getAll("snapshots");
+  return snapshots.filter((snapshot) => snapshot.deploymentId === deploymentId);
+}

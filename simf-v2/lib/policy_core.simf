@@ -1,0 +1,82 @@
+// Shared depth-independent primitives for blacklist Merkle policies.
+// SimplicityHL currently exposes `lib` as flat modules, so this compiler-owned
+// module sits beside the public adapters. `policy/README.md` documents the
+// conceptual directory boundary until nested lib modules are supported.
+use std::lib::asserts::{assert_eq_32, assert_eq_256};
+use std::lib::u32::safe_add_32;
+
+pub fn hash_key_leaf(key: u256) -> u256 {
+    let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_1(ctx, 0);
+    jet::sha_256_ctx_8_finalize(jet::sha_256_ctx_8_add_32(ctx, key))
+}
+
+fn hash_node(left: u256, right: u256) -> u256 {
+    let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_1(ctx, 2);
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, left);
+    jet::sha_256_ctx_8_finalize(jet::sha_256_ctx_8_add_32(ctx, right))
+}
+
+pub fn merkle_step(sibling: u256, state: (u256, u32)) -> (u256, u32) {
+    let (current, index): (u256, u32) = state;
+    let parent: u256 = match jet::is_zero_32(jet::and_32(index, 1)) {
+        true => hash_node(current, sibling),
+        false => hash_node(sibling, current),
+    };
+    (parent, jet::right_shift_32(1, index))
+}
+
+pub fn assert_leaf(root: u256, computed: u256, remaining: u32) {
+    assert_eq_256(computed, root);
+    assert_eq_32(remaining, 0);
+}
+
+fn lt_256(a: u256, b: u256) -> bool {
+    let (a_high, a_low): (u128, u128) = <u256>::into(a);
+    let (b_high, b_low): (u128, u128) = <u256>::into(b);
+    let (a_0, a_1): (u64, u64) = <u128>::into(a_high);
+    let (a_2, a_3): (u64, u64) = <u128>::into(a_low);
+    let (b_0, b_1): (u64, u64) = <u128>::into(b_high);
+    let (b_2, b_3): (u64, u64) = <u128>::into(b_low);
+    match jet::eq_64(a_0, b_0) {
+        false => jet::lt_64(a_0, b_0),
+        true => match jet::eq_64(a_1, b_1) {
+            false => jet::lt_64(a_1, b_1),
+            true => match jet::eq_64(a_2, b_2) {
+                false => jet::lt_64(a_2, b_2),
+                true => jet::lt_64(a_3, b_3),
+            },
+        },
+    }
+}
+
+/// SHA256(consensus_txid || big_endian(vout)).
+pub fn outpoint_key(outpoint: Outpoint) -> u256 {
+    let (txid, vout): (u256, u32) = outpoint;
+    let ctx: Ctx8 = jet::sha_256_ctx_8_init();
+    let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, txid);
+    jet::sha_256_ctx_8_finalize(jet::sha_256_ctx_8_add_4(ctx, vout))
+}
+
+pub fn assert_proof_header(count: u32, capacity: u32, insertion: u32) {
+    assert!(jet::le_32(count, capacity));
+    assert!(jet::le_32(insertion, count));
+}
+
+pub fn assert_lower(index: u32, neighbor: u256, key: u256, insertion: u32) {
+    assert!(lt_256(neighbor, key));
+    assert_eq_32(safe_add_32(index, 1), insertion);
+}
+
+pub fn assert_upper(index: u32, neighbor: u256, key: u256, insertion: u32) {
+    assert_eq_32(index, insertion);
+    assert!(lt_256(key, neighbor));
+}
+
+pub fn assert_empty_tree(root: u256, count: u32, empty_root: u256) {
+    match jet::is_zero_32(count) {
+        false => (),
+        true => assert_eq_256(root, empty_root),
+    }
+}

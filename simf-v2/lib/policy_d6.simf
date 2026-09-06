@@ -1,0 +1,26 @@
+// Depth-6 blacklist policy adapter.
+use std::lib::asserts::assert_eq_32;
+use crate::lib::policy_core::{assert_empty_tree, assert_leaf, assert_lower, assert_proof_header, assert_upper, hash_key_leaf, merkle_step};
+pub use crate::lib::policy_core::outpoint_key;
+
+pub type NeighborProof = (u32, u256, [u256; 6]);
+pub type NonMembershipProof = (u32, Option<NeighborProof>, Option<NeighborProof>);
+
+fn verify_leaf(root: u256, key: u256, index: u32, path: [u256; 6]) {
+    let (computed, remaining): (u256, u32) = array_fold::<merkle_step, 6>(path, (hash_key_leaf(key), index));
+    assert_leaf(root, computed, remaining);
+}
+
+pub fn verify_non_membership(root: u256, count: u32, key: u256, proof: NonMembershipProof) {
+    let (insertion, lower, upper): NonMembershipProof = proof;
+    assert_proof_header(count, 64, insertion);
+    match lower {
+        None => assert_eq_32(insertion, 0),
+        Some(neighbor: NeighborProof) => { let (index, value, path): NeighborProof = neighbor; verify_leaf(root, value, index, path); assert_lower(index, value, key, insertion); },
+    };
+    match upper {
+        None => assert_eq_32(insertion, count),
+        Some(neighbor: NeighborProof) => { let (index, value, path): NeighborProof = neighbor; verify_leaf(root, value, index, path); assert_upper(index, value, key, insertion); },
+    };
+    assert_empty_tree(root, count, 0x7ccebc8f78646b5eece300cb6cfc0dce0fb94f4ddb1f7c0edc4d9eb30851aa0a);
+}

@@ -2,12 +2,12 @@
 
 #![allow(clippy::all)]
 #[rustfmt::skip]
-pub mod verifier_d5;
-#[rustfmt::skip]
-pub mod verifier;
-#[rustfmt::skip]
-pub mod verifier_d6;
-#[rustfmt::skip]
 pub mod governance;
 #[rustfmt::skip]
 pub mod user;
+#[rustfmt::skip]
+pub mod verifier;
+#[rustfmt::skip]
+pub mod verifier_d5;
+#[rustfmt::skip]
+pub mod verifier_d6;

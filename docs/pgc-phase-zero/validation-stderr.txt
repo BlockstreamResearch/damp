@@ -1,0 +1,13 @@
+   Compiling simplicity-amp v0.1.0 (/Users/inter/Desktop/Simpl/simplicity-amp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.46s
+     Running `target/debug/examples/pgc_native_vectors`
+   Compiling simplicity-amp v0.1.0 (/Users/inter/Desktop/Simpl/simplicity-amp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.48s
+     Running `target/debug/examples/pgc_native_cost`
+   Compiling simplicity-amp v0.1.0 (/Users/inter/Desktop/Simpl/simplicity-amp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.55s
+     Running `target/debug/examples/pgc_approval_cost`
+   Compiling simplicity-amp v0.1.0 (/Users/inter/Desktop/Simpl/simplicity-amp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.56s
+     Running `target/debug/examples/pgc_integrated_cost`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s

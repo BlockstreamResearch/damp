@@ -15,8 +15,8 @@ use crate::model::{DerivedWalletAddress, SIGNER_SDK_VERSION, SignerNetwork};
 pub fn derive_key_index(deployment_salt: &str, role: &str) -> anyhow::Result<u32> {
     let salt = amp_core::policy::decode_hex_32("deployment salt", deployment_salt)?;
     anyhow::ensure!(
-        matches!(role, "holder" | "issuer"),
-        "key role must be holder or issuer"
+        matches!(role, "holder" | "issuer" | "audit" | "report"),
+        "key role must be holder, issuer, audit or report"
     );
     let mut hasher = Sha256::new();
     hasher.update(b"simplicity-amp/key-index/v1");
@@ -30,22 +30,42 @@ pub fn amp_derivation_path(role: &str, index: u32) -> anyhow::Result<DerivationP
     let branch = match role {
         "holder" => 0,
         "issuer" => 1,
-        _ => anyhow::bail!("key role must be holder or issuer"),
+        "audit" => 2,
+        "report" => 3,
+        _ => anyhow::bail!("key role must be holder, issuer, audit or report"),
     };
     DerivationPath::from_str(&format!("m/87'/1'/0'/{branch}/{index}"))
         .context("invalid AMP derivation path")
+}
+
+pub struct ProtectedXpriv(Xpriv);
+impl std::ops::Deref for ProtectedXpriv {
+    type Target = Xpriv;
+    fn deref(&self) -> &Xpriv {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ProtectedXpriv {
+    fn deref_mut(&mut self) -> &mut Xpriv {
+        &mut self.0
+    }
+}
+impl Drop for ProtectedXpriv {
+    fn drop(&mut self) {
+        self.0.private_key.non_secure_erase();
+    }
 }
 
 pub fn derive_xprv(
     signer: &SwSigner,
     role: &str,
     index: u32,
-) -> anyhow::Result<(DerivationPath, Xpriv)> {
+) -> anyhow::Result<(DerivationPath, ProtectedXpriv)> {
     let path = amp_derivation_path(role, index)?;
     let xprv = signer
         .derive_xprv(&path)
         .context("could not derive AMP private key")?;
-    Ok((path, xprv))
+    Ok((path, ProtectedXpriv(xprv)))
 }
 
 pub fn xonly_from_xprv(xprv: &Xpriv) -> XOnlyPublicKey {

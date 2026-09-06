@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { AlertTriangle, ArrowRight, Check, ClipboardCopy, Download, ExternalLink, FileText, Fuel, GitPullRequest, Info, ListFilter, Minus, Plus, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ClipboardCopy, Download, ExternalLink, Fuel, GitPullRequest, Info, ListFilter, Minus, Plus, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
 
 import { AppShell, BackLink, Panel, Pill, SafetyNote, SectionHeading, TechnicalDetails } from "../components/ui";
 import { BlacklistTable } from "../components/blacklist-table";
@@ -571,9 +571,7 @@ export function AdminHolders() {
   );
 }
 
-export function AdminReport() {
-  return <AppShell eyebrow="Issuer Console / Report" title="Regulator report"><Panel className="report-placeholder"><span className="report-placeholder-icon"><FileText size={24} /></span><div><span className="overline">Planned capability</span><h2>Regulatory reporting</h2><p>This workspace is reserved for a future regulator-facing review flow. No report is generated or submitted today.</p></div></Panel></AppShell>;
-}
+export { AuditReport as AdminReport } from "./audit-report";
 
 function PolicyChangeReview({ label, entries, empty }: { label: string; entries: BlacklistEntry[]; empty: string }) {
   return <div className="review-row policy-change-review"><span>{label}</span><div>{entries.length === 0 ? <small>{empty}</small> : entries.map((entry) => <code key={`${entry.txid}:${entry.vout}`}>{entry.txid}:{entry.vout}</code>)}</div></div>;
@@ -813,6 +811,7 @@ export function AdminSetup() {
         throw new Error(`Asset issuance needs two distinct confirmed L-BTC outputs; found ${policyUtxos.length} confirmed and ${pending} pending.`);
       }
       const result = await bootstrapDeployment({
+        confidentialAudit: Boolean(configuration.confidentialAudit),
         network: configuration.network,
         policyAsset: configuration.policyAsset,
         deploymentSalt: salt,
@@ -1036,6 +1035,7 @@ export function AdminSetup() {
               <label>Network<select aria-invalid={Boolean(form.formState.errors.network)} aria-describedby={form.formState.errors.network ? "setup-network-error" : undefined} {...form.register("network")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select>{form.formState.errors.network && <small id="setup-network-error" className="field-error">{form.formState.errors.network.message}</small>}</label>
               <fieldset>
                 <legend>Supply model</legend>
+                <label className="radio-card"><input type="checkbox" {...form.register("confidentialAudit")} /><span><strong>Confidential native audit (generation 2)</strong><small>Autonomous confidential transfers and issuer recovery. Existing deployments keep their original protocol.</small></span></label>
                 <label className="radio-card"><input type="radio" value="fixed" {...form.register("supplyMode")} /><span><strong>Fixed</strong><small>Destroy the regulated-asset reissuance token.</small></span></label>
                 <label className="radio-card"><input type="radio" value="issuer-managed" {...form.register("supplyMode")} /><span><strong>Issuer managed</strong><small>The signer wallet retains the confidential reissuance token.</small></span></label>
               </fieldset>

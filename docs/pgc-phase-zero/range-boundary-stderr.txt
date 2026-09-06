@@ -1,0 +1,9 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running `target/debug/examples/pgc_range_boundary`
+
+thread 'main' (27985188) panicked at /Users/inter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/secp256k1-zkp-0.11.0/src/zkp/rangeproof.rs:147:18:
+attempt to add with overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (27985188) panicked at /Users/inter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/secp256k1-zkp-0.11.0/src/zkp/rangeproof.rs:147:18:
+attempt to add with overflow

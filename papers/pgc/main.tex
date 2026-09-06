@@ -1,0 +1,453 @@
+\documentclass[11pt]{article}
+
+\usepackage{fontspec}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usepackage{authblk}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\sha}{\operatorname{SHA256}}
+\newcommand{\concat}{\mathbin\|}
+\newcommand{\enc}{\operatorname{Enc}}
+\setlength{\emergencystretch}{2em}
+
+\title{Host-Bound PGC Equal-Value Proofs for \\
+Liquid Confidential-Policy Research}
+\author{Kyrylo Riabov, Artem Chystiakov}
+\affil{Blockstream}
+\date{\today}
+
+\begin{document}
+
+    \maketitle
+
+    \begin{abstract}
+        We implement a host-bound equal-value proof based on PGC, the Pretty Good Decentralized Confidential Payment System with Auditability.
+        The construction proves that two twisted-ElGamal handles and one ciphertext body use the same value and encryption randomness.
+        We instantiate the proof on secp256k1 and bind its transcript to a network and a host-supplied transaction identifier.
+        Four interoperability vectors agree in Rust and an independent Python implementation.
+        One vector is bound to a confirmed Liquid testnet transaction and selected output.
+        This evidence remains offchain.
+        The Liquid transaction does not carry or verify the proof, and the proof commitment is not tied to the native Liquid value commitment.
+        We describe the implemented result, its security boundary, and the additional relation required for a confidential-payment protocol.
+    \end{abstract}
+
+
+    \section{Introduction}
+
+    Confidential transactions hide transferred values while preserving the ledger's balance rules \cite{liquid}.
+    Some applications additionally require an auditor to inspect a payment.
+    PGC provides an account-based confidential payment system with auditability, built from twisted ElGamal encryption and modular zero-knowledge proofs \cite{pgc}.
+
+    This paper studies one component of that system.
+    The component is PGC's two-recipient equal-value proof.
+    A sender and a recipient receive different encryption handles, while the proof establishes that both handles refer to the same randomness and the same ciphertext body.
+    We implement that relation on secp256k1 and add a fixed encoding, a network identifier, and a host-supplied transaction binding \cite{pgc-spec}.
+
+    The result belongs to the DAMP research program, but it is not the regulated-asset covenant described by the DAMP paper.
+    No DAMP contract, signer flow, registry, or wallet currently invokes this proof.
+    The implementation is an isolated host-side proof of concept.
+    It does not implement the complete PGC payment system.
+
+    The distinction between cryptographic consistency and ledger enforcement is central.
+    The proof verifies the values and points presented in its statement.
+    A host is responsible for obtaining ledger data, choosing the transaction output, and assigning application meaning to the supplied commitment.
+    No Simplicity program currently reconstructs that statement or verifies the proof onchain.
+
+    Section~\ref{sec:model} defines the proof model and separates it from a prospective auditor construction.
+    Section~\ref{sec:construction} gives the Sigma protocol, encoding, and transcript.
+    Section~\ref{sec:evidence} records the reproducible evidence.
+    Section~\ref{sec:security} states the resulting guarantees and limits.
+
+
+    \section{Protocol Model}
+    \label{sec:model}
+
+    \subsection{Roles and values}
+
+    Let $\mathcal{G}$ be the prime-order secp256k1 group of order $q$, written additively.
+    Let $G$ be its standard generator.
+    Let $H$ be a second group element for which no participant is assumed to know $\log_G(H)$.
+
+    The \emph{sender} controls a public key $pk_s$.
+    The \emph{recipient} controls a public key $pk_r$.
+    The \emph{prover} knows a scalar value $v$ and nonzero encryption randomness $r$.
+    The \emph{host} supplies the network, transaction binding, keys, ciphertext, and commitment to the proof implementation.
+    These roles may be combined by an application, but the proof does not authenticate their real-world identities.
+
+    For a public key $pk$, twisted ElGamal encrypts $v$ with randomness $r$ as
+    \begin{equation}
+        \enc(pk,v;r)=(X,Y)=(rpk,\;rG+vH).
+        \label{eq:encryption}
+    \end{equation}
+    A holder of $sk$, where $pk=skG$, obtains
+    \begin{equation}
+        Y-sk^{-1}X=vH.
+        \label{eq:decryption}
+    \end{equation}
+    Recovering $v$ then requires a discrete-log search over the permitted value range.
+    PGC uses this encryption within a larger protocol that supplies range, balance, regulation, and account-state proofs \cite{pgc}.
+    None of those surrounding proofs is part of the implementation described here.
+
+    \subsection{Equal-value statement}
+
+    The public statement is
+    \begin{equation}
+        x=(n,t,pk_s,pk_r,X_s,X_r,Y,C,H),
+        \label{eq:statement}
+    \end{equation}
+    where $n$ is a ledger-network code and $t$ is a nonzero 32-byte host binding.
+    The witness is $(r,v)\in\mathbf{Z}_q^2$ with $r\ne0$.
+    An accepting witness satisfies
+    \begin{align}
+        X_s &= rpk_s, & X_r &= rpk_r, \label{eq:handles}\\
+        Y   &= rG+vH, & C   &= Y.       \label{eq:body}
+    \end{align}
+    Thus $X_s$ and $X_r$ use the same randomness, and $Y$ contains the value shared by the two recipients.
+    The final equality is checked over canonical point encodings.
+
+    The field $C$ does not introduce a second blinding factor.
+    It is another name for the ciphertext body $Y$.
+    In particular, it is not Liquid's native confidential value commitment.
+    Proving equality with that commitment requires a different relation.
+
+    \subsection{Setup}
+
+    The proof profile fixes four setup choices:
+
+    \begin{enumerate}
+        \item Use secp256k1 and compressed SEC1 point encodings.
+        \item Derive $H$ reproducibly from the tag \texttt{simplicity-amp/pgc-equal/h-generator/v1}.
+        \item Encode the network, transaction binding, keys, handles, body, commitment, and $H$ in one versioned statement.
+        \item Hash the complete statement and proof commitments under a separate versioned Fiat--Shamir tag.
+    \end{enumerate}
+
+    The derivation of $H$ uses tagged SHA-256 with try-and-increment and accepts the first valid compressed point distinct from $G$.
+    Its output is
+    \begin{equation}
+        H=\mathtt{02ed9d2dd95c5e81889c23622b7c77b92a47c7d371f544d83645eee7e7b630d0bd}.
+    \end{equation}
+    This is a transparent project parameter, not a standardized hash-to-curve suite such as RFC~9380 \cite{rfc9380}.
+
+    \subsection{Host binding}
+
+    For the reproducible ledger profile, the host derives
+    \begin{equation}
+        t=H_{\mathtt{txbind/v1}}(n\concat txid\concat\operatorname{BE}_{32}(i)),
+        \label{eq:tx-binding}
+    \end{equation}
+    where $i$ is the selected output index and $H_{\mathtt{txbind/v1}}$ denotes BIP-340-style tagged SHA-256 using the full tag
+    \texttt{simplicity-amp/pgc-equal/transaction-binding/v1} \cite{bip340}.
+    Network codes distinguish Bitcoin mainnet, testnet, signet, and regtest, Liquid mainnet and testnet, and Elements regtest.
+    The verifier rejects an all-zero binding.
+
+    This construction prevents the same proof bytes from being reused under a different encoded network or binding.
+    It does not prove that the host used a real transaction, the correct byte order, a confirmed output, or the intended application state.
+    Those facts remain host obligations.
+
+    Figure~\ref{fig:boundary} shows the division of responsibility.
+    The proof implementation checks the canonical statement and its algebraic relation.
+    Ledger provenance and consensus enforcement remain outside it.
+
+    \begin{figure}[ht]
+        \centering
+        \begin{tikzpicture}[
+            node distance=0.65cm and 1.15cm,
+            box/.style={draw, rounded corners, align=center, font=\small, inner sep=6pt, minimum width=3.1cm},
+            check/.style={draw, rounded corners, align=left, font=\small, inner sep=7pt, fill=black!4},
+            arrow/.style={-{Latex[length=2mm]}, thick}
+        ]
+        \node[box] (ledger) {ledger observation\\network, txid, output};
+        \node[box, below=of ledger] (claim) {application claim\\keys, $C$, witness};
+        \node[check, right=of ledger, yshift=-0.45cm] (host) {host selects data\\and constructs $t$};
+        \node[box, right=of host, yshift=0.45cm] (accept) {proof accepted\\for supplied bytes};
+        \node[box, below=of accept] (outside) {onchain enforcement\\not implemented};
+
+        \draw[arrow] (ledger) -- (host);
+        \draw[arrow] (claim) -- (host);
+        \draw[arrow] (host) -- (accept);
+        \draw[arrow, dashed] (accept) -- (outside);
+        \end{tikzpicture}
+        \caption{The host boundary. Proof acceptance does not authenticate ledger provenance or enforce a transaction.}
+        \label{fig:boundary}
+    \end{figure}
+
+    \subsection{Prospective auditor output}
+
+    A separate two-page design sketch supplied with this work proposes an auditor-oriented output \cite{audit-sketch}.
+    It defines an auditor public key $P_a=[sk_a^{-1}]G$ and an asset generator $H_a=H_{\mathrm{tagA}}+[r]G$.
+    An output commitment has form
+    \begin{equation}
+        C_{out}=[a]H_a+[b]G,
+    \end{equation}
+    together with $C_a=[b]P_a$.
+    Its Sigma protocol proves knowledge of $(a,b)$ satisfying both equations.
+    The auditor computes $C_{out}-[sk_a]C_a=[a]H_a$ and recovers a bounded amount $a$ by discrete log.
+
+    The sketch additionally proposes encrypting $(a,b,H_a,r)$ under a key derived from sender-auditor ECDH.
+    That ciphertext gives the auditor a fast recovery path, while the group relation remains a fallback.
+    This is a useful direction, but it is not the relation in Equation~\ref{eq:statement}.
+    The current code does not implement the auditor key convention, the asset generator, the recovery ciphertext, or its Simplicity verifier.
+
+
+    \section{Equal-Value Construction}
+    \label{sec:construction}
+
+    \subsection{Prover}
+
+    The construction is the additive-notation form of PGC's $\Sigma_{\mathrm{equal}}$ protocol \cite{pgc}.
+    The prover samples nonces $a,b\in\mathbf{Z}_q$ and computes
+    \begin{align}
+        A_s &= apk_s, & A_r &= apk_r, & B &= aG+bH.
+        \label{eq:commitments}
+    \end{align}
+    After receiving a challenge $e\in\mathbf{Z}_q$, it returns
+    \begin{align}
+        z_r &= a+er \pmod q, & z_v &= b+ev \pmod q.
+        \label{eq:responses}
+    \end{align}
+
+    The implementation derives $a$ and $b$ rather than accepting them from its caller.
+    Their tagged derivation includes a role byte, the complete witness, 32 bytes of auxiliary randomness, the complete statement, and a retry counter.
+    This hedges caller randomness and avoids nonce reuse when a statement changes.
+    It does not replace the need for fresh cryptographic randomness in a production caller.
+
+    \subsection{Verifier}
+
+    The verifier first decodes the statement and proof canonically.
+    It requires $C=Y$ and checks
+    \begin{align}
+        z_rpk_s     &= A_s+eX_s, \label{eq:verify-s}\\
+        z_rpk_r     &= A_r+eX_r, \label{eq:verify-r}\\
+        z_rG+z_vH   &= B+eY.     \label{eq:verify-y}
+    \end{align}
+    The first two equations bind the same encryption randomness to both handles.
+    The third binds that randomness and the value to the ciphertext body.
+
+    Figure~\ref{fig:proof} follows one value through the proof.
+    It does not show a native Liquid commitment because the present relation has no equation for one.
+
+    \begin{figure}[ht]
+        \centering
+        \begin{tikzpicture}[
+            node distance=0.75cm and 1.2cm,
+            root/.style={font=\small},
+            box/.style={draw, rounded corners, align=center, font=\small, inner sep=6pt, text width=0.25\linewidth},
+            arrow/.style={-{Latex[length=2mm]}, thick}
+        ]
+        \node[root] (witness) {shared witness $(r,v)$};
+        \node[box, below left=of witness] (sender) {sender handle\\$X_s=rpk_s$};
+        \node[box, below=of witness] (body) {ciphertext body\\$Y=C=rG+vH$};
+        \node[box, below right=of witness] (receiver) {recipient handle\\$X_r=rpk_r$};
+        \draw[arrow] (witness) -- (sender);
+        \draw[arrow] (witness) -- (body);
+        \draw[arrow] (witness) -- (receiver);
+        \end{tikzpicture}
+        \caption{The equal-value relation. One witness opens both handles and the shared ciphertext body.}
+        \label{fig:proof}
+    \end{figure}
+
+    \subsection{Fiat--Shamir challenge}
+
+    The non-interactive proof replaces the verifier's random challenge with
+    \begin{equation}
+        e=H_{\mathtt{challenge/v1}}
+        \bigl(\operatorname{encode}(x)\concat A_s\concat A_r\concat B
+        \concat\operatorname{BE}_{32}(j)\bigr)\bmod q,
+        \label{eq:challenge}
+    \end{equation}
+    where $j$ begins at zero and increments only when the reduced challenge is zero.
+    The full tag is \texttt{simplicity-amp/pgc-equal/challenge/v1}.
+    For a tag $d$, the tagged hash is
+    \begin{equation}
+        H_d(m)=\sha\bigl(\sha(d)\concat\sha(d)\concat m\bigr).
+    \end{equation}
+    Hashing the complete fixed-length statement binds the challenge to the network, transaction binding, keys, handles, body, commitment, and generator.
+
+    \subsection{Canonical encoding}
+
+    The statement encoding has 265 bytes.
+    It consists of a one-byte version, a one-byte network code, the 32-byte transaction binding, and seven 33-byte compressed points.
+    The points appear in the same order as Equation~\ref{eq:statement} after $n$ and $t$.
+
+    The proof encoding has 163 bytes.
+    It contains the three 33-byte commitments $A_s,A_r,B$, followed by the two 32-byte big-endian responses $z_r,z_v$.
+    Points must decode to non-identity secp256k1 points and reserialize byte-for-byte.
+    Scalars must be strictly smaller than $q$.
+    Decoders reject unknown versions and networks, alternate lengths, invalid points, non-canonical scalars, and trailing bytes.
+
+
+    \section{Implementation Evidence}
+    \label{sec:evidence}
+
+    \subsection{Independent implementations}
+
+    The primary implementation is the Rust module \texttt{amp\_core::pgc\_policy}.
+    An independent Python program rederives the generator, transaction binding, statement bytes, proof nonces, challenge, responses, and proof bytes from the written specification \cite{pgc-spec,pgc-vectors}.
+    It shares no proof implementation with the Rust module.
+
+    Four deterministic vectors exercise the profile.
+    They cover Bitcoin regtest, Liquid testnet, Elements regtest, and Bitcoin mainnet network codes.
+    The cases include a zero value, equal sender and recipient keys, and full-width scalars.
+    The two implementations reproduce every statement and proof byte.
+    Mutations of the transaction binding, network, commitment, response, proof commitment, or generator are rejected.
+
+    These tests demonstrate internal consistency and cross-implementation agreement.
+    They do not replace cryptographic review, consensus execution, or an external audit.
+    This implementation has not received an independent third-party audit.
+
+    \subsection{Liquid testnet gate}
+
+    The strongest network evidence uses confirmed Liquid testnet transaction
+    \begin{equation}
+        \mathtt{39faa5b530fdaa36d3791abae6694c16513eaec0378be9f0a040d3c17d79dc6f}
+    \end{equation}
+    and output index 2 \cite{pgc-evidence}.
+    The transaction was recorded in block 2598267 with block hash
+    \begin{equation}
+        \mathtt{0b0ffbda7b7b855917677f072c5ea6e5bc081189c85f6ea53f45121a3293714c}.
+    \end{equation}
+    The selected output contains the native Liquid value commitment
+    \begin{equation}
+        \mathtt{0838c1ec7d277f4dc114f7a72ec578a6da75bafdca40f46c9175151116bf82a581}.
+    \end{equation}
+
+    The host profile derives transaction binding
+    \begin{equation}
+        \mathtt{0b377118ef2ecd980bf66e170ef9b1ad6aa8f6106c854b38e5e6a2a543a00c25}.
+    \end{equation}
+    Rust and Python then generate and verify the vector bound to those bytes.
+    Its statement and proof have SHA-256 digests
+    \begin{align}
+        \mathtt{b9002068800b83aeed0d0700041aaa799ab4868d3aaa69297af65868651d769d},\\
+        \mathtt{28713475623e7cf65d05278ce13a74f093f88c53579a0860a5cc7ef35290f548}.
+    \end{align}
+
+    This gate used public, read-only ledger data.
+    It did not broadcast a transaction, spend funds, or use a private key.
+    More importantly, the transaction did not contain the proof.
+    The proof commitment $C$ was not shown equal to the displayed native value commitment.
+    Confirmation authenticates the transaction evidence, not a PGC assertion inside it.
+
+
+    \section{Security Considerations}
+    \label{sec:security}
+
+    \subsection{Completeness and extraction}
+
+    Honest responses satisfy Equations~\ref{eq:verify-s}--\ref{eq:verify-y} by substitution.
+    For example,
+    \begin{equation}
+        (a+er)pk_s=apk_s+e(rpk_s)=A_s+eX_s.
+    \end{equation}
+    The other two equations follow identically.
+
+    Suppose two accepting transcripts have the same commitments and distinct challenges $e$ and $e'$.
+    Their witnesses can be extracted as
+    \begin{align}
+        r&=(z_r-z'_r)(e-e')^{-1}\pmod q,\\
+        v&=(z_v-z'_v)(e-e')^{-1}\pmod q.
+    \end{align}
+    Thus the interactive protocol has unconditional special soundness.
+    Knowledge soundness of the Fiat--Shamir proof is considered in the random-oracle model.
+
+    The witness is unique for a valid statement.
+    Since $pk_s$ is a non-identity point in a prime-order group, $X_s=rpk_s$ fixes $r$.
+    Then $Y-rG=vH$ fixes $v$.
+    This uniqueness does not require a discrete-log assumption.
+
+    \subsection{Zero knowledge and confidentiality}
+
+    For any challenge and responses, a special honest-verifier simulator can compute
+    \begin{align}
+        A_s&=z_rpk_s-eX_s, & A_r&=z_rpk_r-eX_r,\\
+        B&=z_rG+z_vH-eY.
+    \end{align}
+    The interactive protocol is therefore perfect special honest-verifier zero knowledge.
+    The implemented non-interactive proof relies on the random-oracle model.
+    Its stronger Fiat--Shamir and non-malleability claims require the conditions studied by Faust et al. \cite{faust-fiat-shamir}.
+
+    Zero knowledge does not by itself establish payment confidentiality.
+    Confidentiality of the source PGC encryption against parties holding neither recipient secret key is attributed to PGC's divisible-DDH analysis \cite{pgc}.
+    This project has not supplied an independent proof of that theorem.
+    The ledger still reveals its ordinary public fields, and the current module performs no decryption or receiver scanning.
+
+    \subsection{Host and consensus boundary}
+
+    A verifier accepts only the bytes in Equation~\ref{eq:statement}.
+    An untrusted host can supply an arbitrary transaction binding, a point unrelated to the selected output, or a false description of the network.
+    The all-zero rejection catches only a default value.
+    It does not authenticate a nonzero digest.
+
+    A complete Liquid construction must derive the statement from introspected transaction fields and verify the proof within the authorized spending path.
+    The present PoC has no Simplicity program and no onchain verifier.
+    It provides no transaction authorization, signature check, replay policy beyond the supplied binding, or proof that either public key is owned by a participant.
+
+    \subsection{Native commitment equality}
+
+    A Liquid confidential output uses an asset-dependent generator $H_A$ and has a value commitment of form
+    \begin{equation}
+        C_L=sG+vH_A.
+        \label{eq:liquid-commitment}
+    \end{equation}
+    The implemented PGC body is $Y=rG+vH$.
+    Byte equality $C=Y$ cannot establish that these two different-base commitments contain the same $v$.
+
+    A future relation must add Equation~\ref{eq:liquid-commitment} to the statement and use a response for $s$ together with the existing responses for $r$ and $v$.
+    It must also bind the asset generator and output location.
+    Until that relation is implemented and reviewed, the testnet evidence cannot be described as native Liquid commitment equality.
+
+    \subsection{Range and conservation}
+
+    The witness value $v$ is a scalar.
+    The proof does not establish that it is a nonnegative integer in an application range.
+    It also proves no input-output balance, sender solvency, conservation, or absence of inflation.
+    The full PGC protocol composes additional mechanisms for these purposes \cite{pgc}.
+    A ledger integration must specify those mechanisms rather than infer them from equal-value consistency.
+
+    \subsection{Parameters and implementation}
+
+    Security assumes that no participant knows $\log_G(H)$ when $Y$ is also treated as a Pedersen commitment.
+    The transparent derivation makes the parameter reproducible, but the even-prefix try-and-increment procedure is project-specific.
+    A later version should use a standardized hash-to-curve method and change every affected version and transcript tag.
+
+    The code rejects malformed encodings before group equations and zeroizes the witness, derived nonces, auxiliary-randomness copy, and nonce preimage within its ownership boundary \cite{pgc-spec}.
+    Nevertheless, the surrounding prover has not received a complete constant-time or memory-hygiene audit.
+    In particular, its scalar helper can reveal whether $v=0$ through timing.
+    Production use requires a dedicated side-channel review and an explicit range policy.
+
+
+    \section{Future Work}
+
+    The immediate protocol task is a cross-base equality proof connecting the PGC ciphertext body to Liquid's native value commitment.
+    The statement must bind the asset generator, commitment, transaction output, and network without relying on caller assertions.
+    A Simplicity verifier can then be specified and costed against the available jets and execution limits \cite{simplicity}.
+
+    A complete payment protocol also requires range proofs, balance and conservation rules, transaction authorization, account or UTXO state transitions, receiver scanning, and key management.
+    The auditor-oriented sketch should be reconciled with these rules before implementing its recovery ciphertext or bounded-discrete-log fallback.
+    Independent cryptographic review and a full constant-time implementation remain necessary before deployment.
+
+
+    \section{Conclusion}
+
+    The PGC equal-value relation can be instantiated reproducibly on secp256k1 and bound to a host-supplied ledger context.
+    The Rust and Python implementations agree across four vectors, including one derived from a confirmed Liquid testnet transaction and output.
+    This establishes an offchain consistency result for the supplied statement.
+    Native Liquid commitment equality and onchain enforcement remain separate, unimplemented protocol steps.
+
+
+    \section*{AI Disclosure}
+
+    Parts of this work were prepared with AI assistants.
+    The assistants helped analyze source material, draft the paper, and review the implementation evidence under the authors' direction.
+    The protocol design, the paper's structure, and all final decisions are the authors'.
+    The authors reviewed the generated content and take full responsibility for the final output.
+
+        {\small\sloppy
+    \bibliographystyle{unsrt}
+    \bibliography{references}
+    }
+
+\end{document}

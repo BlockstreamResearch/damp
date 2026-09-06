@@ -112,7 +112,10 @@ pub fn split_funding(
     }
     pset.add_output(Output::new_explicit(Script::new(), fee, policy_asset, None));
 
-    let secrets = HashMap::<usize, TxOutSecrets>::from([(0, source.secrets)]);
+    let secrets = crate::secrets::SecretMap::from(HashMap::<usize, TxOutSecrets>::from([(
+        0,
+        source.secrets,
+    )]));
     if input_needs_confidential_change(&source) {
         blinding::blind_values(&mut pset, &secrets, &[0, 1])
             .context("split value blinding failed")?;
@@ -409,6 +412,7 @@ mod tests {
             &signer,
             network,
             BootstrapRequest {
+                confidential_audit: false,
                 network: DeploymentNetwork::ElementsRegtest,
                 policy_asset: asset.to_string(),
                 deployment_salt: "45".repeat(32),

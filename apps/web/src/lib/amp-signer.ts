@@ -388,6 +388,7 @@ export async function validateRecipientAddress(deployment: DeploymentManifest, a
 }
 
 export async function bootstrap(input: {
+  confidentialAudit?: boolean;
   network: SignerNetwork;
   policyAsset: string;
   deploymentSalt: string;
@@ -479,4 +480,9 @@ export async function validateDeployment(deployment: DeploymentManifest) {
 
 export async function validatePolicySnapshot(snapshot: PolicySnapshot) {
   return (await loadModule()).validatePolicySnapshot(snapshot);
+}
+
+export async function verifyAuditReport(reportJson: string, signature: string, issuerPublicKey: string) {
+  const module = await loadModule();
+  module.verifyAuditReport(reportJson, signature, issuerPublicKey);
 }

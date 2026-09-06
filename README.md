@@ -2,13 +2,19 @@
 
 > **Experimental proof of concept.** This software is not production-ready. Do not use it with real funds or assets; use is at your own risk.
 
-The closed UX scope and audit evidence are tracked in
-[`docs/damp-ux-improvement-checklist.md`](docs/damp-ux-improvement-checklist.md).
-
 Research software for blacklist-regulated assets on Liquid testnet and Elements
 regtest. Liquid mainnet is intentionally unsupported.
 
+An isolated Bitcoin-oriented research policy for PGC twisted-ElGamal equal-value
+proofs lives in [`docs/pgc-confidential-policy-poc.md`](docs/pgc-confidential-policy-poc.md).
+It is a host-side cryptographic PoC, is not enabled by the DAMP contracts, and
+does not change the blacklist policy described below.
+
 ## Protocol
+
+The original generation uses explicit regulated amounts. The experimental v0.2
+generation adds autonomous confidential transfers and issuer audit reporting;
+see [its behavior, evidence, and limits](docs/pgc-e2e/README.md).
 
 The verifier anchor is a two-leaf Taproot tree under the standard NUMS internal
 key:
@@ -103,6 +109,14 @@ missing, zero, confidential, overflowing, or unequal regulated input/output tota
 Only unrelated wallet outputs such as confidential L-BTC change use value-only
 blinding.
 
+## Papers
+
+The canonical existing DAMP protocol manuscript is in
+[`papers/damp/`](papers/damp/). The distinct host-side PGC equal-value
+manuscript is in [`papers/pgc/`](papers/pgc/); it does not claim native Liquid
+commitment equality or on-chain enforcement. Run `make -C papers` to build both
+PDFs under their respective `out/` directories.
+
 ## Reproducible build
 
 Simplex 0.0.9 and `simplicityhl-std` revision
@@ -112,6 +126,7 @@ library, deterministically regenerate the committed artifacts, then run the chec
 ```bash
 ./scripts/prepare-simplex-std.sh
 simplex build
+python3 scripts/normalize-artifact-modules.py
 cargo test --workspace --lib --test protocol
 cargo check -p simplicity-amp-signer --target wasm32-unknown-unknown
 pnpm install --frozen-lockfile
@@ -120,6 +135,9 @@ pnpm test
 pnpm typecheck
 pnpm build
 ```
+
+The normalizer only sorts Simplex's generated module declarations. CI still
+rejects any other difference in committed artifacts.
 
 Run the Elements integration test with `./scripts/test-regtest.sh`; the wrapper
 enables non-standard relay on Simplex's pinned Elements node while retaining full

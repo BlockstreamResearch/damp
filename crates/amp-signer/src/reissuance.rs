@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use amp_core::registry::SupplyMode;
@@ -7,7 +6,7 @@ use elements::bitcoin::PublicKey as BitcoinPublicKey;
 use elements::hashes::{Hash as _, sha256};
 use elements::pset::{Output, PartiallySignedTransaction};
 use elements::secp256k1_zkp::{Keypair, Message};
-use elements::{Address, AssetId, Script, TxOutSecrets};
+use elements::{Address, AssetId, Script};
 
 use crate::blinding;
 use crate::keys::{derive_xprv, xonly_from_xprv};
@@ -57,6 +56,17 @@ pub fn reissue(
     );
     receive::validate_recipient_address(network, &request.deployment, &request.recipient_address)?;
     let amount = parse_amount(&request.amount, "reissuance amount")?;
+    if request.deployment.audit.is_some() {
+        anyhow::ensure!(
+            amount <= amp_core::native_audit::MAX_AUDIT_VALUE,
+            "reissuance amount exceeds application maximum"
+        );
+        let own = receive::derive_holder_address(signer, network, request.deployment.clone())?;
+        anyhow::ensure!(
+            request.recipient_address == own.confidential_address,
+            "audited reissuance must first pay the issuer own holder output"
+        );
+    }
     let fee = parse_amount(&request.fee, "fee")?;
     let verifier_asset = AssetId::from_str(&request.deployment.verifier_asset)?;
     let regulated_asset = AssetId::from_str(&request.deployment.regulated_asset)?;
@@ -150,12 +160,29 @@ pub fn reissue(
         None,
     ));
     let mut value_only_outputs = Vec::new();
-    pset.add_output(Output::new_explicit(
-        recipient.script_pubkey(),
-        amount,
-        regulated_asset,
-        None,
-    ));
+    let blind_issuance = request.deployment.audit.is_some()
+        && u128::from(amount) + u128::from(fee_total) + 1
+            > u128::from(crate::transaction::MAX_EXPLICIT_MONEY);
+    if blind_issuance {
+        let first = amount / 2;
+        for value in [first, amount - first] {
+            let index = pset.outputs().len();
+            pset.add_output(Output::new_explicit(
+                recipient.script_pubkey(),
+                value,
+                regulated_asset,
+                recipient.blinding_pubkey.map(BitcoinPublicKey::new),
+            ));
+            value_only_outputs.push(index);
+        }
+    } else {
+        pset.add_output(Output::new_explicit(
+            recipient.script_pubkey(),
+            amount,
+            regulated_asset,
+            None,
+        ));
+    }
     let token_output = pset.outputs().len();
     pset.add_output(Output::new_explicit(
         token_address.script_pubkey(),
@@ -204,7 +231,7 @@ pub fn reissue(
         .iter()
         .enumerate()
         .map(|(index, utxo)| (index, utxo.secrets))
-        .collect::<HashMap<usize, TxOutSecrets>>();
+        .collect::<crate::secrets::SecretMap>();
     if !value_only_outputs.is_empty() {
         blinding::blind_values(&mut pset, &secrets, &value_only_outputs)
             .context("reissuance fee-change blinding failed")?;

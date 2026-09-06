@@ -24,8 +24,12 @@ jobs:
           echo "$HOME/.simplex/bin" >> "$GITHUB_PATH"
       - run: ./scripts/prepare-simplex-std.sh
       - run: simplex build
+      - run: python3 scripts/test-normalize-artifact-modules.py
+      - run: python3 scripts/normalize-artifact-modules.py
       - run: git diff --exit-code -- src/artifacts
       - run: ./scripts/check-contract-bundle.sh
+      - run: python3 scripts/check-contract-bundle-v2.py
+      - run: python3 scripts/test-pgc-audit-service.py
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --lib --test protocol

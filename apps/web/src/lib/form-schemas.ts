@@ -13,6 +13,7 @@ export function displaySupplyToBaseUnits(displaySupply: string, precision: numbe
 }
 
 export const setupSchema = z.object({
+  confidentialAudit: z.boolean().optional(),
   name: z.string().trim().min(1, "Enter an asset name").max(80),
   ticker: z.string().trim().min(1, "Enter an asset ticker").max(12),
   precision: z.number().int("Precision must be a whole number").min(0).max(8),
@@ -21,7 +22,8 @@ export const setupSchema = z.object({
   network: z.enum(["liquid-testnet", "elements-regtest"]),
 }).superRefine((value, context) => {
   try {
-    displaySupplyToBaseUnits(value.supply, value.precision);
+    const amount=displaySupplyToBaseUnits(value.supply, value.precision);
+    if(value.confidentialAudit && amount>9223372036854775807n)throw new Error("Generation 2 supports at most 9223372036854775807 base units per amount");
   } catch (error) {
     context.addIssue({
       code: "custom",

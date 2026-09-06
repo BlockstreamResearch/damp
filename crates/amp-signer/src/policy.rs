@@ -57,11 +57,27 @@ pub fn prepare_policy(request: PreparePolicyRequest) -> anyhow::Result<PreparedP
 pub fn protocol_for_deployment(
     deployment: &amp_core::registry::DeploymentManifestV1,
 ) -> anyhow::Result<Protocol> {
-    Protocol::new(ProtocolConfig {
+    anyhow::ensure!(
+        deployment.audit.is_none()
+            || deployment.contract_bundle_hash == amp_core::CONTRACT_BUNDLE_V2_HASH,
+        "v0.2 contract bundle is unsupported"
+    );
+    let config = ProtocolConfig {
         regulated_asset: AssetId::from_str(&deployment.regulated_asset)?,
         verifier_asset: AssetId::from_str(&deployment.verifier_asset)?,
         verifier_asset_amount: deployment.verifier_asset_amount,
         issuer: XOnlyPublicKey::from_str(&deployment.issuer_public_key)?,
         network: deployment.network,
-    })
+    };
+    match &deployment.audit {
+        None => Protocol::new(config),
+        Some(audit) => Protocol::new_audited(
+            config,
+            crate::protocol::AuditParameters {
+                deployment: decode_hex_32("deployment salt", &deployment.deployment_salt)?,
+                epoch: audit.epoch,
+                key: elements::secp256k1_zkp::PublicKey::from_str(&audit.public_key)?,
+            },
+        ),
+    }
 }

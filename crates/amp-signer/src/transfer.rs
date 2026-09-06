@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use anyhow::Context;
@@ -6,7 +5,7 @@ use elements::bitcoin::PublicKey as BitcoinPublicKey;
 use elements::hashes::Hash as _;
 use elements::pset::{Output, PartiallySignedTransaction};
 use elements::secp256k1_zkp::{Keypair, Message, schnorr::Signature};
-use elements::{Address, AssetId, Script, TxOutSecrets};
+use elements::{Address, AssetId, Script};
 
 use crate::blinding;
 use crate::keys::{derive_xprv, xonly_from_xprv};
@@ -58,6 +57,11 @@ pub fn sign_transfer(
         &request.recipient_address,
     )?;
     let amount = parse_amount(&request.amount, "transfer amount")?;
+    let audited = request.deployment.audit.is_some();
+    anyhow::ensure!(
+        !audited || amount <= amp_core::native_audit::MAX_AUDIT_VALUE,
+        "transfer amount exceeds application maximum"
+    );
     let fee = parse_amount(&request.fee, "fee")?;
     let regulated_asset = AssetId::from_str(&request.deployment.regulated_asset)?;
     let verifier_asset = AssetId::from_str(&request.deployment.verifier_asset)?;
@@ -91,6 +95,14 @@ pub fn sign_transfer(
     // The verifier budget is measured for one ordinary policy-asset input in
     // addition to the anchor and regulated inputs. Requiring one sufficiently
     // large fee UTXO keeps the transaction shape deterministic.
+    let fee_candidates = if audited {
+        fee_candidates
+            .into_iter()
+            .filter(|u| u.secrets.value > fee)
+            .collect()
+    } else {
+        fee_candidates
+    };
     let selected_fees = select_fee_funding(fee_candidates, fee, 1, 1)?;
     let fee_total = checked_sum(&selected_fees)?;
     let confidential_fee_funding = selected_fees.iter().any(|utxo| {
@@ -125,8 +137,15 @@ pub fn sign_transfer(
         recipient_address.script_pubkey(),
         amount,
         regulated_asset,
-        None,
+        if audited {
+            recipient_address.blinding_pubkey.map(BitcoinPublicKey::new)
+        } else {
+            None
+        },
     ));
+    if audited {
+        value_blinded_outputs.push(1);
+    }
 
     let regulated_change = regulated_total - amount;
     let mut recipients = vec![recipient_owner];
@@ -136,8 +155,19 @@ pub fn sign_transfer(
             holder_script,
             regulated_change,
             regulated_asset,
-            None,
+            if audited {
+                let (_, key) = derive_xprv(signer, "holder", sender.1)?;
+                Some(BitcoinPublicKey::new(
+                    key.private_key
+                        .public_key(elements::secp256k1_zkp::SECP256K1),
+                ))
+            } else {
+                None
+            },
         ));
+        if audited {
+            value_blinded_outputs.push(pset.outputs().len() - 1);
+        }
         recipients.push(sender.0);
     }
     let fee_change = fee_total - fee;
@@ -152,7 +182,7 @@ pub fn sign_transfer(
             change.script_pubkey(),
             fee_change,
             policy_asset,
-            confidential_fee_funding
+            (confidential_fee_funding || audited)
                 .then(|| {
                     change
                         .blinding_pubkey
@@ -161,7 +191,7 @@ pub fn sign_transfer(
                 })
                 .transpose()?,
         ));
-        if confidential_fee_funding {
+        if confidential_fee_funding || audited {
             value_blinded_outputs.push(index);
         }
     } else if confidential_fee_funding {
@@ -178,11 +208,21 @@ pub fn sign_transfer(
         .iter()
         .enumerate()
         .map(|(index, utxo)| (index, utxo.secrets))
-        .collect::<HashMap<usize, TxOutSecrets>>();
-    if !value_blinded_outputs.is_empty() {
-        blinding::blind_values(&mut pset, &input_secrets, &value_blinded_outputs)
-            .context("transfer fee-change blinding failed")?;
-    }
+        .collect::<crate::secrets::SecretMap>();
+    let output_openings = if audited {
+        blinding::blind_audited_values(
+            &mut pset,
+            &input_secrets,
+            &value_blinded_outputs,
+            regulated_asset,
+        )?
+    } else {
+        if !value_blinded_outputs.is_empty() {
+            blinding::blind_values(&mut pset, &input_secrets, &value_blinded_outputs)
+                .context("transfer fee-change blinding failed")?;
+        }
+        crate::secrets::SecretMap::default()
+    };
 
     let proofs = all_inputs[1..first_fee_index]
         .iter()
@@ -199,6 +239,17 @@ pub fn sign_transfer(
         *slot = Some(recipient);
     }
     let verifier_witness = Protocol::transfer_witness(policy, sender.0, recipient_slots, &proofs)?;
+    let verifier_witness = if audited {
+        crate::audit::transfer_witness(
+            &mut pset,
+            &protocol,
+            &anchor,
+            verifier_witness,
+            &output_openings,
+        )?
+    } else {
+        verifier_witness
+    };
     let verifier_stack = anchor.finalize(
         &pset,
         &verifier_witness,

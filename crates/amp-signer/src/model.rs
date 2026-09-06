@@ -180,6 +180,8 @@ pub struct SignedOperation {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BootstrapRequest {
+    #[serde(default)]
+    pub confidential_audit: bool,
     pub network: DeploymentNetwork,
     pub policy_asset: String,
     pub deployment_salt: String,

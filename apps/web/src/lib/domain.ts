@@ -17,7 +17,7 @@ export const assetMetadataSchema = z.object({
 
 export const deploymentManifestSchema = z.object({
   schema: z.literal(registrySchema),
-  protocol: z.literal(protocolId),
+  protocol: z.enum([protocolId, "simplicity-amp/v0.2"]),
   network: z.enum(["liquid-testnet", "elements-regtest"]),
   policyAsset: hash,
   regulatedAsset: hash,
@@ -34,12 +34,19 @@ export const deploymentManifestSchema = z.object({
   userProgramHash: hash,
   governanceProgramHash: hash,
   contractBundleHash: hash,
+  audit: z.object({publicKey:z.string().regex(/^0[23][0-9a-f]{64}$/),epoch:z.number().int().positive().max(Number.MAX_SAFE_INTEGER)}).strict().optional(),
 }).strict().superRefine((deployment, context) => {
   if (new Set([deployment.policyAsset, deployment.regulatedAsset, deployment.verifierAsset]).size !== 3) {
     context.addIssue({
       code: "custom",
       message: "Policy, regulated, and verifier assets must be distinct.",
     });
+  }
+  if ((deployment.protocol === "simplicity-amp/v0.2") !== Boolean(deployment.audit)) {
+    context.addIssue({code:"custom",message:"Only v0.2 requires a native audit key."});
+  }
+  if (deployment.audit && BigInt(deployment.issuedSupply) > 9223372036854775807n) {
+    context.addIssue({code:"custom",message:"Initial amount exceeds the application cap."});
   }
   const managed = deployment.supplyMode === "issuer-managed";
   if (managed !== (deployment.reissuanceToken !== null && deployment.reissuanceEntropy !== null)) {
@@ -124,7 +131,7 @@ export type TreeDepth = z.infer<typeof treeDepthSchema>;
 
 export const policySnapshotSchema = z.object({
   schema: z.literal(registrySchema),
-  protocol: z.literal(protocolId),
+  protocol: z.enum([protocolId, "simplicity-amp/v0.2"]),
   deploymentId: hash,
   sequence: z.number().int().nonnegative(),
   parentPolicyRoot: hash.nullable(),

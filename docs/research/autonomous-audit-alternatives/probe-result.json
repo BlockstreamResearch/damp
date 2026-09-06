@@ -1,0 +1,17 @@
+{
+  "scope": "Executed Python algebra and source-derived jet subtotal ONLY; not compiled Simplicity, timing or full bounds",
+  "positive_vectors": 10,
+  "negative_controls": 70,
+  "fs_recomputed": true,
+  "baseline_selected_jet_milliweight_per_output": 307653,
+  "candidate_selected_jet_milliweight_per_output": 186608,
+  "selected_jet_saving_ten_outputs": 1210450,
+  "extra_affine_witness_bytes_ten_outputs": 1280,
+  "source_sha256": {
+    "docs/pgc-phase-zero/host-probe.json": "a127a41c70f005cccb3a692df39253ad559ec4dc2d16119fa0970df97511c140",
+    "/Users/inter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/simplicity-lang-0.8.0/src/jet/init/elements.rs": "58a432778cda96b48d85acac27938fa04a6a8c99d3da04b5eeb1ed3eb3431bc2",
+    "examples/pgc_native_cost.rs": "9ce93e477626307745e99e96252bb9b2d07834b6d61f96d3ba4f4cfcc0fca245",
+    "examples/pgc_autonomous_cost.rs": "0bdf6480bf0de224642b271c1ae92d22ecb0937535d2b972f0e72e297227353d",
+    "docs/pgc-phase-zero/autonomous-cost-probe.json": "a143c97ae202484fa82df8f8295ad6a0a857242e7f5c12c3bef731bc3f71c516"
+  }
+}

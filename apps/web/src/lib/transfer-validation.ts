@@ -52,7 +52,7 @@ export function parseTransferAmount(value: string, precision: number) {
   return { normalized, units };
 }
 
-export function estimateTransferFee(regulatedInputCount: number) {
+export function estimateTransferFee(regulatedInputCount: number, audited = false) {
   if (!Number.isSafeInteger(regulatedInputCount) || regulatedInputCount < 1 || regulatedInputCount > maxTransferInputs) {
     throw new TransferValidationError("context", "input-count", `Transfers require between 1 and ${maxTransferInputs} regulated inputs.`);
   }
@@ -60,7 +60,7 @@ export function estimateTransferFee(regulatedInputCount: number) {
   // for each additional input. Round both upward, then mirror LWK's default 100 sats/kvB
   // calculation over Liquid's discounted transaction weight. Keep a 500-sat floor so small
   // model variance cannot turn a successfully reviewed transfer into a relay rejection.
-  const estimatedWeight = 15_600n + BigInt(regulatedInputCount - 1) * 800n;
+  const estimatedWeight = (audited ? 210_000n : 15_600n) + BigInt(regulatedInputCount - 1) * 800n;
   const estimatedVsize = (estimatedWeight + 3n) / 4n;
   const lwkDefaultFee = (estimatedVsize * 100n + 999n) / 1_000n;
   const fee = lwkDefaultFee < minimumTransferFee ? minimumTransferFee : lwkDefaultFee;
@@ -133,6 +133,9 @@ export function selectTransferFunding(input: {
   if (policy.deploymentId !== deployment.deploymentId) {
     throw new TransferValidationError("context", "policy-deployment", "The resolved policy belongs to another deployment. Recheck the live anchor.");
   }
+  if (deployment.audit && amount>9223372036854775807n) {
+    throw new TransferValidationError("amount", "overflow", "Generation 2 amount exceeds 9223372036854775807 base units.");
+  }
   const blacklist = new Set(policy.entries.map((entry) => `${entry.txid}:${entry.vout}`));
   const regulated = snapshot.utxos.filter((utxo) => utxo.source === "holder" && utxo.assetId === deployment.regulatedAsset);
   const confirmed = regulated.filter((utxo) => utxo.status === "confirmed");
@@ -170,9 +173,9 @@ export function selectTransferFunding(input: {
     chosenAmount += BigInt(utxo.amount);
     if (chosenAmount >= amount) break;
   }
-  const fee = estimateTransferFee(chosen.length);
+  const fee = estimateTransferFee(chosen.length, Boolean(deployment.audit));
   const compatibleFeeOutput = (utxo: WalletSyncUtxo) => {
-    const needsConfidentialChange = utxo.assetConfidential || utxo.valueConfidential;
+    const needsConfidentialChange = Boolean(deployment.audit) || utxo.assetConfidential || utxo.valueConfidential;
     const required = fee + (needsConfidentialChange ? 1n : 0n);
     return BigInt(utxo.amount) >= required;
   };

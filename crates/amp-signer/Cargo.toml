@@ -10,6 +10,8 @@ description = "Standalone Rust and WebAssembly signer SDK for Simplicity AMP"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+serde_json = "1.0.145"
+zeroize = "1.9.0"
 amp-core = { package = "simplicity-amp-core", path = "../amp-core" }
 anyhow = "1.0.101"
 elements = { version = "0.25.3", features = ["base64", "serde"] }
