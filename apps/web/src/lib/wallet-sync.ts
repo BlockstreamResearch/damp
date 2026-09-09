@@ -707,7 +707,7 @@ export function selectSpendableUtxos(
     }));
 }
 
-export type FeeFundingState = "loading" | "ready" | "pending" | "unfunded" | "error";
+export type FeeFundingState = "loading" | "ready" | "pending" | "needs-preparation" | "unfunded" | "error";
 
 export function feeFundingState(input: {
   snapshot?: WalletSyncSnapshot;
@@ -720,7 +720,9 @@ export function feeFundingState(input: {
   if (!input.snapshot) return "loading";
   const minimum = input.minimum ?? 1n;
   const wallet = input.snapshot.utxos.filter((utxo) => utxo.source === "wallet" && utxo.assetId === input.assetId);
-  if (wallet.some((utxo) => utxo.status === "confirmed" && BigInt(utxo.amount) >= minimum)) return "ready";
+  if (wallet.some((utxo) => utxo.status === "confirmed" && !utxo.assetConfidential && BigInt(utxo.amount) >= minimum)) return "ready";
+  if (wallet.some((utxo) => utxo.status === "unconfirmed" && !utxo.assetConfidential && BigInt(utxo.amount) >= minimum)) return "pending";
+  if (wallet.some((utxo) => utxo.status === "confirmed" && utxo.assetConfidential && BigInt(utxo.amount) >= minimum)) return "needs-preparation";
   if (wallet.some((utxo) => utxo.status === "unconfirmed" && BigInt(utxo.amount) >= minimum)) return "pending";
   if (input.syncing) return "loading";
   return "unfunded";

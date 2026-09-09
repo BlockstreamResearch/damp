@@ -1,4 +1,7 @@
 TEX := main.tex
+APPENDIX := appendix-code.tex
+AUDIT_SOURCE := ../../simf/lib/audit.simf
+VERIFIER_SOURCE := ../../simf/verifier_d4.simf
 OUT_DIR := out
 PDF := $(OUT_DIR)/main.pdf
 LATEXMK := latexmk
@@ -13,7 +16,7 @@ pdf: $(PDF)
 $(OUT_DIR):
 	mkdir -p $(OUT_DIR)
 
-$(PDF): $(TEX) references.bib | $(OUT_DIR)
+$(PDF): $(TEX) $(APPENDIX) $(AUDIT_SOURCE) $(VERIFIER_SOURCE) references.bib | $(OUT_DIR)
 	$(LATEXMK) $(LATEXMK_FLAGS) $(TEX)
 
 watch: | $(OUT_DIR)

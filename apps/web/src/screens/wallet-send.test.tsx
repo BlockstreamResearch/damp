@@ -70,6 +70,12 @@ const calls = vi.hoisted(() => ({
   walletRefetch: vi.fn(),
   liveRefetch: vi.fn(),
   validateAddress: vi.fn(() => Promise.resolve(fixtures.recipient.ownerPublicKey)),
+  signTransfer: vi.fn(),
+  broadcast: vi.fn(),
+  traverseAnchor: vi.fn(),
+  resolvePolicy: vi.fn(),
+  saveReceipt: vi.fn(),
+  setQueryData: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -77,7 +83,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ invalidateQueries: vi.fn(() => Promise.resolve()), setQueryData: vi.fn() }),
+  useQueryClient: () => ({ invalidateQueries: vi.fn(() => Promise.resolve()), setQueryData: calls.setQueryData }),
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => queryKey[0] === "transfer-preflight"
     ? { data: { anchor: { txid: fixtures.hash("b"), confirmations: 2, scriptPubkey: "51" }, policy: fixtures.policy }, error: null, isPending: false, isFetching: false, refetch: calls.liveRefetch }
     : { data: null, error: null, isPending: false, isFetching: false, refetch: vi.fn() },
@@ -99,7 +105,7 @@ vi.mock("../components/operation-receipt", () => ({ OperationReceiptPanel: () =>
 vi.mock("../lib/damp-signer", () => ({
   signerSnapshot: () => fixtures.signer,
   subscribeSigner: () => () => undefined,
-  signTransfer: vi.fn(),
+  signTransfer: calls.signTransfer,
   validateRecipientAddress: calls.validateAddress,
 }));
 
@@ -124,26 +130,78 @@ vi.mock("../lib/wallet-sync", () => ({
 }));
 
 vi.mock("../lib/signer-operation-state", () => ({ hasPendingSignerOperation: () => false, setSignerOperationPending: vi.fn() }));
-vi.mock("../lib/chain-wallet", () => ({ broadcastTransaction: vi.fn(), liveAnchorUtxo: vi.fn() }));
-vi.mock("../lib/esplora", () => ({ esploraUrlForDeployment: () => "https://example.test", requireFreshAnchor: vi.fn(), traverseLiveAnchor: vi.fn() }));
-vi.mock("../lib/policy-registry", () => ({ resolvePolicySnapshot: vi.fn() }));
+vi.mock("../lib/chain-wallet", () => ({ broadcastTransaction: calls.broadcast, liveAnchorUtxo: vi.fn(() => Promise.resolve({ txid: fixtures.hash("b"), vout: 0, transaction: "00", spendable: true })) }));
+vi.mock("../lib/esplora", () => ({ esploraUrlForDeployment: () => "https://example.test", requireFreshAnchor: vi.fn(() => Promise.resolve()), traverseLiveAnchor: calls.traverseAnchor }));
+vi.mock("../lib/policy-registry", () => ({ resolvePolicySnapshot: calls.resolvePolicy }));
 vi.mock("../lib/operation-receipt", () => ({
-  createOperationReceipt: vi.fn(), dismissOperationReceipt: vi.fn(), finishOperation: vi.fn(), loadOperationReceipt: vi.fn(),
+  createOperationReceipt: vi.fn((input) => ({ ...input, ticker: input.deployment.asset.ticker })), dismissOperationReceipt: vi.fn(), finishOperation: vi.fn(), loadOperationReceipt: vi.fn(),
   operationReceiptQueryKey: (deploymentId: string, operation: string, profileId: string) => ["operation-receipt", deploymentId, operation, profileId],
-  saveOperationReceipt: vi.fn(), tryBeginOperation: vi.fn(() => true),
+  saveOperationReceipt: calls.saveReceipt, tryBeginOperation: vi.fn(() => true),
 }));
 
 import { WalletSend } from "./wallet";
 
-afterEach(cleanup);
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+afterEach(() => {
+  cleanup();
+  if (originalScrollIntoView) Object.defineProperty(Element.prototype, "scrollIntoView", originalScrollIntoView);
+  else Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+});
 
 beforeEach(() => {
   calls.validateAddress.mockReset().mockResolvedValue(fixtures.recipient.ownerPublicKey);
   calls.walletRefetch.mockReset().mockResolvedValue({ data: { snapshot: fixtures.snapshot }, error: null });
   calls.liveRefetch.mockReset().mockResolvedValue({ data: { anchor: { txid: fixtures.hash("b"), confirmations: 2, scriptPubkey: "51" }, policy: fixtures.policy }, error: null });
+  calls.signTransfer.mockReset().mockResolvedValue({ txid: fixtures.hash("e"), transaction: "00" });
+  calls.broadcast.mockReset().mockResolvedValue(fixtures.hash("e"));
+  calls.traverseAnchor.mockReset().mockResolvedValue({ live: { txid: fixtures.hash("b"), confirmations: 2, scriptPubkey: "51" } });
+  calls.resolvePolicy.mockReset().mockResolvedValue(fixtures.policy);
+  calls.saveReceipt.mockReset().mockResolvedValue(undefined);
+  calls.setQueryData.mockReset();
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
+async function openReview() {
+  render(<WalletSend />);
+  const recipient = screen.getByLabelText(/Recipient confidential address/);
+  fireEvent.change(recipient, { target: { value: fixtures.recipient.confidentialAddress } });
+  fireEvent.blur(recipient);
+  await screen.findByText(/Address verified for the selected DAMP covenant/i);
+  fireEvent.change(screen.getByLabelText(/^Amount/), { target: { value: "1.00" } });
+  const review = screen.getByRole("button", { name: /Review transfer/ });
+  await waitFor(() => expect(review).toBeEnabled());
+  fireEvent.click(review);
+  await screen.findByRole("heading", { name: "Confirm transfer details" });
+}
+
 describe("WalletSend progressive validation", () => {
+  it.each(["anchor", "signer", "broadcast"])("shows %s failures on the review screen after loading ends", async (stage) => {
+    await openReview();
+    const error = `Controlled ${stage} failure`;
+    if (stage === "anchor") calls.traverseAnchor.mockRejectedValueOnce(new Error(error));
+    if (stage === "signer") calls.signTransfer.mockRejectedValueOnce(new Error(error));
+    if (stage === "broadcast") calls.broadcast.mockRejectedValueOnce(new Error(error));
+    fireEvent.click(screen.getByRole("button", { name: /Sign and broadcast/ }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(error);
+    expect(screen.getByRole("heading", { name: "Confirm transfer details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sign and broadcast/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Sign and broadcast/ })).toHaveAttribute("aria-busy", "false");
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(calls.saveReceipt).not.toHaveBeenCalled();
+    if (stage !== "broadcast") expect(calls.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("reports successful submission and retains the terminal receipt when persistence fails", async () => {
+    await openReview();
+    calls.saveReceipt.mockRejectedValueOnce(new Error("storage unavailable"));
+    fireEvent.click(screen.getByRole("button", { name: /Sign and broadcast/ }));
+    expect(await screen.findByText(/Transfer broadcast.*receipt could not be saved for reload.*storage unavailable/)).toBeInTheDocument();
+    expect(calls.broadcast).toHaveBeenCalledOnce();
+    expect(calls.setQueryData).toHaveBeenCalledWith(expect.arrayContaining(["operation-receipt"]), expect.objectContaining({ txid: fixtures.hash("e") }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("rejects malformed inputs inline, clears corrected errors, prevents duplicate review, and shows the canonical review", async () => {
     render(<WalletSend />);
     expect(screen.getByRole("heading", { name: "Build a regulated transfer" })).toBeInTheDocument();

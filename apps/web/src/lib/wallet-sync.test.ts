@@ -322,6 +322,27 @@ describe("wallet state and persistence", () => {
     expect(feeFundingState({ assetId: policyAsset, syncing: true })).toBe("loading");
   });
 
+  it("requires explicit-asset fee funding and prefers compatible confirmed or pending outputs", async () => {
+    const snapshot = await discover({
+      dependencies: dependencies({
+        scans: (value) => value.source === "wallet" && value.branch === 0 && value.index === 0
+          ? { hasActivity: true, utxos: [listed(txid("4"), true)] }
+          : { hasActivity: false, utxos: [] },
+      }),
+    });
+    const explicit = snapshot.utxos[0];
+    const confidential = { ...explicit, txid: txid("5"), assetConfidential: true };
+    const state = (...utxos: WalletSyncSnapshot["utxos"]) => feeFundingState({ snapshot: { ...snapshot, utxos }, assetId: policyAsset, minimum: 1_500n });
+
+    expect(state(confidential)).toBe("needs-preparation");
+    expect(state({ ...confidential, status: "unconfirmed" })).toBe("pending");
+    expect(state({ ...confidential, status: "spent" })).toBe("unfunded");
+    expect(state({ ...confidential, amount: "1499" })).toBe("unfunded");
+    expect(state(confidential, { ...explicit, status: "unconfirmed" })).toBe("pending");
+    expect(state(confidential, { ...explicit, valueConfidential: true })).toBe("ready");
+    expect(feeFundingState({ snapshot, assetId: policyAsset, minimum: 5_001n })).toBe("unfunded");
+  });
+
   it("reuses two confirmed issuance outputs without requesting the faucet", async () => {
     const first = txid("4");
     const second = txid("5");

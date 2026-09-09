@@ -22,6 +22,141 @@ use elements::hashes::Hash as _;
 use elements::{Address, AssetId};
 
 #[test]
+fn non_issuer_holder_transfers_with_compatible_fee_funding() -> anyhow::Result<()> {
+    let network = DeploymentNetwork::ElementsRegtest;
+    let issuer = Signer::new(MNEMONIC, network)?;
+    let holder = Signer::new(
+        "legal winner thank year wave sausage worth useful legal winner thank yellow",
+        network,
+    )?;
+    assert_ne!(issuer.info()?.fingerprint, holder.info()?.fingerprint);
+    let policy_asset = AssetId::from_str(&"aa".repeat(32))?;
+    let bootstrapped = issuer.bootstrap(BootstrapRequest {
+        network,
+        policy_asset: public_asset(policy_asset),
+        deployment_salt: "11".repeat(32).parse()?,
+        asset: AssetMetadata::new("Holder transfer".to_owned(), "HOLD".to_owned(), 0)?,
+        issued_supply: "1000".parse()?,
+        supply_mode: SupplyMode::IssuerManaged,
+        policy_utxos: vec![
+            funding_utxo(&issuer, network, policy_asset, 100_000, 1, 0)?,
+            funding_utxo(&issuer, network, policy_asset, 100_000, 2, 1)?,
+        ],
+        fee: "4000".parse()?,
+        required_confirmations: 1,
+    })?;
+    let holder_address = holder.holder_address(&bootstrapped.deployment)?;
+    assert_ne!(
+        holder
+            .derive_damp_key(
+                &bootstrapped.deployment.deployment_salt(),
+                simplicity_damp_signer::keys::KeyRole::Issuer,
+            )?
+            .public_key,
+        bootstrapped.deployment.issuer_public_key().to_string()
+    );
+    let issuer_locator = HolderKeyLocator {
+        derivation_index: bootstrapped.holder_derivation_index,
+        owner_public_key: bootstrapped
+            .initial_holder_address
+            .owner_public_key
+            .parse()?,
+    };
+    let wallet_locator = WalletKeyLocator {
+        branch: WalletBranch::Receive,
+        index: simplicity_damp_signer::keys::KeyIndex::ZERO,
+    };
+    let received = issuer.transfer(TransferRequest {
+        deployment: bootstrapped.deployment.clone(),
+        current_policy: bootstrapped.initial_policy.clone(),
+        verifier_utxo: parent_utxo(&bootstrapped.txid, 0, &bootstrapped.transaction, None, None),
+        regulated_utxos: vec![parent_utxo(
+            &bootstrapped.txid,
+            1,
+            &bootstrapped.transaction,
+            None,
+            Some(issuer_locator),
+        )],
+        fee_utxos: vec![parent_utxo(
+            &bootstrapped.txid,
+            3,
+            &bootstrapped.transaction,
+            Some(wallet_locator),
+            None,
+        )],
+        recipient_address: holder_address.confidential_address.clone(),
+        amount: "55".parse()?,
+        fee: "5250".parse()?,
+    })?;
+    let holder_locator = HolderKeyLocator {
+        derivation_index: holder_address.derivation_index,
+        owner_public_key: holder_address.owner_public_key.parse()?,
+    };
+    let received_utxo = parent_utxo(
+        &received.txid,
+        1,
+        &received.transaction,
+        None,
+        Some(holder_locator),
+    );
+    assert_eq!(
+        holder.inspect(std::slice::from_ref(&received_utxo))?[0].amount,
+        "55"
+    );
+    let request = |fee_utxo| TransferRequest {
+        deployment: bootstrapped.deployment.clone(),
+        current_policy: bootstrapped.initial_policy.clone(),
+        verifier_utxo: parent_utxo(&received.txid, 0, &received.transaction, None, None),
+        regulated_utxos: vec![received_utxo.clone()],
+        fee_utxos: vec![fee_utxo],
+        recipient_address: bootstrapped
+            .initial_holder_address
+            .confidential_address
+            .clone(),
+        amount: "32".parse().unwrap(),
+        fee: "5250".parse().unwrap(),
+    };
+    let explicit_fee = funding_utxo(&holder, network, policy_asset, 100_000, 3, 0)?;
+    assert_eq!(
+        holder.transfer(request(explicit_fee))?.operation,
+        "transfer"
+    );
+
+    // Faucet-style blinded asset IDs cannot be classified by the current
+    // covenant. This restriction is about fee funding, not issuer authority.
+    let blinded_fee = confidential_funding_utxo(&holder, network, policy_asset, 100_000, 0)?;
+    let error = holder.transfer(request(blinded_fee.clone())).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("input asset ID to remain explicit"),
+        "{error}"
+    );
+
+    // Existing funding preparation preserves wallet ownership and produces
+    // explicit asset IDs with confidential values, which the transfer accepts.
+    let prepared = holder.split_funding(SplitFundingRequest {
+        network,
+        policy_asset: public_asset(policy_asset),
+        source_utxos: vec![blinded_fee],
+        fee: "500".parse()?,
+    })?;
+    let prepared_fee = parent_utxo(
+        &prepared.txid,
+        0,
+        &prepared.transaction,
+        Some(wallet_locator),
+        None,
+    );
+    let sent = holder.transfer(request(prepared_fee))?;
+    let recipient = parent_utxo(&sent.txid, 1, &sent.transaction, None, Some(issuer_locator));
+    let change = parent_utxo(&sent.txid, 2, &sent.transaction, None, Some(holder_locator));
+    assert_eq!(issuer.inspect(&[recipient])?[0].amount, "32");
+    assert_eq!(holder.inspect(&[change])?[0].amount, "23");
+    Ok(())
+}
+
+#[test]
 fn managed_lifecycle_builds_and_executes_every_operation() -> anyhow::Result<()> {
     let signer = Signer::new(MNEMONIC, DeploymentNetwork::ElementsRegtest)?;
     let network = DeploymentNetwork::ElementsRegtest;

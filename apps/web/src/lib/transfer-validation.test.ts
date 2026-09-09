@@ -229,21 +229,20 @@ describe("transfer funding selection", () => {
       amount: 50n,
     })).toThrow(/one compatible fee output/i);
 
-    const assetConfidential = selectTransferFunding({
+    expect(() => selectTransferFunding({
       snapshot: snapshot([holder, feeUtxo("2", 0, fee + 1n, "confirmed", { asset: true })]),
       deployment,
       policy,
       profileId,
       amount: 50n,
-    });
-    expect(assetConfidential.feeUtxos[0]).toMatchObject({ txid: hash("2"), vout: 0 });
+    })).toThrow(/confidential asset IDs.*explicit-asset fee output.*issuer authority is not required/);
 
     const selected = selectTransferFunding({
       snapshot: snapshot([
         holder,
         feeUtxo("2", 0, fee, "confirmed", { value: true }),
         feeUtxo("3", 0, fee + 1n, "confirmed", { value: true }),
-        feeUtxo("4", 0, fee + 100n, "confirmed", { asset: true }),
+        feeUtxo("0", 0, fee + 1n, "confirmed", { asset: true }),
       ]),
       deployment,
       policy,

@@ -74,6 +74,7 @@ import {
 } from "../lib/wallet-sync";
 import {
   TransferValidationError,
+  estimateTransferFee,
   parseTransferAmount,
   resolveAndValidateRecipientAddress,
   selectTransferFunding,
@@ -125,7 +126,7 @@ export function WalletDashboard() {
   const feeState = deployment.data ? feeFundingState({
     snapshot,
     assetId: deployment.data.policyAsset,
-    minimum: 500n,
+    minimum: estimateTransferFee(1) + 1n,
     syncing: wallet.isFetching,
     syncError: networkError ?? syncError,
   }) : "loading";
@@ -188,9 +189,10 @@ export function WalletDashboard() {
             </Panel>
           </div>
           <Panel className="fee-panel">
-            <div><span className="round-icon"><Fuel size={18} /></span><div><strong>L-BTC transaction fees</strong><p>{feeState === "ready" ? "A confirmed fee output is available. You can still request additional test funds." : feeState === "pending" ? "Funding is waiting for confirmation. Additional test requests remain available." : feeState === "error" ? "Synchronization failed; refresh before requesting more test funds." : feeState === "unfunded" ? "No usable L-BTC was found after a successful wallet scan." : signer.connected ? "Scanning derived wallet addresses…" : "Connect the signer to restore and synchronize its wallet."}</p></div></div>
+            <div><span className="round-icon"><Fuel size={18} /></span><div><strong>L-BTC transaction fees</strong><p>{feeState === "ready" ? "A confirmed explicit-asset fee output is available. Transfer review checks the fee for the selected inputs." : feeState === "needs-preparation" ? "Your L-BTC has confidential asset IDs. Prepare an explicit-asset fee output before transferring; issuer authority is not required." : feeState === "pending" ? "Funding is waiting for confirmation. It may need fee preparation before a transfer." : feeState === "error" ? "Synchronization failed; refresh before requesting more test funds." : feeState === "unfunded" ? "No usable L-BTC was found after a successful wallet scan." : signer.connected ? "Scanning derived wallet addresses…" : "Connect the signer to restore and synchronize its wallet."}</p></div></div>
             <div className="fee-actions">
               {feeState === "ready" ? <VerifiedLabel>Fee input ready</VerifiedLabel> : null}
+              {feeState === "needs-preparation" ? <Pill tone="warn">Fee preparation needed</Pill> : null}
               {feeState === "pending" ? <Pill tone="warn">Confirmation pending</Pill> : null}
               {feeState === "error" ? <Pill tone="warn">Sync error</Pill> : null}
               {canRequestTestFunds && fundingAddress && signer.profileId ? <><CopyableAddress address={fundingAddress.confidentialAddress} resetKey={`${signer.profileId}:liquid-testnet:0:${fundingAddress.index}`} accessibleLabel={`Copy external receive address ${fundingAddress.index}`} display={`External #${fundingAddress.index} · ${shortHash(fundingAddress.confidentialAddress, 10, 7)}`} className="fee-funding-address" onNotice={(notice) => setFeeMessage(notice.message)} /><a className="button secondary" href={liquidTestnetFaucetUrl(fundingAddress.confidentialAddress)} target="_blank" rel="noreferrer" onClick={() => setFeeMessage("The external Liquid testnet faucet opened and received this public test address. Synchronize the wallet after funding.")}>Open testnet faucet <ExternalLink size={14} /></a></> : null}
@@ -686,6 +688,7 @@ export function WalletSend() {
       <div className="flow-layout">
         <Panel className="flow-main">
           <SectionHeading label={receipt ? "Receipt" : review ? "Review" : "Recipient and amount"} title={receipt ? "Transfer broadcast" : review ? "Confirm transfer details" : "Who are you paying?"} />
+          {!receipt && (contextError || walletError || liveState.error) && <div id="transfer-error-summary" className="transfer-error-summary" role="alert" tabIndex={-1} ref={contextErrorRef}><strong>{review ? "Transfer needs attention" : "Transfer is not ready"}</strong><p>{contextError ?? walletError ?? userFacingError(liveState.error)}</p><div><button className="button secondary" type="button" disabled={busy || wallet.isFetching} onClick={() => void wallet.refetch()}>Refresh wallet</button><button className="button secondary" type="button" disabled={busy || liveState.isFetching} onClick={() => void liveState.refetch()}>Recheck policy</button></div></div>}
           {!deployment.data ? <p>Import or select a deployment first.</p> : deployment.data.publication !== "published" ? <div className="generate-record"><ShieldCheck size={26} /><p>This deployment is confirmed, but canonical registry publication is still pending. Transfers remain disabled until its manifest and live D4 policy are byte-identical on the registry default branch.</p><Link className="button primary" to="/admin/setup">Finish registry publication</Link></div> : receipt ? <OperationReceiptPanel receipt={receipt} network={deployment.data.network} amountLabel={`${formatUnits(receipt.amount, deployment.data.asset.precision)} ${receipt.ticker}`} resetLabel="Start a new transfer" tone="holder" onReset={() => void startNewTransfer()} /> : !review ? (
             <form onSubmit={form.handleSubmit(reviewTransfer)} className="form-stack">
               {transferFunds && transferFunds.blacklisted > 0n ? <div className={`blacklist-warning ${transferFunds.spendable === 0n ? "full" : "partial"}`} role={transferFunds.spendable === 0n ? "alert" : "status"}><AlertTriangle size={18} /><div><strong>{transferFunds.spendable === 0n ? "All confirmed funds are blacklisted" : "Some confirmed funds are blacklisted"}</strong><p>{formatUnits(transferFunds.blacklisted, deployment.data.asset.precision)} {deployment.data.asset.ticker} cannot be spent. {formatUnits(transferFunds.spendable, deployment.data.asset.precision)} {deployment.data.asset.ticker} remains spendable.</p></div></div> : null}
@@ -697,7 +700,6 @@ export function WalletSend() {
                 <div><span>Wallet funds</span><Pill tone={walletReady && hasSpendableFunds ? "good" : walletReady || walletError ? "warn" : "blue"}>{walletReady ? hasSpendableFunds ? "Spendable asset ready" : "No spendable asset" : walletError ? "Sync error" : "Synchronizing"}</Pill></div>
                 <div><span>Live policy + anchor</span><Pill tone={policyReady ? "good" : liveState.error ? "warn" : "blue"}>{policyReady ? `D${liveState.data!.policy.treeDepth} current` : liveState.error ? "Check failed" : "Checking"}</Pill></div>
               </div>
-              {(contextError || walletError || liveState.error) && <div className="transfer-error-summary" role="alert" tabIndex={-1} ref={contextErrorRef}><strong>Transfer is not ready</strong><p>{contextError ?? walletError ?? userFacingError(liveState.error)}</p><div><button className="button secondary" type="button" disabled={wallet.isFetching} onClick={() => void wallet.refetch()}>Refresh wallet</button><button className="button secondary" type="button" disabled={liveState.isFetching} onClick={() => void liveState.refetch()}>Recheck policy</button></div></div>}
               <button className="button primary wide" disabled={!canReview} type="submit">{reviewBusy || recipientValidating ? "Validating transfer…" : "Review transfer"} <ArrowRight size={16} /></button>
             </form>
           ) : (

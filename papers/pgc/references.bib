@@ -1,10 +1,13 @@
+% The unsrt bibliography style ignores url and urldate, so notes also
+% include the clickable URL and access date for the rendered paper.
 @misc{pgc,
   author = {Yu Chen and Xuecheng Ma and Cong Tang and Man Ho Au},
   title = {{PGC}: Pretty Good Decentralized Confidential Payment System with Auditability},
   howpublished = {Cryptology {ePrint} Archive, Paper 2019/319},
   year = {2019},
   url = {https://eprint.iacr.org/2019/319},
-  note = {Revision dated 2025-09-06; accessed 2026-09-04}
+  urldate = {2026-09-04},
+  note = {\url{https://eprint.iacr.org/2019/319}. Revision dated 2025-09-06; accessed 2026-09-04}
 }
 
 @inproceedings{faust-fiat-shamir,
@@ -16,7 +19,10 @@
   pages = {60--79},
   publisher = {Springer},
   year = {2012},
-  doi = {10.1007/978-3-642-34931-7_5}
+  doi = {10.1007/978-3-642-34931-7_5},
+  url = {https://doi.org/10.1007/978-3-642-34931-7_5},
+  urldate = {2026-09-09},
+  note = {\url{https://doi.org/10.1007/978-3-642-34931-7_5}. Accessed 2026-09-09}
 }
 
 @misc{bip340,
@@ -25,7 +31,18 @@
   howpublished = {Bitcoin Improvement Proposal 340},
   year = {2020},
   url = {https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki},
-  note = {Accessed 2026-09-04}
+  urldate = {2026-09-04},
+  note = {\url{https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki}. Accessed 2026-09-04}
+}
+
+@misc{sec1,
+  author = {{Certicom Research}},
+  title = {Standards for Efficient Cryptography 1 ({SEC} 1): Elliptic Curve Cryptography},
+  howpublished = {Version 2.0},
+  year = {2009},
+  url = {https://www.secg.org/sec1-v2.pdf},
+  urldate = {2026-09-09},
+  note = {\url{https://www.secg.org/sec1-v2.pdf}. May 21, 2009; Section 2.3.3; accessed 2026-09-09}
 }
 
 @misc{liquid,
@@ -34,7 +51,8 @@
   howpublished = {Blockstream technical white paper},
   year = {2020},
   url = {https://blockstream.com/assets/downloads/pdf/liquid-whitepaper.pdf},
-  note = {Accessed 2026-09-04}
+  urldate = {2026-09-04},
+  note = {\url{https://blockstream.com/assets/downloads/pdf/liquid-whitepaper.pdf}. Accessed 2026-09-04}
 }
 
 @misc{simplicity,
@@ -43,7 +61,8 @@
   howpublished = {Blockstream Research technical paper},
   year = {2017},
   url = {https://blockstream.com/simplicity.pdf},
-  note = {Accessed 2026-09-04}
+  urldate = {2026-09-04},
+  note = {\url{https://blockstream.com/simplicity.pdf}. Accessed 2026-09-04}
 }
 
 @misc{damp-paper,
@@ -51,17 +70,21 @@
   title = {Decentralized Asset Management Protocol on Liquid using Simplicity},
   year = {2026},
   howpublished = {Repository manuscript},
-  note = {Repository artifact \texttt{papers/damp/main.tex}; reviewed 2026-09-08}
+  url = {https://github.com/BlockstreamResearch/damp/blob/d48f1833c5a5663ed2de48dfb2f7d762a9f3d19c/papers/damp/main.tex},
+  urldate = {2026-09-09},
+  note = {\url{https://github.com/BlockstreamResearch/damp/blob/d48f1833c5a5663ed2de48dfb2f7d762a9f3d19c/papers/damp/main.tex}. Repository artifact \texttt{papers/damp/main.tex}; reviewed 2026-09-08; accessed 2026-09-09}
 }
 
 @misc{pgc-implementation,
   author = {{DAMP project contributors}},
-  title = {Native Confidential Audit Implementation},
+  title = {Native Confidential Audit Reference Implementation},
   year = {2026},
   howpublished = {Rust and Simplicity source code},
-  note = {Repository modules \texttt{damp-core::native\_audit},
+  url = {https://github.com/BlockstreamResearch/damp/tree/d48f1833c5a5663ed2de48dfb2f7d762a9f3d19c/crates/damp-core/src/native_audit},
+  urldate = {2026-09-09},
+  note = {\url{https://github.com/BlockstreamResearch/damp/tree/d48f1833c5a5663ed2de48dfb2f7d762a9f3d19c/crates/damp-core/src/native_audit}. Repository modules \texttt{damp-core::native\_audit},
     \texttt{damp-signer::audit::recovery}, and
-    \texttt{simf/lib/audit.simf}}
+    \texttt{simf/lib/audit.simf}; accessed 2026-09-09}
 }
 
 @misc{pgc-lifecycle,
@@ -69,8 +92,10 @@
   title = {Native Confidential Audit Lifecycle Tests},
   year = {2026},
   howpublished = {Executable contract regression tests},
-  note = {Repository tests in \texttt{crates/damp-signer/tests/lifecycle.rs}
-    and \texttt{covenant/audit\_records.rs}}
+  url = {https://github.com/BlockstreamResearch/damp/blob/d48f1833c5a5663ed2de48dfb2f7d762a9f3d19c/crates/damp-signer/tests/lifecycle.rs},
+  urldate = {2026-09-09},
+  note = {\url{https://github.com/BlockstreamResearch/damp/blob/d48f1833c5a5663ed2de48dfb2f7d762a9f3d19c/crates/damp-signer/tests/lifecycle.rs}. Repository tests in \texttt{crates/damp-signer/tests/lifecycle.rs}
+    and \texttt{covenant/audit\_records.rs}; accessed 2026-09-09}
 }
 
 @misc{pgc-liquid-evidence,
@@ -79,6 +104,7 @@
   year = {2026},
   howpublished = {Public chain records},
   url = {https://blockstream.info/liquidtestnet/tx/8354098eb9f42034109d910cbada0d66d2fc5166a91bcd5c7122d4be6e9859f9},
-  note = {Confirmation records for all six transactions in Table 1
-    checked through the explorer API on 2026-09-09}
+  urldate = {2026-09-09},
+  note = {\url{https://blockstream.info/liquidtestnet/tx/8354098eb9f42034109d910cbada0d66d2fc5166a91bcd5c7122d4be6e9859f9}. Confirmation records for all six transactions in Table 1
+    checked through the explorer API on 2026-09-09; accessed 2026-09-09}
 }

@@ -1,0 +1,311 @@
+\clearpage
+\section{Simplicity-to-mathematics correspondence}
+\label{app:code-math}
+
+This appendix maps the native audit verifier in the reference implementation to Section~\ref{sec:construction}.
+The source is \href{https://github.com/BlockstreamResearch/damp/blob/d48f1833c5a5663ed2de48dfb2f7d762a9f3d19c/simf/lib/audit.simf}{\texttt{simf/lib/audit.simf}} at revision \texttt{d48f183}.
+The numbered listings include that module directly.
+The tables explain each source statement and group multiline statements together.
+Blank lines have no semantic role; the tables group declaration delimiters with their enclosing statement.
+The \texttt{.simf} files are SimplicityHL source compiled into the Simplicity programs executed by the covenant.
+This is a source-level correspondence, not a machine-checked equivalence proof.
+
+\lstdefinestyle{auditcode}{
+  basicstyle=\ttfamily\fontsize{8.5}{10}\selectfont,
+  numbers=left, numberstyle=\tiny, numbersep=8pt,
+  xleftmargin=1.8em, frame=tb, columns=fullflexible,
+  breaklines=true, breakatwhitespace=false, keepspaces=true,
+  showstringspaces=false, tabsize=4, aboveskip=9pt, belowskip=9pt
+}
+\newcommand{\auditlisting}[2]{%
+  \lstinputlisting[style=auditcode,firstline=#1,lastline=#2,firstnumber=#1]{../../simf/lib/audit.simf}%
+}
+\newcommand{\auditmap}[2]{\texttt{#1} & #2\\}
+\newenvironment{auditmapping}{%
+  \begingroup\small
+  \renewcommand{\arraystretch}{1.12}%
+  \begin{longtable}{@{}>{\raggedright\arraybackslash}p{.12\linewidth}>{\raggedright\arraybackslash}p{.85\linewidth}@{}}
+  \toprule
+  Source lines & Mathematical meaning or check\\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+}{%
+  \end{longtable}\endgroup
+}
+
+\subsection{Notation and point encoding}
+
+Several source names differ from the paper's symbols.
+The local variable \texttt{c} is the point $C$, while \texttt{e} is the challenge $c$.
+The local \texttt{h} is $H_A$, not the transaction digest $h$.
+The argument \texttt{d} is $D$, not the deployment salt $d$; the salt and audit epoch come from \texttt{AUDIT\_DEPLOYMENT} and \texttt{AUDIT\_EPOCH}.
+The variable \texttt{aux} holds $R$, and \texttt{root} is a field element $\rho$ used only to authenticate the native commitment's sign.
+
+Write a compressed curve point as $(\eta,x_C)$, where $\eta$ is the SEC~1 parity bit defined in Section~\ref{sec:statement-proof}.
+\texttt{Ge} denotes an affine point and \texttt{Gej} a Jacobian point.
+The pair \texttt{(point, 1)} embeds an affine point with Jacobian coordinate $Z=1$.
+\texttt{gej\_equiv} compares represented group elements, not their raw Jacobian coordinates.
+The curve's base-field prime is $p_F=2^{256}-2^{32}-977$, distinct from the scalar order $q$.
+
+\auditlisting{1}{19}
+\begin{auditmapping}
+  \auditmap{1-3}{State the module's purpose and import checked counter addition/subtraction. These imports do not implement a group equation.}
+  \auditmap{5-6}{Declare \texttt{point\_ge} and unpack a compressed point into its parity bit and $x$ coordinate.}
+  \auditmap{7}{Require $0\leq x<p_F$ by equality with field normalization. Reject a noncanonical coordinate.}
+  \auditmap{8}{Decompress the curve point selected by $(\eta,x)$; \texttt{unwrap} rejects a non-point. This establishes a finite point on secp256k1.}
+  \auditmap{9}{End the point-decoding helper.}
+  \auditmap{11-12}{Declare \texttt{hash\_point} and unpack the point to serialize into a SHA-256 state.}
+  \auditmap{13}{Select the SEC~1 prefix from parity.}
+  \auditmap{14}{An even $y$ coordinate uses byte \texttt{02}.}
+  \auditmap{15}{An odd $y$ coordinate uses byte \texttt{03}.}
+  \auditmap{16}{Complete prefix selection.}
+  \auditmap{17}{Append the one-byte SEC~1 prefix to the transcript.}
+  \auditmap{18}{Append the 32-byte $x$ coordinate, completing $\operatorname{SEC1}(Q)$ for the supplied point $Q$.}
+  \auditmap{19}{End the serialization helper.}
+\end{auditmapping}
+
+\subsection{Read the native commitment and validate proof fields}
+\label{app:native-sign}
+
+\auditlisting{21}{54}
+\begin{auditmapping}
+  \auditmap{21-31}{Declare the verifier with output index $i$, SEC~1 parity $\eta$, sign witness $\rho$, points $D,T_C,T_D$, responses $z_v,z_b$, and digest $\sha(R)$. These are public proof or encoding data, not $(v,b)$.}
+  \auditmap{32}{Read the actual asset and amount field of output $i$ from the transaction. Reject a missing output.}
+  \auditmap{33}{Require an explicit asset identifier, not an asset commitment.}
+  \auditmap{34}{Require that identifier to equal the compiled regulated asset $A$.}
+  \auditmap{35}{Require a confidential value commitment and unpack its native sign bit $\epsilon$ and coordinate $x_C$. Reject an explicit amount.}
+  \auditmap{36}{Decode a candidate $C=(x_C,y_C)$ using the supplied SEC~1 parity $\eta$.}
+  \auditmap{37}{Read its $y_C$ coordinate for the native-sign check.}
+  \auditmap{39-40}{Document why the native Elements sign bit must not be interpreted as SEC~1 parity.}
+  \auditmap{41}{Require the witness $\rho$ to be a canonical field element.}
+  \auditmap{42}{Select a quadratic-residue target from the native sign bit.}
+  \auditmap{43}{For prefix \texttt{08}, require a square root of $y_C$.}
+  \auditmap{44}{For prefix \texttt{09}, require a square root of $-y_C$.}
+  \auditmap{45}{Complete the target selection.}
+  \auditmap{46}{Check $\rho^2=(-1)^\epsilon y_C\pmod {p_F}$. This ties the decoded point to the actual native encoding of $C$.}
+  \auditmap{47}{Derive $H_A$ with the Elements asset-generator jet \texttt{hash\_to\_curve}.}
+  \auditmap{48}{Read the compiled audit public key $P$.}
+  \auditmap{49}{Decode $P$ as a canonical finite curve point.}
+  \auditmap{50}{Decode the proof's handle $D$.}
+  \auditmap{51}{Decode the proof commitment $T_C$.}
+  \auditmap{52}{Decode the proof commitment $T_D$.}
+  \auditmap{53}{Require $0\leq z_v<q$. Reject a noncanonical scalar encoding.}
+  \auditmap{54}{Apply the same canonical-scalar check to $z_b$.}
+\end{auditmapping}
+
+The native prefixes \texttt{08} and \texttt{09} distinguish the quadratic character of $y_C$.
+They do not mean even and odd $y_C$.
+For secp256k1, $p_F\equiv3\pmod4$, so $-1$ is a quadratic nonresidue.
+For nonzero $y_C$, exactly one of $y_C$ and $-y_C$ has a square root.
+A finite point in this odd-prime-order group cannot have $y_C=0$.
+Thus line 46 accepts only the sign selected by the native prefix, even though line 36 starts from a separately supplied SEC~1 parity bit.
+Changing $C$ to $-C$ while retaining the same native commitment bytes fails this sign check.
+The prover derives the witness $\rho$ from public curve coordinates; it does not reveal the opening of $C$.
+
+\subsection{Construct the Fiat--Shamir challenge}
+
+Let $t=\sha(\mathtt{DAMP/audit/autonomous/v3})$.
+The challenge uses $\sha(t\mathbin\Vert t\mathbin\Vert m)$ with
+\begin{align*}
+ m={}&d\mathbin\Vert\operatorname{BE}_4(2)\mathbin\Vert\operatorname{BE}_8(e)
+       \mathbin\Vert\operatorname{SEC1}(P)\mathbin\Vert h\mathbin\Vert\operatorname{BE}_4(i)\\
+    &\mathbin\Vert\operatorname{asset}(A)\mathbin\Vert\operatorname{native}(C)
+       \mathbin\Vert S\mathbin\Vert\mathtt{00}\mathbin\Vert\sha(R)\\
+    &\mathbin\Vert\operatorname{SEC1}(D)\mathbin\Vert\operatorname{SEC1}(T_C)
+       \mathbin\Vert\operatorname{SEC1}(T_D).
+\end{align*}
+Here $\operatorname{asset}(A)$ is the 32-byte consensus-order asset identifier, not its display-order hexadecimal text.
+The encoding $\operatorname{native}(C)$ consists of the native prefix \texttt{08} or \texttt{09} and $x_C$, for 33 bytes in total.
+The fixed role byte \texttt{00} is part of the transcript even though it is not a variable in $x$.
+The \texttt{v3} tag names the challenge format; it does not change the domain word $g=2$.
+
+\auditlisting{56}{84}
+\begin{auditmapping}
+  \auditmap{56-57}{Document the ordered domain and transaction fields.}
+  \auditmap{58}{Start a SHA-256 context.}
+  \auditmap{59-61}{Append $t$, whose hexadecimal value is the source constant.}
+  \auditmap{62-64}{Append $t$ again, implementing the tagged-hash prefix $t\mathbin\Vert t$.}
+  \auditmap{65}{Append the 32-byte deployment salt $d$.}
+  \auditmap{66}{Append $\operatorname{BE}_4(g)$ with $g=2$.}
+  \auditmap{67}{Append the 8-byte audit epoch $e$.}
+  \auditmap{68}{Append $\operatorname{SEC1}(P)$.}
+  \auditmap{69}{Append the introspected transaction digest $h=\texttt{sig\_all\_hash()}$.}
+  \auditmap{70}{Append the 4-byte output index $i$.}
+  \auditmap{71}{Append the 32-byte consensus asset identifier $A$.}
+  \auditmap{72}{Select the native commitment prefix using the bit read from the transaction.}
+  \auditmap{73}{Use \texttt{08} when $y_C$ is a quadratic residue.}
+  \auditmap{74}{Use \texttt{09} when $y_C$ is a quadratic nonresidue.}
+  \auditmap{75}{Complete the native-prefix selection.}
+  \auditmap{76}{Append that one-byte native prefix.}
+  \auditmap{77}{Append $x_C$, completing the transaction's exact 33-byte native commitment.}
+  \auditmap{78}{Append $S=\sha(\mathrm{scriptPubKey}_i)$ from transaction introspection.}
+  \auditmap{79}{Append the fixed output-role byte \texttt{00}.}
+  \auditmap{80}{Append $\sha(R)$, calculated from the record bytes in lines 149-150 below.}
+  \auditmap{81}{Append $\operatorname{SEC1}(D)$.}
+  \auditmap{82}{Append $\operatorname{SEC1}(T_C)$.}
+  \auditmap{83}{Append $\operatorname{SEC1}(T_D)$.}
+  \auditmap{84}{Finalize SHA-256 and reduce its big-endian integer modulo $q$ to obtain challenge $c$. The source calls this scalar \texttt{e}.}
+\end{auditmapping}
+
+\subsection{Check the two group equations}
+
+\noindent\begin{minipage}{\linewidth}
+\auditlisting{86}{96}
+\end{minipage}
+\begin{auditmapping}
+  \auditmap{86-87}{State the common-blinder relation and its two verification equations in source notation.}
+  \auditmap{88}{Start the group-equality assertion for Equation~\ref{eq:verify-commitment}.}
+  \auditmap{89}{\texttt{linear\_combination\_1} computes $z_vH_A+z_bG$. The generator $G$ is implicit in this jet.}
+  \auditmap{90}{\texttt{scale} computes $cC$ and \texttt{gej\_ge\_add} adds $T_C$, giving $T_C+cC$.}
+  \auditmap{91}{Require the two group elements to be equal, completing Equation~\ref{eq:verify-commitment}.}
+  \auditmap{92}{Start the assertion for Equation~\ref{eq:verify-handle}.}
+  \auditmap{93}{Compute $z_bP$, reusing the same response $z_b$ as line 89.}
+  \auditmap{94}{Compute $cD$ and add $T_D$, giving $T_D+cD$.}
+  \auditmap{95}{Require equality, completing Equation~\ref{eq:verify-handle}.}
+  \auditmap{96}{Return only after both assertions succeed.}
+\end{auditmapping}
+
+The substitution proof in Section~\ref{sec:statement-proof} explains why honest responses pass these exact operations.
+Neither assertion decrypts $R$, verifies a native range proof, or proves that this transaction was confirmed.
+
+\subsection{Serialize recovery bytes and bind the native range proof}
+
+\auditlisting{98}{130}
+\begin{auditmapping}
+  \auditmap{98}{Represent $R$ as $64+32+4+2=102$ bytes. This tuple splits raw bytes for SHA-256 jets; its boundaries are not the encryption-envelope field boundaries.}
+  \auditmap{99}{Represent the range-proof body as $79\cdot64+4=5060$ bytes. The ten-byte header is fixed separately.}
+  \auditmap{100}{Define one record as $(i,\eta,\rho,D,T_C,T_D,z_v,z_b,R,\mathrm{rangeBody})$. It contains no plaintext witness $(v,b)$.}
+  \auditmap{101}{Allocate ten optional record slots, the output bound used by the verifier.}
+  \auditmap{102}{Define fold state as the accepted count, previous index, finished flag, and recovery-manifest hash context.}
+  \auditmap{104-105}{Declare \texttt{add\_aux} and unpack the four byte segments of $R$.}
+  \auditmap{106}{Append bytes 0 through 63 of $R$.}
+  \auditmap{107}{Append bytes 64 through 95 of $R$.}
+  \auditmap{108}{Append bytes 96 through 99 of $R$.}
+  \auditmap{109}{Append bytes 100 and 101 of $R$. Integers retain their fixed-width big-endian encoding.}
+  \auditmap{110}{Return the hash context after all 102 bytes, without decoding the envelope.}
+  \auditmap{112-114}{Define \texttt{range\_chunk}, which appends one 64-byte range-proof body chunk.}
+  \auditmap{116-119}{Declare the range-binding check. Elements consensus verifies the range proof; this code authenticates the required profile.}
+  \auditmap{120}{Unpack the 79 chunks and four-byte tail.}
+  \auditmap{121}{Start a fresh SHA-256 context for the complete range proof.}
+  \auditmap{122}{Append header bytes \texttt{60 3e}, selecting exponent zero and 63 mantissa bits.}
+  \auditmap{123}{Append the eight-byte minimum value 1. Together the fixed header specifies $1\leq v\leq2^{63}$.}
+  \auditmap{124}{Append all 79 body chunks in order.}
+  \auditmap{125}{Append the final four bytes, completing the 5070-byte proof serialization.}
+  \auditmap{126}{Begin a digest-equality assertion.}
+  \auditmap{127}{Finalize the hash of the header and supplied body.}
+  \auditmap{128}{Read the actual output range-proof hash by introspection.}
+  \auditmap{129}{Require the hashes to agree, so a different body or profile cannot be substituted without a SHA-256 collision.}
+  \auditmap{130}{End the range-binding helper. The Sigma equations do not replace consensus range-proof verification.}
+\end{auditmapping}
+
+The auxiliary tuple's 64-byte first segment crosses the envelope's ciphertext boundary.
+The contract treats all segments as bytes.
+It commits even unsupported or invalid recovery envelopes without checking whether they can be decrypted.
+
+\subsection{Require one record per output and commit the ordered records}
+
+For the accepted ordered records $(i_1,R_1),\ldots,(i_n,R_n)$, define
+\[
+ M=\sha\!\left(
+   \operatorname{BE}_4(i_1)\mathbin\Vert R_1\mathbin\Vert\cdots
+   \mathbin\Vert\operatorname{BE}_4(i_n)\mathbin\Vert R_n
+   \mathbin\Vert\operatorname{BE}_4(n)\right).
+\]
+The final transaction output must have script bytes $\mathtt{6a20}\mathbin\Vert M$.
+These are \texttt{OP\_RETURN}, a 32-byte push, and $M$.
+This transaction-level commitment is distinct from the per-proof digest $\sha(R_j)$.
+
+\auditlisting{132}{176}
+\begin{auditmapping}
+  \auditmap{132-133}{Declare the per-slot fold and unpack $(n,\mathrm{previous},\mathrm{finished},\mathrm{manifest})$.}
+  \auditmap{134}{Select an empty or present record slot.}
+  \auditmap{135}{An empty slot marks the list finished without changing its count or hash.}
+  \auditmap{136-137}{Enter a present record and document the ordering requirement.}
+  \auditmap{138}{Check whether an empty slot has already occurred.}
+  \auditmap{139}{Reject a present record after a gap.}
+  \auditmap{140}{Allow a record while the list remains contiguous.}
+  \auditmap{141}{Complete the no-gap assertion.}
+  \auditmap{142}{Unpack $(i,\eta,\rho,D,T_C,T_D,z_v,z_b,R,\mathrm{rangeBody})$.}
+  \auditmap{143}{Authenticate the native range-proof profile of output $i$.}
+  \auditmap{144}{Require $i>0$, excluding the verifier anchor at output zero.}
+  \auditmap{145}{Inspect the previously accepted output index.}
+  \auditmap{146}{The first present record has no predecessor constraint.}
+  \auditmap{147}{Otherwise require $i_{j-1}<i_j$, rejecting duplicates and reordered records.}
+  \auditmap{148}{Complete the predecessor check.}
+  \auditmap{149-150}{Compute $\sha(R)$ over exactly the 102 witness bytes. This is the digest passed into Equation~\ref{eq:statement}.}
+  \auditmap{151}{Reconstruct the statement and verify Equations~\ref{eq:verify-commitment} and \ref{eq:verify-handle} for this output.}
+  \auditmap{152}{Append the four-byte index $i_j$ to the manifest context.}
+  \auditmap{153}{Append $R_j$ to that same context.}
+  \auditmap{154}{Increase $n$ by one with checked addition and retain $i_j$ as the predecessor.}
+  \auditmap{155-157}{Return the updated state and close the branch and per-slot helper.}
+  \auditmap{159}{Declare the complete record check with the expected regulated-output count.}
+  \auditmap{160-161}{Fold all ten slots from count zero, no predecessor, an unfinished list, and an empty hash context.}
+  \auditmap{162}{Require $n>0$.}
+  \auditmap{163}{Require the number of accepted records to match the regulated-output summary. Each accepted record names a distinct actual regulated commitment.}
+  \auditmap{165-166}{Document the transaction-level recovery commitment and the offchain decryption boundary.}
+  \auditmap{167}{Append the four-byte count $n$ after all ordered $(i_j,R_j)$ pairs.}
+  \auditmap{168}{Finalize $M$.}
+  \auditmap{169}{Start hashing the required script with bytes \texttt{6a20}.}
+  \auditmap{170}{Append $M$, so the expected script hash is $\sha(\mathtt{6a20}\mathbin\Vert M)$.}
+  \auditmap{171}{Select the last output using checked subtraction of one from the output count.}
+  \auditmap{172}{Begin the final script-hash equality check.}
+  \auditmap{173}{Read the actual last output's script hash.}
+  \auditmap{174}{Finalize the expected script hash.}
+  \auditmap{175}{Require equality, binding the ordered recovery bytes and their count to the transaction.}
+  \auditmap{176}{Return after all record and manifest checks succeed.}
+\end{auditmapping}
+
+The coverage argument also uses the caller's output scan.
+In \texttt{simf/lib/assets.simf}, lines 45-60, each confidential regulated output contributes one to that scan; an explicit output contributes its positive explicit value.
+In \texttt{simf/verifier/core.simf}, lines 77-108, the scan requires a positive contribution and an owner-bound script for every regulated output.
+Let $J_c$ and $J_e$ be the confidential and explicit regulated-output sets.
+The summary is $|J_c|+\sum_{i\in J_e}v_i$.
+The record checks enforce distinct indices in $J_c$, so $n\leq|J_c|$.
+Equality at line 163 therefore forces $J_e$ to be empty and every member of $J_c$ to have exactly one accepted record.
+The variable names containing \texttt{amount} in the shared scan must not be read as recovered confidential balances.
+
+\subsection{Reachability from the spending program}
+
+The depth-four entrypoint below calls the shared audit module after checking the anchor, input policy proofs, and output scripts.
+The depth-five and depth-six entrypoints have the same audit call at line 24, each using its own policy-proof verifier.
+These line numbers refer to \texttt{simf/verifier\_d4.simf}, not the shared audit module.
+
+\lstinputlisting[style=auditcode,firstline=1,lastline=25,firstnumber=1]{../../simf/verifier_d4.simf}
+\begin{auditmapping}
+  \auditmap{1-2}{Document the entrypoint and import the shared \texttt{verify\_records} function.}
+  \auditmap{3-11}{Import transaction-shape, counting, and budget helpers.}
+  \auditmap{12}{Select the depth-four policy-proof checker.}
+  \auditmap{14}{Enter the SimplicityHL spending program.}
+  \auditmap{15}{Consume the fixed 4096-word witness padding, requiring zero words. This is an execution-budget device, not a Sigma equation.}
+  \auditmap{16}{Check input/output zero as the verifier anchor and bind the initiating holder input to its owner.}
+  \auditmap{17}{Scan regulated inputs and count those that need policy proofs; do not decrypt their amounts.}
+  \auditmap{18-21}{Check the supplied input policy proofs with a bounded ten-slot fold.}
+  \auditmap{22}{Require every regulated input to have been checked.}
+  \auditmap{23}{Check regulated output scripts and obtain the summary used by the coverage argument above.}
+  \auditmap{24}{Pass \texttt{witness::AUDIT\_RECORDS} to the shared verifier. This reaches the range, statement, two-equation, and manifest checks.}
+  \auditmap{25}{End the entrypoint only after all checks succeed.}
+\end{auditmapping}
+
+\subsection{Operations outside Simplicity}
+
+\begin{samepage}
+The prover computes $C=vH_A+bG$, $D=bP$, $T_C,T_D$ and $z_v,z_b$ offchain.
+The covenant checks their equations onchain at the lines identified above; the prover does not supply the secret scalars.
+The Rust module \texttt{damp-core::native\_audit::proof} in the reference implementation constructs and rechecks these proof messages \cite{pgc-implementation}.
+\end{samepage}
+
+The recovery module's \texttt{AuditOutput::seal} constructs $R$ using ephemeral ECDH and authenticated encryption.
+\texttt{VerifiedAuditProof::open\_recovery} decrypts it with the issuer key, then checks the recovered opening against both $C$ and $D$.
+Neither operation appears in the Simplicity listing.
+Likewise, \texttt{recover\_bounded} computes Equation~\ref{eq:recovery-target} and searches offchain:
+\[
+ C-s^{-1}D
+ =vH_A+bG-s^{-1}(bsG)
+ =vH_A.
+\]
+The inverse $s^{-1}$ is a scalar inverse modulo $q$ and exists for a nonzero audit secret.
+The equation removes the blinder but does not solve the discrete logarithm for $v$.
+Elements consensus verifies native range proofs, and the chain-validation/reporting layer checks chain inclusion.
+The appendix does not attribute either guarantee to the two Sigma assertions.
