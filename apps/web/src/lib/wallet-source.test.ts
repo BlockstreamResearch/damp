@@ -14,7 +14,7 @@ describe("wallet discovery provider selection", () => {
   });
 
   it("uses only the configured local Esplora for Elements regtest", () => {
-    localStorage.setItem("simplicity-amp:regtest-esplora", "http://127.0.0.1:3001/api/");
+    localStorage.setItem("simplicity-damp:regtest-esplora", "http://127.0.0.1:3001/api/");
     expect(walletDiscoverySource("elements-regtest")).toEqual({
       provider: "esplora",
       baseUrl: "http://127.0.0.1:3001/api",

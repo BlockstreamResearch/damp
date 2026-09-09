@@ -19,7 +19,7 @@ describe("test funding", () => {
   });
 
   it("supports an explicitly configured regtest native asset", () => {
-    localStorage.setItem("simplicity-amp:regtest-policy-asset:v1", "ab".repeat(32));
+    localStorage.setItem("simplicity-damp:regtest-policy-asset:v1", "ab".repeat(32));
     expect(nativeFeeAssetId("elements-regtest")).toBe("ab".repeat(32));
   });
 });

@@ -1,10 +1,11 @@
-// A regulated balance is locked to this executable leaf and a hidden
-// TapData(owner_pubkey) leaf. Spending requires the owner and verifier input 0.
+// Accept native value commitments and explicit issuer-created balances. Lock
+// them to this executable leaf and a hidden TapData(owner_pubkey) leaf.
+// Spending requires the owner and verifier input 0.
 
 use std::lib::asserts::{assert_eq_64, assert_eq_256};
 
 use crate::lib::assets::{
-    explicit_input_asset_and_amount,
+    input_asset_and_amount,
 };
 use crate::lib::taproot::state_script_hash;
 
@@ -12,12 +13,13 @@ fn main() {
     // The public verifier anchor always occupies input 0; user inputs follow it.
     assert!(jet::lt_32(0, jet::current_index()));
     let (current_asset, current_amount): (u256, u64) =
-        explicit_input_asset_and_amount(jet::current_index());
+        input_asset_and_amount(jet::current_index());
     assert_eq_256(current_asset, param::REGULATED_ASSET_ID);
     assert!(jet::lt_64(0, current_amount));
+    assert!(jet::le_64(current_amount, 9223372036854775807));
 
     let (verifier_asset, verifier_amount): (u256, u64) =
-        explicit_input_asset_and_amount(0);
+        input_asset_and_amount(0);
     assert_eq_256(verifier_asset, param::VERIFIER_ASSET_ID);
     assert_eq_64(verifier_amount, param::VERIFIER_ASSET_AMOUNT);
 

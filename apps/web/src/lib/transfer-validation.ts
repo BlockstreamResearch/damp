@@ -1,11 +1,13 @@
+import { userFacingError } from "./domain";
 import { z } from "zod";
 
 import {
   validateRecipientAddress,
-  type SpendableUtxo,
-} from "./amp-signer";
+  type Utxo,
+} from "./damp-signer";
 import {
   formatUnits,
+  maximumAssetBaseUnits,
   parseUnits,
   publicManifest,
   type Deployment,
@@ -16,7 +18,6 @@ import type { WalletSyncSnapshot, WalletSyncUtxo } from "./wallet-sync";
 export const maxTransferInputs = 10;
 export const minimumTransferFee = 500n;
 export const maximumTransferFee = 100_000n;
-const unsigned64Max = (1n << 64n) - 1n;
 
 export class TransferValidationError extends Error {
   constructor(
@@ -48,19 +49,17 @@ export function parseTransferAmount(value: string, precision: number) {
   }
   const units = parseUnits(normalized, precision);
   if (units <= 0n) throw new TransferValidationError("amount", "positive", "Enter an amount greater than zero.");
-  if (units > unsigned64Max) throw new TransferValidationError("amount", "overflow", "Amount exceeds the supported base-unit range.");
+  if (units > maximumAssetBaseUnits) throw new TransferValidationError("amount", "overflow", "Amount exceeds the supported base-unit range.");
   return { normalized, units };
 }
 
-export function estimateTransferFee(regulatedInputCount: number, audited = false) {
+export function estimateTransferFee(regulatedInputCount: number) {
   if (!Number.isSafeInteger(regulatedInputCount) || regulatedInputCount < 1 || regulatedInputCount > maxTransferInputs) {
     throw new TransferValidationError("context", "input-count", `Transfers require between 1 and ${maxTransferInputs} regulated inputs.`);
   }
-  // Finalized signer fixtures measure 15,415 WU for one regulated input and roughly 787 WU
-  // for each additional input. Round both upward, then mirror LWK's default 100 sats/kvB
-  // calculation over Liquid's discounted transaction weight. Keep a 500-sat floor so small
-  // model variance cannot turn a successfully reviewed transfer into a relay rejection.
-  const estimatedWeight = (audited ? 210_000n : 15_600n) + BigInt(regulatedInputCount - 1) * 800n;
+  // Conservative native-proof estimate for the signer's recipient/change shape.
+  // Apply 100 sats/kvB and retain the test-network fee floor and upper bound.
+  const estimatedWeight = 210_000n + BigInt(regulatedInputCount - 1) * 800n;
   const estimatedVsize = (estimatedWeight + 3n) / 4n;
   const lwkDefaultFee = (estimatedVsize * 100n + 999n) / 1_000n;
   const fee = lwkDefaultFee < minimumTransferFee ? minimumTransferFee : lwkDefaultFee;
@@ -79,7 +78,7 @@ function compareByAmountThenOutpoint(left: WalletSyncUtxo, right: WalletSyncUtxo
   return amount < 0n ? -1 : amount > 0n ? 1 : compareOutpoints(left, right);
 }
 
-function spendable(utxo: WalletSyncUtxo): SpendableUtxo {
+function spendable(utxo: WalletSyncUtxo): Utxo {
   return {
     txid: utxo.txid,
     vout: utxo.vout,
@@ -94,8 +93,8 @@ function total(utxos: WalletSyncUtxo[]) {
 }
 
 export type TransferFundingSelection = {
-  regulatedUtxos: SpendableUtxo[];
-  feeUtxos: SpendableUtxo[];
+  regulatedUtxos: Utxo[];
+  feeUtxos: Utxo[];
   amount: bigint;
   fee: bigint;
   regulatedChange: bigint;
@@ -115,8 +114,8 @@ export function selectTransferFunding(input: {
   amount: bigint;
 }): TransferFundingSelection {
   const { snapshot, deployment, policy, profileId, amount } = input;
-  if (amount <= 0n || amount > unsigned64Max) {
-    throw new TransferValidationError("amount", "range", "Transfer amount must be within the positive unsigned base-unit range.");
+  if (amount <= 0n || amount > maximumAssetBaseUnits) {
+    throw new TransferValidationError("amount", "range", "Transfer amount must be within the positive application base-unit range.");
   }
   if (!snapshot) {
     throw new TransferValidationError("context", "wallet-unavailable", "Wallet balance is unavailable. Refresh synchronization before reviewing a transfer.", true);
@@ -132,9 +131,6 @@ export function selectTransferFunding(input: {
   }
   if (policy.deploymentId !== deployment.deploymentId) {
     throw new TransferValidationError("context", "policy-deployment", "The resolved policy belongs to another deployment. Recheck the live anchor.");
-  }
-  if (deployment.audit && amount>9223372036854775807n) {
-    throw new TransferValidationError("amount", "overflow", "Generation 2 amount exceeds 9223372036854775807 base units.");
   }
   const blacklist = new Set(policy.entries.map((entry) => `${entry.txid}:${entry.vout}`));
   const regulated = snapshot.utxos.filter((utxo) => utxo.source === "holder" && utxo.assetId === deployment.regulatedAsset);
@@ -173,10 +169,9 @@ export function selectTransferFunding(input: {
     chosenAmount += BigInt(utxo.amount);
     if (chosenAmount >= amount) break;
   }
-  const fee = estimateTransferFee(chosen.length, Boolean(deployment.audit));
+  const fee = estimateTransferFee(chosen.length);
   const compatibleFeeOutput = (utxo: WalletSyncUtxo) => {
-    const needsConfidentialChange = Boolean(deployment.audit) || utxo.assetConfidential || utxo.valueConfidential;
-    const required = fee + (needsConfidentialChange ? 1n : 0n);
+    const required = fee + 1n;
     return BigInt(utxo.amount) >= required;
   };
   const confirmedFeeCandidates = snapshot.utxos
@@ -185,7 +180,7 @@ export function selectTransferFunding(input: {
   const pendingFeeCandidates = snapshot.utxos
     .filter((utxo) => utxo.source === "wallet" && utxo.assetId === deployment.policyAsset && utxo.status === "unconfirmed")
     .sort(compareByAmountThenOutpoint);
-  // The v0.1 verifier budget admits one ordinary fee input. Mirror the Rust
+  // The supported transfer shape admits one ordinary fee input. Mirror the Rust
   // signer's smallest-sufficient selection so review cannot promise that a sum
   // of individually insufficient outputs is spendable.
   const feeOutput = confirmedFeeCandidates.find(compatibleFeeOutput);
@@ -194,7 +189,7 @@ export function selectTransferFunding(input: {
     const pendingHint = pendingFeeCandidates.some(compatibleFeeOutput)
       ? " A compatible L-BTC output is pending confirmation."
       : total(confirmedFeeCandidates) >= fee
-        ? " DAMP v0.1 needs one compatible fee output; smaller outputs cannot be combined in this transaction. Request another test output or consolidate them first."
+        ? " DAMP needs one compatible fee output; smaller outputs cannot be combined in this transaction. Request another test output or consolidate them first."
         : deployment.network === "liquid-testnet"
           ? " Request Liquid testnet funds, then refresh the wallet."
           : " Fund one signer wallet output from the local Elements node, then refresh the wallet.";
@@ -229,7 +224,7 @@ export async function resolveAndValidateRecipientAddress(value: string, deployme
     throw new TransferValidationError(
       "recipient",
       "address",
-      `Recipient address is invalid or incompatible with the selected deployment: ${error instanceof Error ? error.message : String(error)}`,
+      `Recipient address is invalid or incompatible with the selected deployment: ${userFacingError(error)}`,
     );
   }
 }

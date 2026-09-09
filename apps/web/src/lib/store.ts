@@ -2,15 +2,14 @@ import { openDB } from "idb";
 
 import type { Deployment, PolicySnapshot } from "./domain";
 
-const database = openDB("simplicity-amp-v1", 5, {
+// A fresh namespace has one schema. Older browser databases remain untouched.
+const database = openDB("simplicity-damp", 1, {
   upgrade(db) {
-    if (!db.objectStoreNames.contains("deployments")) db.createObjectStore("deployments", { keyPath: "deploymentId" });
-    if (!db.objectStoreNames.contains("settings")) db.createObjectStore("settings");
-    if (!db.objectStoreNames.contains("snapshots")) db.createObjectStore("snapshots");
-    if (db.objectStoreNames.contains("receiveRecords")) db.deleteObjectStore("receiveRecords");
-    if (!db.objectStoreNames.contains("drafts")) db.createObjectStore("drafts");
-    if (!db.objectStoreNames.contains("caches")) db.createObjectStore("caches");
-    if (!db.objectStoreNames.contains("walletSync")) db.createObjectStore("walletSync");
+    db.createObjectStore("deployments", { keyPath: "deploymentId" });
+    db.createObjectStore("settings");
+    db.createObjectStore("snapshots");
+    db.createObjectStore("drafts");
+    db.createObjectStore("walletSync");
   },
 });
 
@@ -36,11 +35,6 @@ export async function getActiveDeploymentId(): Promise<string | null> {
 export async function setActiveDeploymentId(deploymentId: string) {
   if (!await getDeployment(deploymentId)) throw new Error("Cannot activate an unknown deployment.");
   await (await database).put("settings", deploymentId, "activeDeploymentId");
-}
-
-export async function getActiveDeployment(): Promise<Deployment | null> {
-  const deploymentId = await getActiveDeploymentId();
-  return deploymentId ? (await getDeployment(deploymentId)) ?? null : null;
 }
 
 export function snapshotKey(deploymentId: string, verifierScriptHash: string, registryRepository?: string) {
@@ -71,10 +65,6 @@ export async function putDraft<T>(deploymentId: string, name: string, value: T) 
   return (await database).put("drafts", value, `${deploymentId}:${name}`);
 }
 
-export async function deleteDraft(deploymentId: string, name: string) {
-  return (await database).delete("drafts", `${deploymentId}:${name}`);
-}
-
 export async function putTxidKeyedReceipt<T extends { txid: string }>(
   deploymentId: string,
   operation: string,
@@ -96,14 +86,6 @@ export async function getLatestReceipt<T>(deploymentId: string, operation: strin
 
 export async function clearLatestReceipt(deploymentId: string, operation: string, signerProfileId: string) {
   return (await database).delete("drafts", `${deploymentId}:receipt:${operation}:${signerProfileId}:latest`);
-}
-
-export async function getCachedRecord<T>(key: string): Promise<T | undefined> {
-  return (await database).get("caches", key);
-}
-
-export async function putCachedRecord<T>(key: string, value: T) {
-  return (await database).put("caches", value, key);
 }
 
 export async function getWalletSyncRecord<T>(key: string): Promise<T | undefined> {

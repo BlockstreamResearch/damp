@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { markSignerWalletReady, type SignerNetwork } from "./amp-signer";
-import type { Deployment } from "./domain";
+import { markSignerWalletReady, type SignerNetwork } from "./damp-signer";
+import { userFacingError, type Deployment } from "./domain";
 import {
   loadWalletSyncSnapshot,
   synchronizeBaseWallet,
@@ -121,16 +121,10 @@ export async function refreshDeploymentWallet(
   signal?: AbortSignal,
 ): Promise<WalletSyncResult> {
   const previous = await loadWalletSyncSnapshot(profileId, deployment.network, deployment.deploymentId);
-  try {
-    const snapshot = await synchronizeDeploymentWallet(deployment, profileId, { signal });
-    markSignerWalletReady(profileId, deployment.network);
-    return { snapshot };
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
-    if (error instanceof Error && error.name === "AbortError") throw error;
-    if (!previous) throw error;
-    return { snapshot: previous, syncError: error instanceof Error ? error.message : String(error) };
-  }
+  return refreshWallet(
+    () => synchronizeDeploymentWallet(deployment, profileId, { signal }),
+    previous, profileId, deployment.network,
+  );
 }
 
 export async function refreshBaseWallet(input: {
@@ -138,15 +132,28 @@ export async function refreshBaseWallet(input: {
   network: SignerNetwork;
 }, signal?: AbortSignal): Promise<WalletSyncResult> {
   const previous = await loadWalletSyncSnapshot(input.profileId, input.network, "base");
+  return refreshWallet(
+    () => synchronizeBaseWallet({ ...input, signal }),
+    previous, input.profileId, input.network,
+  );
+}
+
+/** A failed refresh may display the prior snapshot; cancellation must still propagate. */
+async function refreshWallet(
+  synchronize: () => Promise<WalletSyncSnapshot>,
+  previous: WalletSyncSnapshot | undefined,
+  profileId: string,
+  network: SignerNetwork,
+): Promise<WalletSyncResult> {
   try {
-    const snapshot = await synchronizeBaseWallet({ ...input, signal });
-    markSignerWalletReady(input.profileId, input.network);
+    const snapshot = await synchronize();
+    markSignerWalletReady(profileId, network);
     return { snapshot };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     if (error instanceof Error && error.name === "AbortError") throw error;
     if (!previous) throw error;
-    return { snapshot: previous, syncError: error instanceof Error ? error.message : String(error) };
+    return { snapshot: previous, syncError: userFacingError(error) };
   }
 }
 

@@ -1,3 +1,4 @@
+import { userFacingError } from "../lib/domain";
 import { Check, Copy, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -61,7 +62,7 @@ export function ClipboardCopyButton({
     } catch (error) {
       if (request.current !== attempt || currentIdentity.current !== copiedIdentity) return;
       setState("failed");
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = userFacingError(error);
       onNotice?.({ tone: "error", message: `Could not copy: ${detail}` });
     }
   }

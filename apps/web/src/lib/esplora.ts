@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import type { Deployment } from "./domain";
+import { EsploraRequestError, esploraOutspendSchema, getEsploraJson as getJson } from "./esplora-client";
+export { EsploraRequestError } from "./esplora-client";
 
 export const liquidTestnetEsploraUrl = "https://blockstream.info/liquidtestnet/api";
 const MAX_ANCHOR_HOPS = 2_048;
@@ -22,9 +24,7 @@ const transactionSchema = z.object({
   status: transactionStatusSchema,
 });
 
-const outspendSchema = z.object({
-  spent: z.boolean(),
-  txid: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+const outspendSchema = esploraOutspendSchema.extend({
   vin: z.number().int().nonnegative().optional(),
   status: transactionStatusSchema.optional(),
 });
@@ -47,18 +47,6 @@ export type AnchorTraversal = {
 
 export type EsploraRequest = typeof fetch;
 
-export class EsploraRequestError extends Error {
-  readonly status: number;
-  readonly url: string;
-
-  constructor(status: number, url: string) {
-    super(`Esplora request failed (${status}) for ${url}.`);
-    this.name = "EsploraRequestError";
-    this.status = status;
-    this.url = url;
-  }
-}
-
 export function isRetryableEsploraRequest(error: unknown) {
   return error instanceof EsploraRequestError
     && (error.status === 404 || error.status === 408 || error.status === 425
@@ -77,7 +65,7 @@ export class AnchorConflictError extends Error {
 
 export function esploraUrlForDeployment(deployment: Pick<Deployment, "network">): string {
   if (deployment.network === "liquid-testnet") return liquidTestnetEsploraUrl;
-  const configured = localStorage.getItem("simplicity-amp:regtest-esplora")?.trim();
+  const configured = localStorage.getItem("simplicity-damp:regtest-esplora")?.trim();
   if (!configured) {
     throw new Error("Configure an Elements regtest Esplora URL before importing this deployment.");
   }
@@ -86,7 +74,7 @@ export function esploraUrlForDeployment(deployment: Pick<Deployment, "network">)
 
 /**
  * Follow the unique verifier token from the manifest's genesis outpoint to the current unspent
- * output. Every transition is checked against the v0.1 index convention and the fixed verifier
+ * output. Every transition is checked against the anchor index convention and the fixed verifier
  * asset/value. The chain, rather than GitHub, decides which conflicting anchor spend won.
  */
 export async function traverseLiveAnchor(
@@ -96,7 +84,7 @@ export async function traverseLiveAnchor(
 ): Promise<AnchorTraversal> {
   const [genesisTxid, genesisVoutText] = deployment.genesisAnchor.split(":");
   const genesisVout = Number(genesisVoutText);
-  if (genesisVout !== 0) throw new Error("DAMP v0.1 requires the genesis verifier anchor at output 0.");
+  if (genesisVout !== 0) throw new Error("DAMP requires the genesis verifier anchor at output 0.");
 
   const baseUrl = esploraUrl.replace(/\/$/, "");
   const tipHeight = await getTextNumber(request, `${baseUrl}/blocks/tip/height`);
@@ -146,6 +134,7 @@ export async function traverseLiveAnchor(
   throw new Error(`Verifier anchor traversal exceeded ${MAX_ANCHOR_HOPS} transactions.`);
 }
 
+/** A new txid is a competing winner; a changed block hash can signal a reorg. */
 export function anchorChanged(previous: AnchorPoint, next: AnchorPoint): boolean {
   return previous.txid !== next.txid || previous.vout !== next.vout || previous.blockHash !== next.blockHash;
 }
@@ -179,12 +168,6 @@ function validateAnchorOutput(
 function confirmationsAtTip(status: z.infer<typeof transactionStatusSchema>, tipHeight: number) {
   if (!status.confirmed || status.block_height === undefined) return 0;
   return Math.max(0, tipHeight - status.block_height + 1);
-}
-
-async function getJson(request: EsploraRequest, url: string): Promise<unknown> {
-  const response = await request(url, { cache: "no-store", headers: { Accept: "application/json" } });
-  if (!response.ok) throw new EsploraRequestError(response.status, url);
-  return response.json();
 }
 
 async function getTextNumber(request: EsploraRequest, url: string): Promise<number> {

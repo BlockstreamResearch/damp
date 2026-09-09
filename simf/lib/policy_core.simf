@@ -1,7 +1,6 @@
-// Shared depth-independent primitives for blacklist Merkle policies.
-// SimplicityHL currently exposes `lib` as flat modules, so this compiler-owned
-// module sits beside the public adapters. `policy/README.md` documents the
-// conceptual directory boundary until nested lib modules are supported.
+// Shared sorted-Merkle non-membership checks. Neighbor proofs must be adjacent
+// to the insertion index, bracket the queried outpoint key and match the root.
+// Fixed-depth adapters supply the path length, capacity and empty-tree root.
 use std::lib::asserts::{assert_eq_32, assert_eq_256};
 use std::lib::u32::safe_add_32;
 

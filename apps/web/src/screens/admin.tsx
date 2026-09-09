@@ -27,7 +27,7 @@ import {
   validatePolicySnapshot,
   validateRecipientAddress,
   type DerivedWalletAddress,
-} from "../lib/amp-signer";
+} from "../lib/damp-signer";
 import {
   broadcastTransaction,
   liveAnchorUtxo,
@@ -43,6 +43,7 @@ import {
   networkLabel,
   localDeploymentSchema,
   policySnapshotSchema,
+  protocolId,
   publicManifest,
   requireDeployment,
   requirePublishedDeployment,
@@ -79,7 +80,9 @@ import {
   verifyCanonicalRegistryFile,
 } from "../lib/github";
 import { buildSuccessorPolicy, resolvePolicySnapshot, sha256Hex } from "../lib/policy-registry";
-import { displaySupplyToBaseUnits, reissueSchema, setupFormDefaults, setupSchema, type ReissueForm, type SetupForm } from "../lib/form-schemas";
+import { bytesToHex } from "../lib/bytes";
+import { downloadBlob } from "../lib/download-json";
+import { bootstrapRecoverySchema, displaySupplyToBaseUnits, reissueSchema, setupFormDefaults, setupSchema, type ReissueForm, type SetupForm } from "../lib/form-schemas";
 import {
   createOperationReceipt,
   dismissOperationReceipt,
@@ -618,13 +621,6 @@ async function waitForAnchor(deployment: Deployment, expectedScript: string) {
 }
 
 type BootstrapConfiguration = SetupForm & { policyAsset: string };
-const bootstrapRecoverySchema = setupSchema.extend({
-  protocol: z.literal("simplicity-amp/v0.1"),
-  deploymentSalt: z.string().regex(/^[0-9a-f]{64}$/),
-  policyAsset: z.string().regex(/^[0-9a-f]{64}$/),
-  fundingAddresses: z.array(z.string().min(20)).length(2),
-}).strict();
-
 type BootstrapState = { deployment: Deployment; snapshot: PolicySnapshot };
 type BootstrapRegistryFiles = { manifestPath: string; snapshotPath: string };
 
@@ -758,7 +754,7 @@ export function AdminSetup() {
       if (!activeSigner.connected || !activeSigner.fingerprint || !activeSigner.profileId) throw new Error("Connect the DAMP signer first.");
       const signerRevision = signerSessionRevision();
       const bytes = crypto.getRandomValues(new Uint8Array(32));
-      const deploymentSalt = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      const deploymentSalt = bytesToHex(bytes);
       const policyAsset = nativeFeeAssetId(value.network);
       const addresses = await Promise.all([
         deriveWalletAddress(0, 0, value.network),
@@ -773,7 +769,7 @@ export function AdminSetup() {
       setFundingAddresses(addresses);
       setReviewIssuance(false);
       await putDraft("setup", `recovery:${activeSigner.profileId}`, {
-        protocol: "simplicity-amp/v0.1",
+        protocol: protocolId,
         deploymentSalt,
         ...prepared,
         fundingAddresses: addresses.map(({ confidentialAddress }) => confidentialAddress),
@@ -788,13 +784,8 @@ export function AdminSetup() {
 
   function downloadRecovery() {
     if (!configuration || !salt) return;
-    const content = canonicalRegistryContent({ schema: "simplicity-amp-recovery-v1", protocol: "simplicity-amp/v0.1", deploymentSalt: salt, ...configuration });
-    const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `damp-${configuration.ticker.toLowerCase()}-recovery.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    const content = canonicalRegistryContent({ schema: "simplicity-damp-recovery-v1", protocol: protocolId, deploymentSalt: salt, ...configuration });
+    downloadBlob(content, `damp-${configuration.ticker.toLowerCase()}-recovery.json`);
   }
 
   async function bootstrap() {
@@ -811,7 +802,6 @@ export function AdminSetup() {
         throw new Error(`Asset issuance needs two distinct confirmed L-BTC outputs; found ${policyUtxos.length} confirmed and ${pending} pending.`);
       }
       const result = await bootstrapDeployment({
-        confidentialAudit: Boolean(configuration.confidentialAudit),
         network: configuration.network,
         policyAsset: configuration.policyAsset,
         deploymentSalt: salt,
@@ -1035,7 +1025,6 @@ export function AdminSetup() {
               <label>Network<select aria-invalid={Boolean(form.formState.errors.network)} aria-describedby={form.formState.errors.network ? "setup-network-error" : undefined} {...form.register("network")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select>{form.formState.errors.network && <small id="setup-network-error" className="field-error">{form.formState.errors.network.message}</small>}</label>
               <fieldset>
                 <legend>Supply model</legend>
-                <label className="radio-card"><input type="checkbox" {...form.register("confidentialAudit")} /><span><strong>Confidential native audit (generation 2)</strong><small>Autonomous confidential transfers and issuer recovery. Existing deployments keep their original protocol.</small></span></label>
                 <label className="radio-card"><input type="radio" value="fixed" {...form.register("supplyMode")} /><span><strong>Fixed</strong><small>Destroy the regulated-asset reissuance token.</small></span></label>
                 <label className="radio-card"><input type="radio" value="issuer-managed" {...form.register("supplyMode")} /><span><strong>Issuer managed</strong><small>The signer wallet retains the confidential reissuance token.</small></span></label>
               </fieldset>

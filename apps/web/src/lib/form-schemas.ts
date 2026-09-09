@@ -1,6 +1,5 @@
 import { z } from "zod";
-
-export const maximumAssetBaseUnits = (1n << 64n) - 1n;
+import { maximumAssetBaseUnits, protocolId } from "./domain";
 
 export function displaySupplyToBaseUnits(displaySupply: string, precision: number) {
   if (!/^[1-9][0-9]*$/.test(displaySupply)) throw new Error("Enter a positive whole-number display supply");
@@ -13,17 +12,15 @@ export function displaySupplyToBaseUnits(displaySupply: string, precision: numbe
 }
 
 export const setupSchema = z.object({
-  confidentialAudit: z.boolean().optional(),
   name: z.string().trim().min(1, "Enter an asset name").max(80),
   ticker: z.string().trim().min(1, "Enter an asset ticker").max(12),
   precision: z.number().int("Precision must be a whole number").min(0).max(8),
   supply: z.string().regex(/^[1-9][0-9]*$/, "Enter a positive whole-number display supply"),
   supplyMode: z.enum(["fixed", "issuer-managed"]),
   network: z.enum(["liquid-testnet", "elements-regtest"]),
-}).superRefine((value, context) => {
+}).strict().superRefine((value, context) => {
   try {
-    const amount=displaySupplyToBaseUnits(value.supply, value.precision);
-    if(value.confidentialAudit && amount>9223372036854775807n)throw new Error("Generation 2 supports at most 9223372036854775807 base units per amount");
+    displaySupplyToBaseUnits(value.supply, value.precision);
   } catch (error) {
     context.addIssue({
       code: "custom",
@@ -32,6 +29,13 @@ export const setupSchema = z.object({
     });
   }
 });
+
+export const bootstrapRecoverySchema = setupSchema.extend({
+  protocol: z.literal(protocolId),
+  deploymentSalt: z.string().regex(/^[0-9a-f]{64}$/),
+  policyAsset: z.string().regex(/^[0-9a-f]{64}$/),
+  fundingAddresses: z.array(z.string().min(20)).length(2),
+}).strict();
 
 export const reissueSchema = z.object({
   amount: z.string().regex(/^[1-9][0-9]*$/, "Enter a positive whole number of base units"),

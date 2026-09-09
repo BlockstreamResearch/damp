@@ -14,8 +14,8 @@ import {
   type DerivedWalletAddress,
   type InspectedUtxo,
   type SignerNetwork,
-  type SpendableUtxo,
-} from "./amp-signer";
+  type Utxo,
+} from "./damp-signer";
 import {
   HASH,
   SCRIPT,
@@ -27,6 +27,8 @@ import {
   putWalletSyncRecord,
 } from "./store";
 import { walletDiscoverySource, type WalletDiscoverySource } from "./wallet-source";
+import { bytesToHex, hexToBytes, sha256Hex } from "./bytes";
+import { esploraOutspendSchema, getEsploraJson } from "./esplora-client";
 
 export const walletSyncVersion = 3 as const;
 export const defaultWalletGapLimit = 10;
@@ -180,10 +182,7 @@ const scripthashStatsSchema = z.object({
   mempool_stats: z.object({ tx_count: z.number().int().nonnegative() }).passthrough(),
 }).passthrough();
 
-const outspendSchema = z.object({
-  spent: z.boolean(),
-  txid: z.string().regex(HASH).optional(),
-}).passthrough();
+const outspendSchema = esploraOutspendSchema.passthrough();
 
 const waterfallsTxSeenSchema = z.object({
   txid: z.string().regex(HASH),
@@ -225,7 +224,7 @@ export type WalletDiscoveryDependencies = {
   fetchTransaction: (source: WalletDiscoverySource, txid: string, request: typeof fetch, budget: WalletDiscoveryWorkBudget) => Promise<string>;
   fetchOutspend: (source: WalletDiscoverySource, txid: string, vout: number, request: typeof fetch, budget: WalletDiscoveryWorkBudget) => Promise<OutspendResult>;
   fetchTipHeight: (source: WalletDiscoverySource, request: typeof fetch, budget: WalletDiscoveryWorkBudget) => Promise<number>;
-  inspect: (utxos: SpendableUtxo[]) => Promise<InspectedUtxo[]>;
+  inspect: (utxos: Utxo[]) => Promise<InspectedUtxo[]>;
   now: () => string;
 };
 
@@ -531,7 +530,7 @@ export async function discoverWalletSnapshot(input: {
     txid,
     await dependencies.fetchTransaction(input.source, txid, request, budget),
   ] as const, budget));
-  const inspectable = [...listed.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, { address, utxo }]): SpendableUtxo => ({
+  const inspectable = [...listed.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, { address, utxo }]): Utxo => ({
     txid: utxo.txid,
     vout: utxo.vout,
     transaction: transactions.get(utxo.txid)!,
@@ -695,11 +694,11 @@ export function selectSpendableUtxos(
   snapshot: WalletSyncSnapshot,
   assetId: string,
   source?: WalletSyncUtxo["source"],
-): SpendableUtxo[] {
+): Utxo[] {
   return snapshot.utxos
     .filter((utxo) => utxo.status === "confirmed" && utxo.assetId === assetId && (!source || utxo.source === source))
     .sort(compareUtxos)
-    .map((utxo): SpendableUtxo => ({
+    .map((utxo): Utxo => ({
       txid: utxo.txid,
       vout: utxo.vout,
       transaction: utxo.transaction,
@@ -739,7 +738,6 @@ export type IssuanceFundingPlan = {
   splitCandidate?: Pick<WalletSyncUtxo, "txid" | "vout" | "amount">;
 };
 
-export const SPLIT_FUNDING_FEE = 500n;
 export const SPLIT_FUNDING_MINIMUM = 5_000n;
 
 /**
@@ -830,9 +828,9 @@ function requireSignerIdentity(
 
 async function scriptHash(scriptPubkey: string) {
   if (!SCRIPT.test(scriptPubkey)) throw new Error("Invalid wallet scriptPubKey hex.");
-  const bytes = Uint8Array.from(scriptPubkey.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16));
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return [...digest].reverse().map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  // Esplora scripthash endpoints use reversed digest byte order.
+  const hash = await sha256Hex(hexToBytes(scriptPubkey));
+  return bytesToHex(hexToBytes(hash).reverse());
 }
 
 async function scanAddressWithSource(
@@ -1401,9 +1399,11 @@ async function fetchTipHeightFromSource(source: WalletDiscoverySource, request: 
 }
 
 async function getJson(request: typeof fetch, url: string, budget: WalletDiscoveryWorkBudget) {
-  const response = await budget.fetch(request, url, { cache: "no-store", headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`Esplora request failed (${response.status}) for ${url}.`);
-  return readJsonResponse(response, "Esplora", budget);
+  return getEsploraJson(
+    (input, init) => budget.fetch(request, input, init),
+    url,
+    (response) => readJsonResponse(response, "Esplora", budget),
+  );
 }
 
 async function readJsonResponse(response: Response, provider = "Esplora", budget?: WalletDiscoveryWorkBudget) {
@@ -1512,8 +1512,4 @@ function compareAddresses(left: WalletSyncAddress, right: WalletSyncAddress) {
 
 function compareUtxos(left: Pick<WalletSyncUtxo, "txid" | "vout">, right: Pick<WalletSyncUtxo, "txid" | "vout">) {
   return left.txid.localeCompare(right.txid) || left.vout - right.vout;
-}
-
-export function validOutpoint(value: string) {
-  return OUTPOINT.test(value);
 }

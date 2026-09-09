@@ -1,4 +1,6 @@
 import { deploymentManifestSchema, HASH, type DeploymentManifest } from "./domain";
+import { sha256Hex } from "./bytes";
+import { downloadBlob } from "./download-json";
 
 const configuredRegistryRepository = (import.meta.env.VITE_GITHUB_REGISTRY_REPO as string | undefined) ?? "BlockstreamResearch/damp";
 const configuredRegistryRef = registryRef((import.meta.env.VITE_GITHUB_REGISTRY_REF as string | undefined) ?? "main");
@@ -120,9 +122,10 @@ export function deploymentRegistryPath(deploymentId: string) {
 
 export async function registryPathForVerifierScript(deploymentId: string, scriptPubkey: string) {
   if (!/^(?:[0-9a-f]{2})+$/.test(scriptPubkey)) throw new Error("Verifier script must be lowercase hex.");
-  const bytes = Uint8Array.from(scriptPubkey.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const scriptHash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return registryPathForVerifierScriptHash(deploymentId, await sha256Hex(scriptPubkey));
+}
+
+export function registryPathForVerifierScriptHash(deploymentId: string, scriptHash: string) {
   return `policies/${deploymentId}/${scriptHash}.json`;
 }
 
@@ -149,7 +152,7 @@ export async function fetchCanonicalRegistryFile(path: string, request: typeof f
   return boundedResponseText(raw, MAX_MANIFEST_RESPONSE_BYTES, "Canonical registry file");
 }
 
-/** Enumerate and strictly validate the manifests on the configured registry's default branch. */
+/** Validate manifests from the configured ref or a custom registry's default branch. */
 export async function fetchCanonicalDeploymentCatalog(request: typeof fetch = fetch, sourceRepository = configuredRegistryRepository): Promise<CanonicalDeployment[]> {
   if (localRegistryBaseUrl && sourceRepository === configuredRegistryRepository) {
     const response = await request(new URL("deployments/index.json", localRegistryBaseUrl), {
@@ -267,12 +270,7 @@ export async function customGitHubManifestSource(value: string, request: typeof 
 export function downloadCanonicalRegistryFile(path: string, content: unknown) {
   const filename = path.split("/").at(-1);
   if (!filename) throw new Error("Invalid registry path.");
-  const url = URL.createObjectURL(new Blob([canonicalRegistryContent(content)], { type: "application/json" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(canonicalRegistryContent(content), filename);
   return { filename, path };
 }
 

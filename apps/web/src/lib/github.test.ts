@@ -1,3 +1,4 @@
+import { manifestFixture } from "../test/fixtures";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,11 +14,10 @@ import {
 import type { DeploymentManifest } from "./domain";
 
 const path = deploymentRegistryPath("ab".repeat(32));
-const manifest = { schema: "amp-deployment-manifest-v1", sequence: 0 };
+const manifest = { schema: "damp-deployment-manifest-v1", sequence: 0 };
 const catalogDeploymentId = "cd".repeat(32);
 const catalogManifest: DeploymentManifest = {
-  schema: "simplicity-amp-registry-v1",
-  protocol: "simplicity-amp/v0.1",
+  ...manifestFixture(),
   network: "liquid-testnet",
   policyAsset: "01".repeat(32),
   regulatedAsset: "02".repeat(32),
@@ -80,7 +80,7 @@ describe("manual registry publication", () => {
     expect(localDevelopmentRegistryUrl(true, "http://127.0.0.1:5173/registry")).toBe("http://127.0.0.1:5173/registry/");
     expect(localDevelopmentRegistryUrl(true, "https://localhost:4443/registry/")).toBe("https://localhost:4443/registry/");
     expect(localDevelopmentRegistryUrl(false, "http://127.0.0.1:5173/registry")).toBeUndefined();
-    expect(() => localDevelopmentRegistryUrl(true, "https://registry.example/amp")).toThrow("loopback host");
+    expect(() => localDevelopmentRegistryUrl(true, "https://registry.example/damp")).toThrow("loopback host");
     expect(() => localDevelopmentRegistryUrl(true, "file:///tmp/registry")).toThrow("loopback host");
   });
 

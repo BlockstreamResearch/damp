@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { DeploymentManifest } from "./domain";
+import { hexToBytes, sha256Hex } from "./bytes";
 
 export type SignerProfileNetwork = DeploymentManifest["network"];
 
@@ -31,7 +32,7 @@ export type SignerProfileMetadata = z.infer<typeof profileMetadataSchema>;
 export type StoredDebugSignerProfile = z.infer<typeof debugSignerProfileSchema>;
 export type SignerProfile = SignerProfileMetadata & { active: boolean };
 
-export const debugSignerProfilesStorageKey = "simplicity-amp:debug-signer-profiles:v1";
+export const debugSignerProfilesStorageKey = "simplicity-damp:debug-signer-profiles:v1";
 
 export function normalizeDebugSignerMnemonic(mnemonic: string) {
   return mnemonic.trim().replace(/\s+/g, " ");
@@ -50,13 +51,12 @@ export async function deriveSignerPublicIdentity(scriptPubkey: string, network: 
   if (!/^(?:[0-9a-f]{2})+$/.test(scriptPubkey)) {
     throw new Error("Signer returned an invalid public wallet script.");
   }
-  const domain = new TextEncoder().encode(`simplicity-amp/signer-profile/v1\0${network}\0`);
-  const script = Uint8Array.from(scriptPubkey.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16));
+  const domain = new TextEncoder().encode(`simplicity-damp/signer-profile/v1\0${network}\0`);
+  const script = hexToBytes(scriptPubkey);
   const material = new Uint8Array(domain.byteLength + script.byteLength);
   material.set(domain);
   material.set(script, domain.byteLength);
-  const digest = await crypto.subtle.digest("SHA-256", material);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return sha256Hex(material);
 }
 
 export function defaultSignerProfileLabel(fingerprint: string) {

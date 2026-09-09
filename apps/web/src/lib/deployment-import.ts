@@ -1,9 +1,9 @@
 import {
-  deriveAmpKey,
+  deriveDampKey,
   signerSessionRevision,
   signerSnapshot,
   validateDeployment,
-} from "./amp-signer";
+} from "./damp-signer";
 import {
   deploymentManifestSchema,
   localDeploymentSchema,
@@ -135,7 +135,7 @@ export async function attachIssuerControl(deployment: Deployment) {
     throw new Error(`Reconnect the DAMP signer for ${selected.network}.`);
   }
   const revision = signerSessionRevision();
-  const issuer = await deriveAmpKey(selected.deploymentSalt, "issuer", selected.network);
+  const issuer = await deriveDampKey(selected.deploymentSalt, "issuer", selected.network);
   const current = signerSnapshot();
   if (signerSessionRevision() !== revision || current.profileId !== signer.profileId) {
     throw new Error("The active signer profile changed while attaching issuer control. Try again.");

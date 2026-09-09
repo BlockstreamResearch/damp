@@ -1,10 +1,10 @@
-import type { SignerNetwork } from "./amp-signer";
+import type { SignerNetwork } from "./damp-signer";
 
 export const liquidTestnetPolicyAsset =
   "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49";
 
 const assetIdPattern = /^[0-9a-f]{64}$/;
-const regtestPolicyAssetKey = "simplicity-amp:regtest-policy-asset:v1";
+const regtestPolicyAssetKey = "simplicity-damp:regtest-policy-asset:v1";
 
 export function nativeFeeAssetId(network: SignerNetwork) {
   if (network === "liquid-testnet") return liquidTestnetPolicyAsset;

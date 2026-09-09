@@ -1,3 +1,4 @@
+import { manifestFixture } from "../test/fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -9,8 +10,8 @@ const mocks = vi.hoisted(() => ({
   setActiveDeploymentId: vi.fn(),
 }));
 
-vi.mock("./amp-signer", () => ({
-  deriveAmpKey: mocks.deriveIssuer,
+vi.mock("./damp-signer", () => ({
+  deriveDampKey: mocks.deriveIssuer,
   signerSnapshot: () => mocks.signer,
   signerSessionRevision: () => 1,
   validateDeployment: vi.fn(),
@@ -48,8 +49,7 @@ import type { Deployment, DeploymentManifest, PolicySnapshot } from "./domain";
 
 const deploymentId = "09".repeat(32);
 const manifest: DeploymentManifest = {
-  schema: "simplicity-amp-registry-v1",
-  protocol: "simplicity-amp/v0.1",
+  ...manifestFixture(),
   network: "elements-regtest",
   policyAsset: "01".repeat(32),
   regulatedAsset: "02".repeat(32),
@@ -69,8 +69,8 @@ const manifest: DeploymentManifest = {
 };
 
 const snapshot = {
-  schema: "simplicity-amp-registry-v1",
-  protocol: "simplicity-amp/v0.1",
+  schema: "simplicity-damp-registry-v1",
+  protocol: "simplicity-damp/v0.2",
   deploymentId,
   sequence: 0,
   parentPolicyRoot: null,

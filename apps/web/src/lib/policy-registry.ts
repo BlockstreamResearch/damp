@@ -1,7 +1,9 @@
-import { buildBlacklist, preparePolicy, validatePolicySnapshot } from "./amp-signer";
+import { buildBlacklist, preparePolicy, validatePolicySnapshot } from "./damp-signer";
 import type { BlacklistEntry, Deployment, PolicySnapshot } from "./domain";
 import { policySnapshotSchema, publicManifest, smallestTreeDepth } from "./domain";
-import { canonicalRegistryContent, fetchCanonicalRegistryFile, registryPathForVerifierScript } from "./github";
+import { canonicalRegistryContent, fetchCanonicalRegistryFile, registryPathForVerifierScript, registryPathForVerifierScriptHash } from "./github";
+import { sha256Hex } from "./bytes";
+export { sha256Hex } from "./bytes";
 import { putPolicySnapshot } from "./store";
 
 export async function resolvePolicySnapshot(
@@ -22,6 +24,40 @@ export async function resolvePolicySnapshot(
   await validateBundledPolicy(deployment, snapshot);
   await putPolicySnapshot(snapshot, verifierScriptHash, deployment.registryRepository);
   return snapshot;
+}
+
+export async function resolvePolicyHistory(
+  deployment: Deployment,
+  latest: PolicySnapshot,
+): Promise<PolicySnapshot[]> {
+  const history = [policySnapshotSchema.parse(latest)];
+  let child = history[0];
+  for (let transitions = 0; child.sequence > 0; transitions += 1) {
+    if (transitions >= 512) throw new Error("Policy history exceeds the 512-transition audit limit.");
+    const parentScriptHash = child.parentVerifierScriptHash;
+    const parentPolicyRoot = child.parentPolicyRoot;
+    if (!parentScriptHash || !parentPolicyRoot) throw new Error("Policy history is missing a predecessor commitment.");
+    const path = registryPathForVerifierScriptHash(deployment.deploymentId, parentScriptHash);
+    const raw = await fetchCanonicalRegistryFile(path, fetch, deployment.registryRepository);
+    if (!raw) throw new Error(`Policy predecessor for sequence ${child.sequence} is not published in the canonical registry.`);
+    const parent = policySnapshotSchema.parse(JSON.parse(raw));
+    if (raw !== canonicalRegistryContent(parent)) throw new Error("A policy predecessor is not encoded as canonical registry bytes.");
+    if (parent.deploymentId !== deployment.deploymentId || parent.protocol !== deployment.protocol) {
+      throw new Error("Policy predecessor belongs to another deployment or protocol.");
+    }
+    if (parent.sequence + 1 !== child.sequence || parent.policyRoot !== parentPolicyRoot) {
+      throw new Error("Policy predecessor does not match the successor commitment.");
+    }
+    if (await sha256Hex(parent.verifierScriptPubkey) !== parentScriptHash) {
+      throw new Error("Policy predecessor script does not match its committed registry path.");
+    }
+    await validatePolicySnapshot(parent);
+    await validateBundledPolicy(deployment, parent);
+    await putPolicySnapshot(parent, parentScriptHash, deployment.registryRepository);
+    history.unshift(parent);
+    child = parent;
+  }
+  return history;
 }
 
 async function validateBundledPolicy(deployment: Deployment, snapshot: PolicySnapshot) {
@@ -54,7 +90,7 @@ export async function buildSuccessorPolicy(
     entryCount: built.entryCount,
   });
   const snapshot = policySnapshotSchema.parse({
-    schema: "simplicity-amp-registry-v1",
+    schema: "simplicity-damp-registry-v1",
     protocol: deployment.protocol,
     deploymentId: deployment.deploymentId,
     sequence: current ? current.sequence + 1 : 0,
@@ -70,11 +106,4 @@ export async function buildSuccessorPolicy(
   });
   await validatePolicySnapshot(snapshot);
   return snapshot;
-}
-
-export async function sha256Hex(hex: string) {
-  if (!/^(?:[0-9a-f]{2})+$/.test(hex)) throw new Error("Expected lowercase hexadecimal bytes.");
-  const bytes = Uint8Array.from(hex.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

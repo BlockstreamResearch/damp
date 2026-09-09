@@ -1,15 +1,15 @@
 {
-  "schema": "simplicity-amp-registry-v1",
-  "protocol": "simplicity-amp/v0.1",
-  "deploymentId": "1111111111111111111111111111111111111111111111111111111111111111",
+  "schema": "simplicity-damp-registry-v1",
+  "protocol": "simplicity-damp/v0.2",
+  "deploymentId": "bb176f81323fbbfadfa6a64280f9ce7fd4a4d339f63ebf0119ed0a9783109761",
   "sequence": 0,
   "parentPolicyRoot": null,
   "parentVerifierScriptHash": null,
   "treeDepth": 4,
   "setRoot": "36c614d3fcffdbdfe4baf66656fb17c8373bd42eb8aca046ec5b50ae8395f0cf",
   "entryCount": 0,
-  "policyRoot": "bdc5cfae858db2cfbae9d9b0be82b14bf6e89ac40c106d52f3741644d94c0bae",
-  "verifierProgramHash": "1313131313131313131313131313131313131313131313131313131313131313",
-  "verifierScriptPubkey": "51201414141414141414141414141414141414141414141414141414141414141414",
+  "policyRoot": "57c67efc5b0b29e0a19c6129e472b269952b9bfa9390d709f0c4ab3989991fa1",
+  "verifierProgramHash": "31d8abe4a802c463ef7fc7ef33bb36674a4a25aad7e0d73eb4f60834b228b992",
+  "verifierScriptPubkey": "51205ffd3be295d450cd89b32bfd92e9c51d022462d0ac5503a01c30c7a5756a1433",
   "entries": []
 }

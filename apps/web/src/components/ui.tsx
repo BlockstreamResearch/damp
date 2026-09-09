@@ -31,7 +31,7 @@ import {
   subscribeSigner,
   switchSignerProfile,
   type SignerProfile,
-} from "../lib/amp-signer";
+} from "../lib/damp-signer";
 import {
   useActiveDeployment,
   useActiveDeploymentId,
@@ -39,7 +39,7 @@ import {
   useSelectDeployment,
 } from "../lib/deployments";
 import { activeNavigationTarget, appRoleForPath, contextualDocumentTitle, roleSwitchNavigation } from "../lib/navigation";
-import { formatUnits, networkLabel, shortHash } from "../lib/domain";
+import { formatUnits, networkLabel, shortHash, userFacingError } from "../lib/domain";
 import { useBaseWalletSync, useDeploymentWalletSync, walletSyncPresentation } from "../lib/wallet-query";
 import { assetBalances, nextFundingAddress } from "../lib/wallet-sync";
 import { liquidTestnetFaucetUrl, nativeFeeAssetId } from "../lib/faucet";
@@ -164,7 +164,7 @@ function DeploymentSelector({ role }: { role: "holder" | "issuer" }) {
   const selectDeployment = useSelectDeployment();
   const navigate = useNavigate();
   if (deployments.isPending) return <DeploymentStatus state="loading">Checking asset registry…</DeploymentStatus>;
-  if (deployments.error) return <DeploymentStatus state="error" title={deployments.error instanceof Error ? deployments.error.message : String(deployments.error)}>Registry unavailable</DeploymentStatus>;
+  if (deployments.error) return <DeploymentStatus state="error" title={userFacingError(deployments.error)}>Registry unavailable</DeploymentStatus>;
   if (!deployments.data?.length) return <DeploymentStatus>Choose a trusted source</DeploymentStatus>;
   return <DeploymentControl deployments={deployments.data} activeId={activeId.data ?? undefined} busy={selectDeployment.isPending} onImport={role === "holder" ? () => void navigate({ to: "/wallet/import" }) : undefined} onSelect={(deploymentId) => selectDeployment.mutate(deploymentId)} />;
 }
@@ -214,7 +214,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
       try {
         feeAsset = nativeFeeAssetId(signer.network);
       } catch (error) {
-        feeAssetError = error instanceof Error ? error.message : String(error);
+        feeAssetError = userFacingError(error);
       }
     }
     const lbtc = balances.find((balance) => balance.assetId === feeAsset);
@@ -396,7 +396,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
         ? { tone: "success", message: "A new test-only debug signer was generated and saved unencrypted in this browser." }
         : { tone: "success", message: "Test-only debug signer saved and connected. Wallet discovery has started." });
     } catch (error) {
-      setConnectionNotice({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+      setConnectionNotice({ tone: "error", message: userFacingError(error) });
     } finally {
       setConnecting(false);
     }
@@ -413,7 +413,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
       setProfileAction(undefined);
       setConnectionNotice({ tone: "progress", message: `${profile.label} is active. Fresh wallet synchronization is required before signing.` });
     } catch (error) {
-      setConnectionNotice({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+      setConnectionNotice({ tone: "error", message: userFacingError(error) });
     } finally {
       setConnecting(false);
     }
@@ -456,7 +456,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
       setProfileAction(undefined);
       setConnectionNotice({ tone: "success", message: "Signer profile label updated." });
     } catch (error) {
-      setConnectionNotice({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+      setConnectionNotice({ tone: "error", message: userFacingError(error) });
     }
   }
 
@@ -468,7 +468,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
       setProfileAction(undefined);
       setConnectionNotice({ tone: "neutral", message: "Debug signer profile and its unencrypted recovery phrase were removed from this browser. Wallet and deployment records remain isolated under the old profile ID." });
     } catch (error) {
-      setConnectionNotice({ tone: "error", message: error instanceof Error ? error.message : String(error) });
+      setConnectionNotice({ tone: "error", message: userFacingError(error) });
     }
   }
 
@@ -481,7 +481,7 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-controls="amp-signer-wallet-popover"
+        aria-controls="damp-signer-wallet-popover"
         aria-label={signer.connected ? `DAMP Signer SDK wallet ${signer.fingerprint}` : "Open DAMP Signer SDK connection"}
         onClick={() => setOpen((value) => !value)}
       >
@@ -656,7 +656,7 @@ export function WalletPopoverContent({
   if (!model) {
     const selectedSavedProfile = profiles.find((profile) => profile.id === selectedProfileId);
     return (
-      <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="DAMP signer wallet" tabIndex={-1} ref={panelRef}>
+      <div id="damp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="DAMP signer wallet" tabIndex={-1} ref={panelRef}>
         <span className="overline">DAMP Signer SDK</span>
         <h2>No signer connected</h2>
         <p>Choose a saved disposable debug profile, or add another test-only recovery phrase.</p>
@@ -697,7 +697,7 @@ export function WalletPopoverContent({
   }
 
   return (
-    <div id="amp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="DAMP signer wallet" tabIndex={-1} ref={panelRef}>
+    <div id="damp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="DAMP signer wallet" tabIndex={-1} ref={panelRef}>
       <div className="wallet-popover-heading">
         <div>
           <span className="overline">DAMP Signer SDK</span>
@@ -825,16 +825,4 @@ export function VerifiedLabel({ children }: { children: ReactNode }) {
       <BadgeCheck size={14} /> {children}
     </span>
   );
-}
-
-export function ExternalAction({ children }: { children: ReactNode }) {
-  return (
-    <span className="external-action">
-      {children} <ExternalLink size={14} />
-    </span>
-  );
-}
-
-export function FileIcon() {
-  return <FileKey size={18} />;
 }

@@ -1,12 +1,12 @@
+import { manifestFixture } from "../test/fixtures";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fixtures = vi.hoisted(() => {
+const fixtures = (() => {
   const hash = (byte: string) => byte.repeat(64);
   const profileId = `liquid-testnet:${hash("a")}`;
   const deployment = {
-    schema: "simplicity-amp-registry-v1",
-    protocol: "simplicity-amp/v0.1",
+    ...manifestFixture(),
     network: "liquid-testnet",
     policyAsset: hash("1"),
     regulatedAsset: hash("2"),
@@ -15,7 +15,7 @@ const fixtures = vi.hoisted(() => {
     issuerPublicKey: hash("4"),
     deploymentSalt: hash("5"),
     genesisAnchor: `${hash("6")}:0`,
-    asset: { name: "Regulated asset", ticker: "AMP", precision: 2 },
+    asset: { name: "Regulated asset", ticker: "DAMP", precision: 2 },
     issuedSupply: "100000",
     supplyMode: "fixed",
     reissuanceToken: null,
@@ -29,8 +29,8 @@ const fixtures = vi.hoisted(() => {
     publication: "published",
   } as const;
   const policy = {
-    schema: "simplicity-amp-registry-v1",
-    protocol: "simplicity-amp/v0.1",
+    schema: "simplicity-damp-registry-v1",
+    protocol: "simplicity-damp/v0.2",
     deploymentId: deployment.deploymentId,
     sequence: 0,
     parentPolicyRoot: null,
@@ -59,12 +59,12 @@ const fixtures = vi.hoisted(() => {
     addresses: [],
     utxos: [
       { source: "holder", txid: hash("c"), vout: 0, transaction: "00", status: "confirmed", assetId: deployment.regulatedAsset, amount: "200", scriptPubkey: "51", assetConfidential: false, valueConfidential: false, holderKey: { derivationIndex: 0, ownerPublicKey: hash("0") } },
-      { source: "wallet", txid: hash("d"), vout: 1, transaction: "00", status: "confirmed", assetId: deployment.policyAsset, amount: "5000", scriptPubkey: "51", assetConfidential: false, valueConfidential: false, walletKey: { branch: 0, index: 0 } },
+      { source: "wallet", txid: hash("d"), vout: 1, transaction: "00", status: "confirmed", assetId: deployment.policyAsset, amount: "10000", scriptPubkey: "51", assetConfidential: false, valueConfidential: false, walletKey: { branch: 0, index: 0 } },
     ],
   } as const;
   const signer = { connected: true, fingerprint: "aabbccdd", network: "liquid-testnet", profileId, walletReady: true, profiles: [] } as const;
   return { deployment, hash, ownAddress, policy, profileId, recipient, signer, snapshot };
-});
+})();
 
 const calls = vi.hoisted(() => ({
   walletRefetch: vi.fn(),
@@ -96,7 +96,7 @@ vi.mock("../components/ui", () => ({
 
 vi.mock("../components/operation-receipt", () => ({ OperationReceiptPanel: () => null }));
 
-vi.mock("../lib/amp-signer", () => ({
+vi.mock("../lib/damp-signer", () => ({
   signerSnapshot: () => fixtures.signer,
   subscribeSigner: () => () => undefined,
   signTransfer: vi.fn(),
@@ -148,7 +148,8 @@ describe("WalletSend progressive validation", () => {
     render(<WalletSend />);
     expect(screen.getByRole("heading", { name: "Build a regulated transfer" })).toBeInTheDocument();
     expect(screen.getByText(/does not prove which deployment manifest/i)).toBeInTheDocument();
-    expect(screen.queryByText(/confidential values|confidential transfer/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Explicit asset IDs, confidential transfer amounts")).toBeInTheDocument();
+    expect(screen.queryByText(/explicit transfer amounts/i)).not.toBeInTheDocument();
     const recipient = screen.getByLabelText(/Recipient confidential address/);
     const amount = screen.getByLabelText(/^Amount/);
     const review = screen.getByRole("button", { name: /Review transfer/ });
@@ -173,7 +174,7 @@ describe("WalletSend progressive validation", () => {
     fireEvent.change(amount, { target: { value: "3.00" } });
     await waitFor(() => expect(screen.queryByText(/greater than zero/i)).not.toBeInTheDocument());
     fireEvent.blur(amount);
-    expect(await screen.findByText(/confirmed spendable balance of 2 AMP/i)).toBeInTheDocument();
+    expect(await screen.findByText(/confirmed spendable balance of 2 DAMP/i)).toBeInTheDocument();
     expect(amount).toHaveAttribute("aria-invalid", "true");
 
     fireEvent.change(amount, { target: { value: "1.00" } });
@@ -186,7 +187,7 @@ describe("WalletSend progressive validation", () => {
     expect(await screen.findByRole("heading", { name: "Confirm transfer details" })).toBeInTheDocument();
     expect(calls.walletRefetch).toHaveBeenCalledOnce();
     expect(calls.liveRefetch).toHaveBeenCalledOnce();
-    expect(screen.getByText("1.00 AMP · 100 base units")).toBeInTheDocument();
+    expect(screen.getByText("1.00 DAMP · 100 base units")).toBeInTheDocument();
     expect(screen.getByText(/tlq1qqqqqqqq…qqqqqqqq/)).toBeInTheDocument();
     expect(screen.getByText(/aabbccdd/)).toBeInTheDocument();
     expect(screen.getByText("Liquid testnet")).toBeInTheDocument();

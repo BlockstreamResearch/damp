@@ -1,22 +1,13 @@
 import type { Deployment } from "./domain";
-import type { SpendableUtxo } from "./amp-signer";
+import type { Utxo } from "./damp-signer";
 import { esploraUrlForDeployment } from "./esplora";
-
-async function fetchText(url: string, init?: RequestInit) {
-  const response = await fetch(url, { cache: "no-store", ...init });
-  const text = await response.text();
-  if (!response.ok) {
-    const detail = text.trim().replace(/[^\x20-\x7e]/g, " ").slice(0, 512);
-    throw new Error(`Esplora request failed (${response.status}) for ${url}${detail ? `: ${detail}` : "."}`);
-  }
-  return text;
-}
+import { getEsploraText as fetchText } from "./esplora-client";
 
 export async function liveAnchorUtxo(
   deployment: Deployment,
   txid: string,
   vout = 0,
-): Promise<SpendableUtxo> {
+): Promise<Utxo> {
   const esplora = esploraUrlForDeployment(deployment).replace(/\/$/, "");
   return {
     txid,

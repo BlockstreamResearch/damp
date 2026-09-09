@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://blockstreamresearch.github.io/simplicity-amp/schemas/deployment.schema.json",
-  "title": "DAMP v0.1 deployment manifest",
+  "$id": "https://blockstreamresearch.github.io/simplicity-damp/schemas/deployment.schema.json",
+  "title": "DAMP deployment manifest",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -22,17 +22,15 @@
     "reissuanceEntropy",
     "userProgramHash",
     "governanceProgramHash",
-    "contractBundleHash"
+    "contractBundleHash",
+    "audit"
   ],
   "properties": {
     "schema": {
-      "const": "simplicity-amp-registry-v1"
+      "const": "simplicity-damp-registry-v1"
     },
     "protocol": {
-      "enum": [
-        "simplicity-amp/v0.1",
-        "simplicity-amp/v0.2"
-      ]
+      "const": "simplicity-damp/v0.2"
     },
     "network": {
       "enum": [
@@ -182,27 +180,6 @@
           "reissuanceEntropy": {
             "$ref": "#/$defs/hash"
           }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "protocol": {
-            "const": "simplicity-amp/v0.2"
-          }
-        }
-      },
-      "then": {
-        "required": [
-          "audit"
-        ]
-      },
-      "else": {
-        "not": {
-          "required": [
-            "audit"
-          ]
         }
       }
     }

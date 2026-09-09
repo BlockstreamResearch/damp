@@ -8,8 +8,8 @@ const mocks = vi.hoisted(() => ({
   putDraft: vi.fn(),
 }));
 
-vi.mock("../lib/amp-signer", async () => {
-  const actual = await vi.importActual<typeof import("../lib/amp-signer")>("../lib/amp-signer");
+vi.mock("../lib/damp-signer", async () => {
+  const actual = await vi.importActual<typeof import("../lib/damp-signer")>("../lib/damp-signer");
   return {
     ...actual,
     signerSessionRevision: () => 7,
@@ -137,7 +137,7 @@ describe("FundingSplitDialog", () => {
 
   it("restores a broadcast receipt and reaches done from confirmed outputs", async () => {
     mocks.getDraft.mockResolvedValueOnce({
-      schema: "simplicity-amp-funding-split-receipt-v1",
+      schema: "simplicity-damp-funding-split-receipt-v1",
       signerProfileId: profileId,
       network: "elements-regtest",
       sourceOutpoint: `${sourceTxid}:0`,

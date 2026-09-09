@@ -1,13 +1,13 @@
 import { z } from "zod";
 
 import type { Deployment } from "./domain";
-import { clearLatestReceipt, getLatestReceipt, putTxidKeyedReceipt } from "./store";
+import { receiptStorage } from "./receipt-storage";
 
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
 const outpoint = z.string().regex(/^[0-9a-f]{64}:[0-9]+$/);
 
 export const policyUpdateReceiptSchema = z.object({
-  schema: z.literal("simplicity-amp-policy-update-receipt-v1"),
+  schema: z.literal("simplicity-damp-policy-update-receipt-v1"),
   deploymentId: hash,
   signerProfileId: z.string().min(1),
   txid: hash,
@@ -29,7 +29,7 @@ export function createPolicyUpdateReceipt(input: {
   now?: () => string;
 }): PolicyUpdateReceipt {
   return policyUpdateReceiptSchema.parse({
-    schema: "simplicity-amp-policy-update-receipt-v1",
+    schema: "simplicity-damp-policy-update-receipt-v1",
     deploymentId: input.deployment.deploymentId,
     signerProfileId: input.signerProfileId,
     txid: input.txid,
@@ -41,21 +41,19 @@ export function createPolicyUpdateReceipt(input: {
 }
 
 export async function savePolicyUpdateReceipt(receipt: PolicyUpdateReceipt) {
-  const validated = policyUpdateReceiptSchema.parse(receipt);
-  await putTxidKeyedReceipt(validated.deploymentId, "policy-update", validated.signerProfileId, validated);
-  return validated;
+  return storage.save(receipt);
 }
 
 export async function loadPolicyUpdateReceipt(deploymentId: string, signerProfileId: string) {
-  const stored = await getLatestReceipt<unknown>(deploymentId, "policy-update", signerProfileId);
-  return stored === undefined ? undefined : policyUpdateReceiptSchema.parse(stored);
+  return storage.load(deploymentId, "policy-update", signerProfileId);
 }
 
 export async function dismissPolicyUpdateReceipt(deploymentId: string, signerProfileId: string) {
-  await clearLatestReceipt(deploymentId, "policy-update", signerProfileId);
+  await storage.dismiss(deploymentId, "policy-update", signerProfileId);
 }
+
+const storage = receiptStorage(policyUpdateReceiptSchema, () => "policy-update");
 
 export function policyUpdateReceiptQueryKey(deploymentId?: string, signerProfileId?: string) {
   return ["policy-update-receipt", deploymentId ?? "none", signerProfileId ?? "locked"] as const;
 }
-

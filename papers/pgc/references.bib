@@ -46,45 +46,39 @@
   note = {Accessed 2026-09-04}
 }
 
-@techreport{rfc9380,
-  author = {Armando Faz-Hernandez and Sam Scott and Nick Sullivan and Riad S. Wahby and Christopher A. Wood},
-  title = {Hashing to Elliptic Curves},
-  institution = {Internet Engineering Task Force},
-  number = {RFC 9380},
-  year = {2023},
-  doi = {10.17487/RFC9380}
-}
-
-@unpublished{audit-sketch,
-  author = {{Author not identified in supplied copy}},
-  title = {Confidential (but not for everybody) tokens},
-  month = {August},
+@misc{damp-paper,
+  author = {Kyrylo Riabov and Artem Chystiakov},
+  title = {Decentralized Asset Management Protocol on Liquid using Simplicity},
   year = {2026},
-  note = {Unpublished two-page protocol sketch supplied as
-    \texttt{contexts/external-docs/Liquid\_auditable\_tokens (1).pdf}; the
-    author line displays ``...''; reviewed 2026-09-04}
+  howpublished = {Repository manuscript},
+  note = {Repository artifact \texttt{papers/damp/main.tex}; reviewed 2026-09-08}
 }
 
-@misc{pgc-spec,
+@misc{pgc-implementation,
   author = {{DAMP project contributors}},
-  title = {{PGC} Equal-Value Confidential-Payment Policy Proof of Concept},
+  title = {Native Confidential Audit Implementation},
   year = {2026},
-  howpublished = {Versioned implementation specification},
-  note = {Repository artifact \texttt{docs/pgc-confidential-policy-poc.md}; reviewed 2026-09-04}
+  howpublished = {Rust and Simplicity source code},
+  note = {Repository modules \texttt{damp-core::native\_audit},
+    \texttt{damp-signer::audit::recovery}, and
+    \texttt{simf/lib/audit.simf}}
 }
 
-@misc{pgc-evidence,
+@misc{pgc-lifecycle,
   author = {{DAMP project contributors}},
-  title = {{PGC} Host-Side Liquid Testnet Validation},
+  title = {Native Confidential Audit Lifecycle Tests},
   year = {2026},
-  howpublished = {Reproducible validation report dated 2026-09-02},
-  note = {Repository artifact \texttt{docs/pgc-liquid-testnet-validation-2026-09-02.md}; reviewed 2026-09-04}
+  howpublished = {Executable contract regression tests},
+  note = {Repository tests in \texttt{crates/damp-signer/tests/lifecycle.rs}
+    and \texttt{covenant/audit\_records.rs}}
 }
 
-@misc{pgc-vectors,
-  author = {{DAMP project contributors}},
-  title = {{PGC} Equal-Value Version 1 Interoperability Vectors},
+@misc{pgc-liquid-evidence,
+  author = {{Blockstream}},
+  title = {Liquid Testnet Transaction Explorer},
   year = {2026},
-  howpublished = {Machine-readable test vectors and independent cross-check},
-  note = {Repository artifacts \texttt{fixtures/pgc-equal-vectors.json} and \texttt{scripts/pgc-equal-crosscheck.py}; reviewed 2026-09-04}
+  howpublished = {Public chain records},
+  url = {https://blockstream.info/liquidtestnet/tx/8354098eb9f42034109d910cbada0d66d2fc5166a91bcd5c7122d4be6e9859f9},
+  note = {Confirmation records for all six transactions in Table 1
+    checked through the explorer API on 2026-09-09}
 }

@@ -1,11 +1,12 @@
+import { manifestFixture } from "../test/fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const signerValidation = vi.hoisted(() => ({
   address: vi.fn(() => Promise.resolve("ff".repeat(32))),
 }));
 
-vi.mock("./amp-signer", async (importOriginal) => ({
-  ...await importOriginal<typeof import("./amp-signer")>(),
+vi.mock("./damp-signer", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./damp-signer")>(),
   validateRecipientAddress: signerValidation.address,
 }));
 
@@ -23,8 +24,7 @@ const hash = (byte: string) => byte.repeat(64);
 const profileId = `liquid-testnet:${hash("a")}`;
 
 const deployment: Deployment = {
-  schema: registrySchema,
-  protocol: protocolId,
+  ...manifestFixture(),
   network: "liquid-testnet",
   policyAsset: hash("1"),
   regulatedAsset: hash("2"),
@@ -33,7 +33,7 @@ const deployment: Deployment = {
   issuerPublicKey: hash("4"),
   deploymentSalt: hash("5"),
   genesisAnchor: `${hash("6")}:0`,
-  asset: { name: "Regulated asset", ticker: "AMP", precision: 2 },
+  asset: { name: "Regulated asset", ticker: "DAMP", precision: 2 },
   issuedSupply: "100000",
   supplyMode: "fixed",
   reissuanceToken: null,
@@ -174,7 +174,7 @@ describe("recipient address validation", () => {
 describe("transfer funding selection", () => {
   it("selects confirmed regulated and fee outputs deterministically and reports exact change", () => {
     const result = selectTransferFunding({
-      snapshot: snapshot([holderUtxo("2", 1, 200n), holderUtxo("1", 0, 150n), holderUtxo("3", 2, 500n, "unconfirmed"), feeUtxo("4", 0, 5_000n)]),
+      snapshot: snapshot([holderUtxo("2", 1, 200n), holderUtxo("1", 0, 150n), holderUtxo("3", 2, 500n, "unconfirmed"), feeUtxo("4", 0, 10_000n)]),
       deployment,
       policy,
       profileId,
@@ -189,24 +189,24 @@ describe("transfer funding selection", () => {
   });
 
   it("prices the conservative finalized shape at LWK's default fee rate", () => {
-    expect(estimateTransferFee(1)).toBe(500n);
-    expect(estimateTransferFee(6)).toBe(500n);
-    expect(estimateTransferFee(10)).toBe(570n);
+    expect(estimateTransferFee(1)).toBe(5_250n);
+    expect(estimateTransferFee(6)).toBe(5_350n);
+    expect(estimateTransferFee(10)).toBe(5_430n);
   });
 
   it("distinguishes pending balance, the ten-input limit, blacklist exclusion, and fee recovery", () => {
-    expect(() => selectTransferFunding({ snapshot: snapshot([holderUtxo("1", 0, 100n), holderUtxo("2", 0, 100n, "unconfirmed"), feeUtxo("3", 0, 5_000n)]), deployment, policy, profileId, amount: 150n }))
+    expect(() => selectTransferFunding({ snapshot: snapshot([holderUtxo("1", 0, 100n), holderUtxo("2", 0, 100n, "unconfirmed"), feeUtxo("3", 0, 10_000n)]), deployment, policy, profileId, amount: 150n }))
       .toThrow(/wait for pending funds/i);
 
     const many = Array.from({ length: 11 }, (_, index) => holderUtxo((index + 1).toString(16), index, 1n));
-    expect(() => selectTransferFunding({ snapshot: snapshot([...many, feeUtxo("f", 0, 5_000n)]), deployment, policy, profileId, amount: 11n }))
+    expect(() => selectTransferFunding({ snapshot: snapshot([...many, feeUtxo("f", 0, 10_000n)]), deployment, policy, profileId, amount: 11n }))
       .toThrow(/more than 10 regulated inputs/i);
 
     const blocked = holderUtxo("1", 0, 100n);
-    expect(() => selectTransferFunding({ snapshot: snapshot([blocked, feeUtxo("2", 0, 5_000n)]), deployment, policy: { ...policy, entryCount: 1, entries: [{ txid: blocked.txid, vout: blocked.vout }] }, profileId, amount: 1n }))
-      .toThrow(/confirmed spendable balance of 0 AMP\. 1 AMP is blacklisted and cannot be spent/i);
+    expect(() => selectTransferFunding({ snapshot: snapshot([blocked, feeUtxo("2", 0, 10_000n)]), deployment, policy: { ...policy, entryCount: 1, entries: [{ txid: blocked.txid, vout: blocked.vout }] }, profileId, amount: 1n }))
+      .toThrow(/confirmed spendable balance of 0 DAMP\. 1 DAMP is blacklisted and cannot be spent/i);
 
-    expect(() => selectTransferFunding({ snapshot: snapshot([holderUtxo("1", 0, 100n), feeUtxo("2", 0, 3_000n, "unconfirmed")]), deployment, policy, profileId, amount: 50n }))
+    expect(() => selectTransferFunding({ snapshot: snapshot([holderUtxo("1", 0, 100n), feeUtxo("2", 0, 10_000n, "unconfirmed")]), deployment, policy, profileId, amount: 50n }))
       .toThrow(/compatible L-BTC output is pending confirmation/i);
   });
 

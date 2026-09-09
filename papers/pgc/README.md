@@ -1,17 +1,13 @@
-# PGC equal-value paper
+# Native confidential audit proofs
 
-This manuscript describes the project's current host-side PGC equal-value proof
-of concept and deliberately separates it from the DAMP covenant paper in
-[`../damp/`](../damp/).
+This manuscript describes DAMP's proof linking a native Elements value
+commitment to an issuer audit handle. It covers Simplicity verification,
+authenticated recovery data and bounded signed reporting.
 
-Primary project evidence:
+Implementation:
 
-- [`../../docs/pgc-confidential-policy-poc.md`](../../docs/pgc-confidential-policy-poc.md)
-- [`../../docs/pgc-liquid-testnet-validation-2026-09-02.md`](../../docs/pgc-liquid-testnet-validation-2026-09-02.md)
-- [`../../fixtures/pgc-equal-vectors.json`](../../fixtures/pgc-equal-vectors.json)
+- [Native contract checks](../../simf/lib/audit.simf).
+- [Native proof and recovery code](../../crates/damp-core/src/native_audit/mod.rs).
+- [Signer execution tests](../../crates/damp-signer/tests/lifecycle.rs).
 
-Run `make` here to create `out/main.pdf`. The manuscript's verified boundary is
-host-side proof generation and verification bound to confirmed Liquid testnet
-evidence. It does not claim equality with a native Liquid commitment, on-chain
-enforcement, a complete payment system, production readiness, or a third-party
-audit.
+Run `make -C papers/pgc` from the repository root to create `out/main.pdf` here.

@@ -1,22 +1,48 @@
 # Public registry
 
-This directory contains public, reviewable DAMP data. Deployment manifests are
-immutable. Policy snapshots are immutable and stored at
-`policies/{deploymentId}/{sha256(verifierScriptPubkey)}.json`.
-Holder wallets share a standard confidential address. Its public blinding key
-encodes the holder identity needed to validate the selected covenant script.
+The registry publishes immutable deployment manifests and policy snapshots.
+It contains no signing keys, audit secrets or private output openings.
 
-Notes attached to blacklist entries are non-consensus metadata. Consensus uses
-only the exact `txid:vout` pair. Wallets resolve the current snapshot directly
-from the live verifier script, require byte-identical data from the configured
-default branch, and revalidate it before signing. The governance spend occurs
-only after publication and becomes active only after confirmation.
+## Record paths
 
-The manifest never contains a mutable verifier-program hash. Each snapshot
-records its own depth-specific verifier leaf and resulting two-leaf anchor
-script. Every new deployment starts at depth 4; issuer governance may move to
-depth 5 or 6 as the blacklist grows.
+- `deployments/{deploymentId}.json` identifies a deployment. Its manifest binds
+  the network, asset IDs, issuer and audit keys, initial supply, genesis anchor
+  and fixed contract commitments. Managed supply also records the reissuance
+  token and entropy; fixed supply sets both fields to `null`.
+- `policies/{deploymentId}/{scriptHash}.json` describes one verifier anchor.
+  `scriptHash` is SHA-256 of the verifier script bytes, not its hex text. The
+  snapshot contains the blacklist, Merkle commitment, tree depth, executable
+  verifier commitment and complete anchor script.
 
-GitHub credentials are never stored by the application. Publishing uses a
-repository-scoped GitHub App device flow, with the token retained in memory for
-the current page session only.
+Initial policy sequence zero has no parent. Every successor identifies both
+its parent policy root and parent verifier script hash. Wallets follow those
+links to authenticate policy history. A published snapshot alone does not
+change policy; the confirmed governance transaction selects the active anchor.
+
+Blacklist entries identify exact `txid:vout` pairs. Notes are public metadata
+and do not affect the Merkle commitment. Trees at depths 4, 5 and 6 hold at most
+16, 32 and 64 entries. Bootstrap starts at depth 4.
+
+## Publish and verify
+
+Download the JSON from the issuer UI and publish those exact bytes at the
+displayed registry path. The configured registry uses `VITE_GITHUB_REGISTRY_REF`,
+which defaults to `main`; a custom registry uses its GitHub default branch.
+The app checks the published bytes before allowing the governance spend. It
+does not log in to GitHub or store GitHub credentials.
+
+Canonical files use the app's field order, two-space JSON indentation and one
+trailing newline. Do not reserialize or hand-edit a downloaded record. The
+deployment ID is computed from the manifest's bound fields, not from the JSON
+file's text.
+
+The [deployment schema](schemas/deployment.schema.json) and
+[snapshot schema](schemas/policy-snapshot.schema.json) check JSON structure.
+Rust validation also checks curve points, numeric bounds, paired fields and
+recomputed policy commitments. Before signing, the signer checks the current
+contract bundle, compiled programs and selected transaction inputs. Schema
+validation alone does not establish on-chain policy or ownership.
+
+Run `pnpm schema:test` from the repository root to check both synthetic regtest
+fixtures. Run `cargo test --workspace` for registry, source-bundle and signer
+checks. The fixtures are deterministic test inputs, not network receipts.

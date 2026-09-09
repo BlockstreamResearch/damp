@@ -7,10 +7,10 @@ import {
   signerSnapshot,
   splitFunding,
   type DerivedWalletAddress,
-  type SpendableUtxo,
+  type Utxo,
   type SplitFundingResult,
   type SignerNetwork,
-} from "../lib/amp-signer";
+} from "../lib/damp-signer";
 import { broadcastTransaction } from "../lib/chain-wallet";
 import { formatUnits, userFacingError } from "../lib/domain";
 import { isRetryableEsploraRequest } from "../lib/esplora";
@@ -21,7 +21,7 @@ import { getDraft, putDraft } from "../lib/store";
 const SPLIT_FEE = 500n;
 
 const receiptSchema = z.object({
-  schema: z.literal("simplicity-amp-funding-split-receipt-v1"),
+  schema: z.literal("simplicity-damp-funding-split-receipt-v1"),
   signerProfileId: z.string(),
   network: z.enum(["liquid-testnet", "elements-regtest"]),
   sourceOutpoint: z.string().regex(/^[0-9a-f]{64}:[0-9]+$/),
@@ -61,12 +61,12 @@ export function FundingSplitDialog({
   network: SignerNetwork;
   policyAsset: string;
   profileId: string;
-  candidate?: SpendableUtxo;
+  candidate?: Utxo;
   candidateAmount?: string;
   destinations: DerivedWalletAddress[];
   snapshotStatuses: Array<{ txid: string; vout: number; status: "confirmed" | "unconfirmed" | "spent" | "orphaned" }>;
   disabled?: boolean;
-  refreshFunding: () => Promise<{ confirmed: SpendableUtxo[]; pending: number }>;
+  refreshFunding: () => Promise<{ confirmed: Utxo[]; pending: number }>;
   onNotice?: (message: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -226,7 +226,7 @@ export function FundingSplitDialog({
       const result = await splitFunding({ network, policyAsset, sourceUtxos: refreshed.confirmed, fee: "500" });
       validateResult(result);
       const prepared = receiptSchema.parse({
-        schema: "simplicity-amp-funding-split-receipt-v1",
+        schema: "simplicity-damp-funding-split-receipt-v1",
         signerProfileId: profileId,
         network,
         sourceOutpoint: `${candidate.txid}:${candidate.vout}`,

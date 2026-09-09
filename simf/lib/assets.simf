@@ -1,6 +1,5 @@
-// Explicit-asset/value helpers. AMP keeps every asset ID visible. Regulated
-// values are additionally required to be explicit by the holder and verifier
-// covenants so the verifier can enforce their exact transaction-wide total.
+// Asset IDs stay explicit. Governance requires explicit anchor values; holder
+// and transfer checks also accept native commitments for the regulated asset.
 
 pub fn explicit_input_asset(index: u32) -> u256 {
     let asset: Asset1 = unwrap(jet::input_asset(index));
@@ -20,5 +19,42 @@ pub fn explicit_output_asset_and_amount(index: u32) -> (u256, u64) {
     (
         unwrap_right::<(u1, u256)>(asset),
         unwrap_right::<(u1, u256)>(amount),
+    )
+}
+
+// Audit transfers keep asset IDs explicit. A native value commitment contributes
+// one record; an explicit value keeps its amount. The proof checks reject
+// unaudited regulated outputs, while verifier-anchor values remain explicit.
+pub fn input_asset_and_amount(index: u32) -> (u256, u64) {
+    let (asset, amount): (Asset1, Amount1) = unwrap(jet::input_amount(index));
+    (
+        unwrap_right::<(u1, u256)>(asset),
+        match amount {
+            Left(_c: Point) => {
+                assert!(jet::eq_256(
+                    unwrap_right::<Point>(asset),
+                    param::REGULATED_ASSET_ID
+                ));
+                1
+            },
+            Right(v: u64) => v,
+        },
+    )
+}
+
+pub fn output_asset_and_amount(index: u32) -> (u256, u64) {
+    let (asset, amount): (Asset1, Amount1) = unwrap(jet::output_amount(index));
+    (
+        unwrap_right::<(u1, u256)>(asset),
+        match amount {
+            Left(_c: Point) => {
+                assert!(jet::eq_256(
+                    unwrap_right::<Point>(asset),
+                    param::REGULATED_ASSET_ID
+                ));
+                1
+            },
+            Right(v: u64) => v,
+        },
     )
 }

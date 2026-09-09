@@ -1,6 +1,7 @@
+import { manifestFixture } from "../test/fixtures";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("./amp-signer", () => ({ validateDeployment: vi.fn() }));
+vi.mock("./damp-signer", () => ({ validateDeployment: vi.fn() }));
 vi.mock("./store", () => ({
   getActiveDeploymentId: vi.fn(),
   listDeployments: vi.fn(),
@@ -11,8 +12,7 @@ import { localDeploymentSchema, publicManifest, requirePublishedDeployment } fro
 import { deploymentImportState, loadDeploymentState } from "./deployments";
 
 const base = {
-  schema: "simplicity-amp-registry-v1",
-  protocol: "simplicity-amp/v0.1",
+  ...manifestFixture(),
   network: "elements-regtest",
   policyAsset: "01".repeat(32),
   regulatedAsset: "02".repeat(32),

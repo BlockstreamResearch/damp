@@ -4,9 +4,14 @@
 /.pnpm-store/
 /apps/web/dist/
 *.tsbuildinfo
-/apps/web/src/generated/amp-wasm/
-/apps/web/src/generated/amp-signer/
+/apps/web/src/generated/damp-signer/
+/crates/damp-signer/artifacts/*.rs
 /deps/
+/.cache/
+/contexts/
+/CONTEXT.md
+.DS_Store
 .idea/
 __pycache__/
 *.pyc
+services

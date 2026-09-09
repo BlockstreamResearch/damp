@@ -1,11 +1,8 @@
 [build]
 src_dir = "./simf"
 simf_files = ["*.simf"]
-out_dir = "./src/artifacts"
+out_dir = "./crates/damp-signer/artifacts"
 
 [dependencies]
+# Simplex 0.0.9 cannot pin Git revisions. CI/README fetch 53b06722830fd85150389976e6b28ea26cc037f7.
 std = { path = "deps/simplicityhl-std" }
-
-[test]
-mnemonic = "exist carry drive collect lend cereal occur much tiger just involve mean"
-bitcoins = 10_000_000

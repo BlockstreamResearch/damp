@@ -15,7 +15,7 @@ const switchProfileMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 const renameProfileMock = vi.hoisted(() => vi.fn());
 const removeProfileMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../lib/amp-signer", async () => {
+vi.mock("../lib/damp-signer", async () => {
   return {
     signerSnapshot: () => state.signer,
     subscribeSigner: () => () => undefined,
@@ -89,7 +89,7 @@ const connectedModel: WalletPopoverModel = {
   syncState: "synced",
   lbtcConfirmed: "0.00012",
   lbtcPending: "0.00002",
-  otherAssets: [{ assetId: "22".repeat(32), label: "AMP", amount: "42", pending: "3" }],
+  otherAssets: [{ assetId: "22".repeat(32), label: "DAMP", amount: "42", pending: "3" }],
   utxoCount: 3,
   utxos: [{ outpoint: `${"33".repeat(32)}:1`, status: "confirmed", asset: "L-BTC", assetId: "11".repeat(32), amount: "0.00012 L-BTC" }],
   receiveAddress: {
@@ -182,7 +182,7 @@ describe("DAMP signer wallet popover content", () => {
 
     expect(screen.getByText("0.00012")).toBeInTheDocument();
     expect(screen.getByText("+ 0.00002 pending")).toBeInTheDocument();
-    expect(screen.getByText("AMP")).toBeInTheDocument();
+    expect(screen.getByText("DAMP")).toBeInTheDocument();
     expect(screen.getByText("42 + 3 pending")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.getByText(/External #2/)).toBeInTheDocument();
@@ -291,7 +291,7 @@ describe("DAMP signer wallet popover interactions", () => {
       policyAsset: "11".repeat(32),
       regulatedAsset: "22".repeat(32),
       reissuanceToken: null,
-      asset: { ticker: "AMP", precision: 0 },
+      asset: { ticker: "DAMP", precision: 0 },
     };
     render(<WalletStatus role="issuer" />);
     fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
@@ -303,7 +303,7 @@ describe("DAMP signer wallet popover interactions", () => {
   it("requires confirmation before switching profiles during a reviewed operation", async () => {
     state.pendingOperation = true;
     state.signer = { connected: true, fingerprint: profileA.fingerprint, network: profileA.network, profileId: profileA.id, walletReady: true, profiles: [profileA, profileB] };
-    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
+    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "DAMP", precision: 0 } };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
     fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
@@ -317,7 +317,7 @@ describe("DAMP signer wallet popover interactions", () => {
 
   it("requires an explicit confirmation before removing the active profile", () => {
     state.signer = { connected: true, fingerprint: profileA.fingerprint, network: profileA.network, profileId: profileA.id, walletReady: true, profiles: [profileA, profileB] };
-    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
+    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "DAMP", precision: 0 } };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
     fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
@@ -331,7 +331,7 @@ describe("DAMP signer wallet popover interactions", () => {
 
   it("switches a saved profile directly without recovery phrase re-entry", async () => {
     state.signer = { connected: true, fingerprint: profileA.fingerprint, network: profileA.network, profileId: profileA.id, walletReady: true, profiles: [profileA, profileB] };
-    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
+    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "DAMP", precision: 0 } };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
     fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
@@ -345,7 +345,7 @@ describe("DAMP signer wallet popover interactions", () => {
   it("rejects profile switching across the active deployment network", () => {
     const regtestProfile = { ...profileB, id: `elements-regtest:${profileBIdentity}`, network: "elements-regtest" as const };
     state.signer = { connected: true, fingerprint: profileA.fingerprint, network: profileA.network, profileId: profileA.id, walletReady: true, profiles: [profileA, regtestProfile] };
-    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "AMP", precision: 0 } };
+    state.deployment = { network: "liquid-testnet", policyAsset: "11".repeat(32), regulatedAsset: "22".repeat(32), reissuanceToken: null, asset: { ticker: "DAMP", precision: 0 } };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };
     render(<WalletStatus />);
     fireEvent.click(screen.getByRole("button", { name: /DAMP Signer SDK wallet/ }));
@@ -372,7 +372,7 @@ describe("DAMP signer wallet popover interactions", () => {
       policyAsset,
       regulatedAsset: "22".repeat(32),
       reissuanceToken: null,
-      asset: { ticker: "AMP", precision: 0 },
+      asset: { ticker: "DAMP", precision: 0 },
     };
     state.wallet = {
       data: { snapshot: { utxos: [], addresses: [] } },
@@ -398,7 +398,7 @@ describe("DAMP signer wallet popover interactions", () => {
       policyAsset,
       regulatedAsset: "22".repeat(32),
       reissuanceToken: null,
-      asset: { ticker: "AMP", precision: 0 },
+      asset: { ticker: "DAMP", precision: 0 },
     };
     state.fundingAddress = { index: 2, confidentialAddress: `tlq1${"q".repeat(40)}` };
     state.wallet = { data: { snapshot: { utxos: [], addresses: [] } }, error: null, isPending: false, isFetching: false, refetch };

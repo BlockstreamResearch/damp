@@ -1,12 +1,12 @@
 import { z } from "zod";
 
 import type { Deployment } from "./domain";
-import { clearLatestReceipt, getLatestReceipt, putTxidKeyedReceipt } from "./store";
+import { receiptStorage } from "./receipt-storage";
 
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
 
 export const operationReceiptSchema = z.object({
-  schema: z.literal("simplicity-amp-operation-receipt-v3"),
+  schema: z.literal("simplicity-damp-operation-receipt-v3"),
   deploymentId: hash,
   signerProfileId: z.string().regex(/^(liquid-testnet|elements-regtest):[0-9a-f]{64}$/),
   operation: z.enum(["transfer", "reissuance"]),
@@ -39,7 +39,7 @@ export function createOperationReceipt(input: {
   now?: () => string;
 }) {
   return operationReceiptSchema.parse({
-    schema: "simplicity-amp-operation-receipt-v3",
+    schema: "simplicity-damp-operation-receipt-v3",
     deploymentId: input.deployment.deploymentId,
     signerProfileId: input.signerProfileId,
     operation: input.operation,
@@ -51,19 +51,18 @@ export function createOperationReceipt(input: {
 }
 
 export async function saveOperationReceipt(receipt: OperationReceipt) {
-  const validated = operationReceiptSchema.parse(receipt);
-  await putTxidKeyedReceipt(validated.deploymentId, validated.operation, validated.signerProfileId, validated);
-  return validated;
+  return storage.save(receipt);
 }
 
 export async function loadOperationReceipt(deploymentId: string, operation: ReceiptOperation, signerProfileId: string) {
-  const stored = await getLatestReceipt<unknown>(deploymentId, operation, signerProfileId);
-  return stored === undefined ? undefined : operationReceiptSchema.parse(stored);
+  return storage.load(deploymentId, operation, signerProfileId);
 }
 
 export async function dismissOperationReceipt(deploymentId: string, operation: ReceiptOperation, signerProfileId: string) {
-  await clearLatestReceipt(deploymentId, operation, signerProfileId);
+  await storage.dismiss(deploymentId, operation, signerProfileId);
 }
+
+const storage = receiptStorage(operationReceiptSchema, (receipt) => receipt.operation);
 
 export function operationReceiptQueryKey(deploymentId: string | undefined, operation: ReceiptOperation, signerProfileId?: string) {
   return ["operation-receipt", deploymentId ?? "none", operation, signerProfileId ?? "locked"] as const;

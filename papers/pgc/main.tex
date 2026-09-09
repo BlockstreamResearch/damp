@@ -1,5 +1,4 @@
 \documentclass[11pt]{article}
-
 \usepackage{fontspec}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath}
@@ -7,447 +6,345 @@
 \usepackage{authblk}
 \usetikzlibrary{arrows.meta,positioning}
 \usepackage[hidelinks]{hyperref}
-
 \newcommand{\sha}{\operatorname{SHA256}}
-\newcommand{\concat}{\mathbin\|}
-\newcommand{\enc}{\operatorname{Enc}}
 \setlength{\emergencystretch}{2em}
 
-\title{Host-Bound PGC Equal-Value Proofs for \\
-Liquid Confidential-Policy Research}
+\title{Native Confidential Audit Proofs for \\
+Liquid Regulated Assets}
 \author{Kyrylo Riabov, Artem Chystiakov}
 \affil{Blockstream}
 \date{\today}
 
 \begin{document}
-
     \maketitle
 
     \begin{abstract}
-        We implement a host-bound equal-value proof based on PGC, the Pretty Good Decentralized Confidential Payment System with Auditability.
-        The construction proves that two twisted-ElGamal handles and one ciphertext body use the same value and encryption randomness.
-        We instantiate the proof on secp256k1 and bind its transcript to a network and a host-supplied transaction identifier.
-        Four interoperability vectors agree in Rust and an independent Python implementation.
-        One vector is bound to a confirmed Liquid testnet transaction and selected output.
-        This evidence remains offchain.
-        The Liquid transaction does not carry or verify the proof, and the proof commitment is not tied to the native Liquid value commitment.
-        We describe the implemented result, its security boundary, and the additional relation required for a confidential-payment protocol.
+        We describe and implement a confidential audit construction for regulated assets on Liquid.
+        Each regulated output carries a proof that its native Elements value commitment and an issuer audit handle use the same blinding factor.
+        The proof is verified inside the Simplicity spending path and is bound to the transaction, output index, asset, deployment, audit epoch, output script, and recovery bytes.
+        Holders transfer assets without issuer participation.
+        The issuer can recover amounts from authenticated auxiliary data or attempt a bounded discrete-log fallback, while other observers retain Liquid's ordinary amount confidentiality.
+        A bounded indexer verifies covenant witnesses, follows policy transitions, reconciles supply, and signs the exact report bytes with an issuer-certified report key.
+        A fresh Liquid testnet run exercised bootstrap, two autonomous transfers, reissuance, exact-output blocking, blocked-spend rejection, audited distribution, and a complete $1100=1100$ report.
+        This is implementation and testnet evidence, not a proof of production security or provider-independent chain completeness.
     \end{abstract}
-
 
     \section{Introduction}
 
-    Confidential transactions hide transferred values while preserving the ledger's balance rules \cite{liquid}.
-    Some applications additionally require an auditor to inspect a payment.
-    PGC provides an account-based confidential payment system with auditability, built from twisted ElGamal encryption and modular zero-knowledge proofs \cite{pgc}.
+    Liquid confidential transactions hide asset amounts from public observers while preserving ledger balance rules \cite{liquid}.
+    Regulated assets may also need selective audit and a policy that restricts future spending.
+    DAMP introduced a Simplicity covenant model for such assets \cite{damp-paper}.
+    Its first generation exposed regulated amounts and enforced policy.
+    The second generation adds confidential holder transfers with covenant-checked issuer recovery.
 
-    This paper studies one component of that system.
-    The component is PGC's two-recipient equal-value proof.
-    A sender and a recipient receive different encryption handles, while the proof establishes that both handles refer to the same randomness and the same ciphertext body.
-    We implement that relation on secp256k1 and add a fixed encoding, a network identifier, and a host-supplied transaction binding \cite{pgc-spec}.
+    The construction here is the second protocol generation.
+    It borrows the audit goal and twisted-ElGamal intuition of PGC \cite{pgc}, but it does not transplant PGC's account system or its equal-value proof.
+    Instead, it proves a relation over the value commitment already present in an Elements output.
+    This matters because the covenant checks the actual ledger commitment rather than a host-supplied surrogate.
 
-    The result belongs to the DAMP research program, but it is not the regulated-asset covenant described by the DAMP paper.
-    No DAMP contract, signer flow, registry, or wallet currently invokes this proof.
-    The implementation is an isolated host-side proof of concept.
-    It does not implement the complete PGC payment system.
+    The design has three boundaries.
+    First, the onchain Simplicity program verifies a native commitment proof for every regulated output and enforces the active exact-output policy \cite{simplicity}.
+    Second, issuer-only recovery runs offchain and does not participate in holder authorization.
+    Third, a report service indexes a bounded chain interval and signs its result.
+    The signature authenticates the report and its issuer authorization, but does not turn one chain provider into independent evidence.
 
-    The distinction between cryptographic consistency and ledger enforcement is central.
-    The proof verifies the values and points presented in its statement.
-    A host is responsible for obtaining ledger data, choosing the transaction output, and assigning application meaning to the supplied commitment.
-    No Simplicity program currently reconstructs that statement or verifies the proof onchain.
+    We state the construction, its covenant and recovery rules, the reporting model, and measured evidence.
+    Claims are separated into algebraic arguments, implementation invariants, observed testnet results, and explicit limits.
 
-    Section~\ref{sec:model} defines the proof model and separates it from a prospective auditor construction.
-    Section~\ref{sec:construction} gives the Sigma protocol, encoding, and transcript.
-    Section~\ref{sec:evidence} records the reproducible evidence.
-    Section~\ref{sec:security} states the resulting guarantees and limits.
-
-
-    \section{Protocol Model}
+    \section{Protocol model}
     \label{sec:model}
 
-    \subsection{Roles and values}
+    \subsection{Roles and ledger objects}
 
-    Let $\mathcal{G}$ be the prime-order secp256k1 group of order $q$, written additively.
-    Let $G$ be its standard generator.
-    Let $H$ be a second group element for which no participant is assumed to know $\log_G(H)$.
-
-    The \emph{sender} controls a public key $pk_s$.
-    The \emph{recipient} controls a public key $pk_r$.
-    The \emph{prover} knows a scalar value $v$ and nonzero encryption randomness $r$.
-    The \emph{host} supplies the network, transaction binding, keys, ciphertext, and commitment to the proof implementation.
-    These roles may be combined by an application, but the proof does not authenticate their real-world identities.
-
-    For a public key $pk$, twisted ElGamal encrypts $v$ with randomness $r$ as
+    Let $\mathcal{G}$ be the prime-order secp256k1 group of order $q$.
+    Let $G$ be its standard generator and $H_A$ the Elements generator for regulated asset $A$.
+    A confidential output value commitment is
     \begin{equation}
-        \enc(pk,v;r)=(X,Y)=(rpk,\;rG+vH).
-        \label{eq:encryption}
+        C=vH_A+bG,
+        \label{eq:commitment}
     \end{equation}
-    A holder of $sk$, where $pk=skG$, obtains
+    for amount $v$ and nonzero value blinder $b$.
+
+    The issuer selects an audit secret $s$ and publishes
     \begin{equation}
-        Y-sk^{-1}X=vH.
-        \label{eq:decryption}
+        P=sG.
+        \label{eq:audit-key}
     \end{equation}
-    Recovering $v$ then requires a discrete-log search over the permitted value range.
-    PGC uses this encryption within a larger protocol that supplies range, balance, regulation, and account-state proofs \cite{pgc}.
-    None of those surrounding proofs is part of the implementation described here.
-
-    \subsection{Equal-value statement}
-
-    The public statement is
+    A sender adds the audit handle
     \begin{equation}
-        x=(n,t,pk_s,pk_r,X_s,X_r,Y,C,H),
-        \label{eq:statement}
+        D=bP.
+        \label{eq:handle}
     \end{equation}
-    where $n$ is a ledger-network code and $t$ is a nonzero 32-byte host binding.
-    The witness is $(r,v)\in\mathbf{Z}_q^2$ with $r\ne0$.
-    An accepting witness satisfies
-    \begin{align}
-        X_s &= rpk_s, & X_r &= rpk_r, \label{eq:handles}\\
-        Y   &= rG+vH, & C   &= Y.       \label{eq:body}
-    \end{align}
-    Thus $X_s$ and $X_r$ use the same randomness, and $Y$ contains the value shared by the two recipients.
-    The final equality is checked over canonical point encodings.
-
-    The field $C$ does not introduce a second blinding factor.
-    It is another name for the ciphertext body $Y$.
-    In particular, it is not Liquid's native confidential value commitment.
-    Proving equality with that commitment requires a different relation.
-
-    \subsection{Setup}
-
-    The proof profile fixes four setup choices:
-
-    \begin{enumerate}
-        \item Use secp256k1 and compressed SEC1 point encodings.
-        \item Derive $H$ reproducibly from the tag \texttt{simplicity-amp/pgc-equal/h-generator/v1}.
-        \item Encode the network, transaction binding, keys, handles, body, commitment, and $H$ in one versioned statement.
-        \item Hash the complete statement and proof commitments under a separate versioned Fiat--Shamir tag.
-    \end{enumerate}
-
-    The derivation of $H$ uses tagged SHA-256 with try-and-increment and accepts the first valid compressed point distinct from $G$.
-    Its output is
+    The issuer computes
     \begin{equation}
-        H=\mathtt{02ed9d2dd95c5e81889c23622b7c77b92a47c7d371f544d83645eee7e7b630d0bd}.
+        C-s^{-1}D=vH_A.
+        \label{eq:recovery-target}
     \end{equation}
-    This is a transparent project parameter, not a standardized hash-to-curve suite such as RFC~9380 \cite{rfc9380}.
+    Recovering $v$ from this point is a discrete-log search over an application range.
 
-    \subsection{Host binding}
+    Holders authorize ordinary transfers with their own keys.
+    The issuer is not a co-signer and need not be online.
+    The issuer key signs both policy changes and reissuance through the covenant's governance branch.
+    A report key signs audit reports only after an issuer key certifies that report key for one deployment.
+    Holder, issuer, audit, and report keys use distinct derivation roles, but the current software derives them from one signer mnemonic.
 
-    For the reproducible ledger profile, the host derives
-    \begin{equation}
-        t=H_{\mathtt{txbind/v1}}(n\concat txid\concat\operatorname{BE}_{32}(i)),
-        \label{eq:tx-binding}
-    \end{equation}
-    where $i$ is the selected output index and $H_{\mathtt{txbind/v1}}$ denotes BIP-340-style tagged SHA-256 using the full tag
-    \texttt{simplicity-amp/pgc-equal/transaction-binding/v1} \cite{bip340}.
-    Network codes distinguish Bitcoin mainnet, testnet, signet, and regtest, Liquid mainnet and testnet, and Elements regtest.
-    The verifier rejects an all-zero binding.
+    \subsection{Deployment and policy state}
 
-    This construction prevents the same proof bytes from being reused under a different encoded network or binding.
-    It does not prove that the host used a real transaction, the correct byte order, a confirmed output, or the intended application state.
-    Those facts remain host obligations.
+    A deployment fixes the network, regulated asset, genesis anchor, issuer key, audit key and epoch, and the compiled protocol profile.
+    The active policy commits to a set of exact transaction outpoints.
+    A listed outpoint cannot take the ordinary holder-transfer path.
+    The policy does not describe a person or an address, and it does not block other outputs controlled by the same wallet.
 
-    Figure~\ref{fig:boundary} shows the division of responsibility.
-    The proof implementation checks the canonical statement and its algebraic relation.
-    Ledger provenance and consensus enforcement remain outside it.
+    Policy succession is an issuer-signed covenant state transition.
+    Each successor names the parent policy root and parent verifier-script hash, increments the sequence, and installs a new verifier script.
+    The covenant also admits issuer reissuance-to-self under the unchanged policy.
+    Other governance-shaped movement is unexpected and causes audit reporting to stop short of completeness.
+
+    Figure~\ref{fig:flow} shows the division of work.
 
     \begin{figure}[ht]
         \centering
         \begin{tikzpicture}[
-            node distance=0.65cm and 1.15cm,
-            box/.style={draw, rounded corners, align=center, font=\small, inner sep=6pt, minimum width=3.1cm},
-            check/.style={draw, rounded corners, align=left, font=\small, inner sep=7pt, fill=black!4},
-            arrow/.style={-{Latex[length=2mm]}, thick}
-        ]
-        \node[box] (ledger) {ledger observation\\network, txid, output};
-        \node[box, below=of ledger] (claim) {application claim\\keys, $C$, witness};
-        \node[check, right=of ledger, yshift=-0.45cm] (host) {host selects data\\and constructs $t$};
-        \node[box, right=of host, yshift=0.45cm] (accept) {proof accepted\\for supplied bytes};
-        \node[box, below=of accept] (outside) {onchain enforcement\\not implemented};
-
-        \draw[arrow] (ledger) -- (host);
-        \draw[arrow] (claim) -- (host);
-        \draw[arrow] (host) -- (accept);
-        \draw[arrow, dashed] (accept) -- (outside);
-        \end{tikzpicture}
-        \caption{The host boundary. Proof acceptance does not authenticate ledger provenance or enforce a transaction.}
-        \label{fig:boundary}
-    \end{figure}
-
-    \subsection{Prospective auditor output}
-
-    A separate two-page design sketch supplied with this work proposes an auditor-oriented output \cite{audit-sketch}.
-    It defines an auditor public key $P_a=[sk_a^{-1}]G$ and an asset generator $H_a=H_{\mathrm{tagA}}+[r]G$.
-    An output commitment has form
-    \begin{equation}
-        C_{out}=[a]H_a+[b]G,
-    \end{equation}
-    together with $C_a=[b]P_a$.
-    Its Sigma protocol proves knowledge of $(a,b)$ satisfying both equations.
-    The auditor computes $C_{out}-[sk_a]C_a=[a]H_a$ and recovers a bounded amount $a$ by discrete log.
-
-    The sketch additionally proposes encrypting $(a,b,H_a,r)$ under a key derived from sender-auditor ECDH.
-    That ciphertext gives the auditor a fast recovery path, while the group relation remains a fallback.
-    This is a useful direction, but it is not the relation in Equation~\ref{eq:statement}.
-    The current code does not implement the auditor key convention, the asset generator, the recovery ciphertext, or its Simplicity verifier.
-
-
-    \section{Equal-Value Construction}
-    \label{sec:construction}
-
-    \subsection{Prover}
-
-    The construction is the additive-notation form of PGC's $\Sigma_{\mathrm{equal}}$ protocol \cite{pgc}.
-    The prover samples nonces $a,b\in\mathbf{Z}_q$ and computes
-    \begin{align}
-        A_s &= apk_s, & A_r &= apk_r, & B &= aG+bH.
-        \label{eq:commitments}
-    \end{align}
-    After receiving a challenge $e\in\mathbf{Z}_q$, it returns
-    \begin{align}
-        z_r &= a+er \pmod q, & z_v &= b+ev \pmod q.
-        \label{eq:responses}
-    \end{align}
-
-    The implementation derives $a$ and $b$ rather than accepting them from its caller.
-    Their tagged derivation includes a role byte, the complete witness, 32 bytes of auxiliary randomness, the complete statement, and a retry counter.
-    This hedges caller randomness and avoids nonce reuse when a statement changes.
-    It does not replace the need for fresh cryptographic randomness in a production caller.
-
-    \subsection{Verifier}
-
-    The verifier first decodes the statement and proof canonically.
-    It requires $C=Y$ and checks
-    \begin{align}
-        z_rpk_s     &= A_s+eX_s, \label{eq:verify-s}\\
-        z_rpk_r     &= A_r+eX_r, \label{eq:verify-r}\\
-        z_rG+z_vH   &= B+eY.     \label{eq:verify-y}
-    \end{align}
-    The first two equations bind the same encryption randomness to both handles.
-    The third binds that randomness and the value to the ciphertext body.
-
-    Figure~\ref{fig:proof} follows one value through the proof.
-    It does not show a native Liquid commitment because the present relation has no equation for one.
-
-    \begin{figure}[ht]
-        \centering
-        \begin{tikzpicture}[
-            node distance=0.75cm and 1.2cm,
-            root/.style={font=\small},
+            node distance=0.8cm and 1.1cm,
             box/.style={draw, rounded corners, align=center, font=\small, inner sep=6pt, text width=0.25\linewidth},
             arrow/.style={-{Latex[length=2mm]}, thick}
         ]
-        \node[root] (witness) {shared witness $(r,v)$};
-        \node[box, below left=of witness] (sender) {sender handle\\$X_s=rpk_s$};
-        \node[box, below=of witness] (body) {ciphertext body\\$Y=C=rG+vH$};
-        \node[box, below right=of witness] (receiver) {recipient handle\\$X_r=rpk_r$};
-        \draw[arrow] (witness) -- (sender);
-        \draw[arrow] (witness) -- (body);
-        \draw[arrow] (witness) -- (receiver);
+        \node[box] (holder) {holder constructs and signs\\confidential transfer};
+        \node[box, right=of holder] (covenant) {Simplicity covenant checks\\policy and native proof};
+        \node[box, right=of covenant] (ledger) {Liquid confirms\\new regulated outputs};
+        \node[box, below=of covenant] (audit) {issuer service recovers\\and reconciles amounts};
+        \draw[arrow] (holder) -- (covenant);
+        \draw[arrow] (covenant) -- (ledger);
+        \draw[arrow] (ledger) |- (audit);
         \end{tikzpicture}
-        \caption{The equal-value relation. One witness opens both handles and the shared ciphertext body.}
-        \label{fig:proof}
+        \caption{Holder authorization, covenant enforcement, and issuer reporting are separate steps.}
+        \label{fig:flow}
     \end{figure}
 
-    \subsection{Fiat--Shamir challenge}
+    \section{Native audit construction}
+    \label{sec:construction}
 
-    The non-interactive proof replaces the verifier's random challenge with
+    \subsection{Statement and proof}
+
+    For each regulated output, the public statement contains
     \begin{equation}
-        e=H_{\mathtt{challenge/v1}}
-        \bigl(\operatorname{encode}(x)\concat A_s\concat A_r\concat B
-        \concat\operatorname{BE}_{32}(j)\bigr)\bmod q,
-        \label{eq:challenge}
+        x=(d,g,e,P,h,i,A,C,S,\sha(R)),
+        \label{eq:statement}
     \end{equation}
-    where $j$ begins at zero and increments only when the reduced challenge is zero.
-    The full tag is \texttt{simplicity-amp/pgc-equal/challenge/v1}.
-    For a tag $d$, the tagged hash is
-    \begin{equation}
-        H_d(m)=\sha\bigl(\sha(d)\concat\sha(d)\concat m\bigr).
-    \end{equation}
-    Hashing the complete fixed-length statement binds the challenge to the network, transaction binding, keys, handles, body, commitment, and generator.
+    where $d$ is the deployment identifier, $g$ the protocol generation, $e$ the audit epoch, $h$ the transaction's \texttt{sig\_all\_hash}, $i$ the output index, $A$ the regulated asset, $C$ the native value commitment, $S$ the hash of the output script, and $R$ the fixed-size auxiliary recovery record.
+    The witness is $(v,b)$ satisfying Equations~\ref{eq:commitment} and \ref{eq:handle}.
 
-    \subsection{Canonical encoding}
+    The prover samples $\alpha,\beta\in\mathbf{Z}_q$ and publishes
+    \begin{align}
+        T_C &= \alpha H_A+\beta G, & T_D &= \beta P.
+    \end{align}
+    It derives the challenge $c$ by BIP-340-style tagged SHA-256 over the complete statement, $D$, $T_C$, and $T_D$, reduced modulo $q$ \cite{bip340}.
+    The responses are
+    \begin{align}
+        z_v&=\alpha+cv\pmod q, & z_b&=\beta+cb\pmod q.
+    \end{align}
+    The verifier checks
+    \begin{align}
+        z_vH_A+z_bG &= T_C+cC, \label{eq:verify-commitment}\\
+        z_bP &= T_D+cD. \label{eq:verify-handle}
+    \end{align}
 
-    The statement encoding has 265 bytes.
-    It consists of a one-byte version, a one-byte network code, the 32-byte transaction binding, and seven 33-byte compressed points.
-    The points appear in the same order as Equation~\ref{eq:statement} after $n$ and $t$.
+    Honest proofs satisfy both equations by substitution.
+    Two accepting transcripts with the same commitments and distinct challenges extract $v$ and $b$ by the standard Sigma-protocol difference equations.
+    The noninteractive implementation uses Fiat--Shamir, so its knowledge claim is in the random-oracle model and depends on the usual transform assumptions \cite{faust-fiat-shamir}.
+    This algebraic argument has not received an independent cryptographic audit.
 
-    The proof encoding has 163 bytes.
-    It contains the three 33-byte commitments $A_s,A_r,B$, followed by the two 32-byte big-endian responses $z_r,z_v$.
-    Points must decode to non-identity secp256k1 points and reserialize byte-for-byte.
-    Scalars must be strictly smaller than $q$.
-    Decoders reject unknown versions and networks, alternate lengths, invalid points, non-canonical scalars, and trailing bytes.
+    \subsection{Binding to the spend}
 
+    The covenant reconstructs the statement from transaction data and its compiled deployment parameters.
+    Binding to \texttt{sig\_all\_hash} commits the proof to the finalized transaction.
+    The explicit output index prevents moving a record between outputs.
+    Asset, commitment, script hash, deployment, generation, and epoch prevent reuse across assets, destinations, protocol versions, deployments, or audit-key epochs.
+    Hashing the recovery bytes prevents an intermediary from replacing the issuer's recovery record while retaining the proof.
 
-    \section{Implementation Evidence}
+    Recovery code does not accept these fields from an unauthenticated description.
+    It re-executes the actual covenant witness, extracts one canonical audit-record witness, checks the native range-proof profile, rebuilds the statement from the transaction, and verifies Equations~\ref{eq:verify-commitment} and \ref{eq:verify-handle}.
+    Chain inclusion remains the indexer's job.
+
+    The implementation supports at most ten regulated inputs and ten regulated outputs per transfer.
+    Audit records use 4,096 Simplicity budget words.
+    Executable tests check that the audited transaction shapes fit their consensus execution budgets \cite{pgc-lifecycle}.
+    These limits are operational constraints, not security arguments.
+
+    \subsection{Amount interval}
+
+    Application construction accepts amounts from $1$ through $2^{63}-1$ base units.
+    The covenant accepts the endpoint $2^{63}$ because the pinned native range-proof header and commitment binding establish that interval; the Sigma relation alone does not establish a range.
+    Recovery reports this endpoint truthfully as outside the application cap.
+    Supply arithmetic uses wider integers and JSON encodes amounts as decimal strings, so aggregate reports do not wrap at signed 64-bit limits.
+
+    \section{Recovery and confidentiality}
+    \label{sec:recovery}
+
+    \subsection{Authenticated fast path}
+
+    The sender encrypts $(v,b)$ to the audit public key with ephemeral ECDH and AES-256-GCM-SIV.
+    Associated data commits to the deployment, epoch, output index, asset, native commitment, and output script.
+    Successful decryption is not enough: recovery recomputes $C$ and $D$ and verifies the native proof before presenting the amount.
+
+    The recovery ciphertext is a fast path, not a transfer-validity condition.
+    A missing, unsupported, or unauthenticated record does not veto a transfer whose native proof and covenant witness are valid.
+    This avoids giving the issuer an online liveness role.
+    It also means complete recovery is not guaranteed when a sender withholds valid auxiliary data.
+
+    \subsection{Bounded fallback}
+
+    If the fast path fails, the issuer can use Equation~\ref{eq:recovery-target} and a baby-step giant-step search.
+    The native library caps one request at $2^{32}$ and bounds its table to about 65,537 public entries.
+    The HTTP service uses a smaller $2^{20}$ cap.
+    If the selected interval is exhausted, the output amount is unknown.
+    The implementation never relabels exhaustion as zero.
+    An unresolved unspent amount prevents report completeness; a spent historical row does not enter the current unspent total.
+
+    \subsection{What remains confidential}
+
+    Public observers see the ordinary Liquid transaction fields, the native commitment, the audit handle, the proof, and the recovery bytes.
+    The issuer can recover an amount because it knows $s$ or can decrypt the auxiliary record.
+    For parties without that secret, amount privacy is computational.
+    It relies on the hiding of Elements commitments, DDH-type hardness for the linked handle, honest-verifier zero knowledge of the underlying Sigma relation and the Fiat--Shamir model, plus ECDH and authenticated-encryption security for the recovery record \cite{pgc,faust-fiat-shamir}.
+    We do not supply a new reduction that composes these assumptions.
+
+    This paper does not prove universal payment confidentiality.
+    Transaction structure, fees, scripts, timing, input and output counts, and queried transaction identifiers remain observable.
+    Public Esplora reporting reveals queried identifiers to the provider.
+    A private Elements node is required when that access pattern is sensitive.
+
+    \section{Bounded reporting}
+    \label{sec:reporting}
+
+    The report service scans linked blocks from bootstrap through a confirmation-bounded snapshot.
+    The service used for the fresh lifecycle experiment followed at most 256 blocks, 10,000 transactions, and 512 anchor transitions.
+    A request supplies at most 128 authenticated policies.
+    The transaction cache is capped at 32 MiB or 1,024 entries.
+    A subsequent working-tree revision replaces those total-history limits with resumable public indexing in SQLite and bounded batches.
+    Deterministic fixtures cover 350 blocks, 11,200 transactions, and 600 anchor transitions.
+    After full local Liquid testnet synchronization, a fresh report covered 349 blocks and 418 transactions from bootstrap through confirmed height 2,608,703, with both signatures verified, matching issued and unspent totals of 1,100, and zero unresolved outputs.
+    The larger transaction and transition counts remain fixture evidence.
+    This revision retains explicit request, report-size, storage, and recovery bounds and does not persist decrypted reports.
+
+    For each candidate transaction, the service decodes public issuance and output data, identifies the current covenant anchor, re-executes the witness, and recovers regulated output amounts.
+    It cross-checks live output status where the provider's snapshot semantics allow it.
+    It then computes issued, known-unspent, burned, and unresolved totals.
+    Conservation is reported only over the amounts established by those checks.
+
+    Completeness fails closed for every condition represented in a report.
+    Unknown policy successors, off-anchor issuance or value, unexpected governance, unavailable amounts, outspend disagreement, or conservation mismatch produce an incomplete report.
+    Missing transaction data, covenant execution errors, resource-budget exhaustion, and detected reorganizations abort the request instead of returning \texttt{complete: true}.
+    Governance can deliberately terminate coverage, so auditability is not an irrevocable ledger property.
+
+    The service signs canonical report JSON with a report key.
+    A separate issuer signature certifies that key for one deployment, network, issuer key, and audit key.
+    The UI verifies the certificate first, then verifies the exact report bytes, and finally checks the deployment and network fields before rendering.
+    These signatures establish origin and byte integrity.
+    They do not prove that the configured chain provider was honest, complete, or independent.
+
+    \section{Implementation evidence}
     \label{sec:evidence}
 
-    \subsection{Independent implementations}
+    \subsection{Local and adversarial tests}
 
-    The primary implementation is the Rust module \texttt{amp\_core::pgc\_policy}.
-    An independent Python program rederives the generator, transaction binding, statement bytes, proof nonces, challenge, responses, and proof bytes from the written specification \cite{pgc-spec,pgc-vectors}.
-    It shares no proof implementation with the Rust module.
+    Rust tests cover proof construction, mutation rejection, authenticated recovery, missing and invalid auxiliary data, bounded-search success and exhaustion, the native $2^{63}$ endpoint, witness parsing, policy transitions, and report signing \cite{pgc-implementation}.
+    The signer suite executes confidential transfers at all three supported tree depths, including ten-input and ten-output transactions, and checks issuer, holder, policy-proof and witness-budget rejection \cite{pgc-lifecycle}.
+    Native audit unit tests cover missing or invalid auxiliary data alongside a valid proof, rejection of mutated proof fields, and bounded-search exhaustion that preserves an unknown amount.
 
-    Four deterministic vectors exercise the profile.
-    They cover Bitcoin regtest, Liquid testnet, Elements regtest, and Bitcoin mainnet network codes.
-    The cases include a zero value, equal sender and recipient keys, and full-width scalars.
-    The two implementations reproduce every statement and proof byte.
-    Mutations of the transaction binding, network, commitment, response, proof commitment, or generator are rejected.
+    The web suite checks schema boundaries, canonical deployment and policy validation, predecessor-policy resolution, localhost report-endpoint restrictions, and the signed-JSON download path.
+    Signer tests cover report and certificate signature verification and mutation rejection.
+    These tests establish implemented behavior for the exercised cases.
+    They do not show that all malformed transactions reject or that the system is production ready.
 
-    These tests demonstrate internal consistency and cross-implementation agreement.
-    They do not replace cryptographic review, consensus execution, or an external audit.
-    This implementation has not received an independent third-party audit.
+    \subsection{Liquid testnet lifecycle}
 
-    \subsection{Liquid testnet gate}
+    On 8 September 2026, disposable wallets executed a new lifecycle with ordinary Liquid testnet amounts.
+    Table~\ref{tab:testnet} links the six confirmed transactions.
+    Their identifiers and block heights are independently available from the Liquid testnet explorer \cite{pgc-liquid-evidence}.
+    This experiment validates the recorded deployment; it does not establish that a later source revision has been deployed.
 
-    The strongest network evidence uses confirmed Liquid testnet transaction
+    \begin{table}[ht]
+        \centering
+        \small
+        \begin{tabular}{lll}
+            \hline
+            Step & Transaction identifier & Block \\
+            \hline
+            Bootstrap & \href{https://blockstream.info/liquidtestnet/tx/8354098eb9f42034109d910cbada0d66d2fc5166a91bcd5c7122d4be6e9859f9}{\texttt{8354098e...e9859f9}} & 2608355 \\
+            Issuer to recipient & \href{https://blockstream.info/liquidtestnet/tx/26cdeae113165bfd08280395d48c83634c66fc609c6c4a7328bad38363ff7ff4}{\texttt{26cdeae1...f7ff4}} & 2608357 \\
+            Recipient autonomous return & \href{https://blockstream.info/liquidtestnet/tx/b6b08c1d5bdda83eac8df4c6187b112e7c002bcc8061d1b47db92c0ea54dea61}{\texttt{b6b08c1d...4dea61}} & 2608359 \\
+            Reissuance to issuer & \href{https://blockstream.info/liquidtestnet/tx/78253dd1d7c0de4b12f57319e89c49953a6552fa753e67dc6a75fe0b1231f76b}{\texttt{78253dd1...31f76b}} & 2608361 \\
+            Exact-output policy update & \href{https://blockstream.info/liquidtestnet/tx/4708df9f568a2a2cfee6a749fe9280e0d36de48ded7ec5456d8d50bdbadef9ed}{\texttt{4708df9f...def9ed}} & 2608363 \\
+            Audited distribution & \href{https://blockstream.info/liquidtestnet/tx/4bb01ef335d457d2fc529f2c991800827eca92981d3d455e09e799ca298eac94}{\texttt{4bb01ef3...8eac94}} & 2608365 \\
+            \hline
+        \end{tabular}
+        \caption{Liquid testnet transactions confirmed on 8 September 2026. Each identifier links to its public transaction record.}
+        \label{tab:testnet}
+    \end{table}
+
+    The recipient returned value with its own holder signature and without issuer participation.
+    The issuer reissued 100 units to itself, then distributed them through the audited transfer path.
+    A policy update listed one exact 350-unit output; the SDK rejected its attempted spend while unrelated outputs remained spendable.
+    The final signed report found six recovered native outputs and reconciled
     \begin{equation}
-        \mathtt{39faa5b530fdaa36d3791abae6694c16513eaec0378be9f0a040d3c17d79dc6f}
-    \end{equation}
-    and output index 2 \cite{pgc-evidence}.
-    The transaction was recorded in block 2598267 with block hash
-    \begin{equation}
-        \mathtt{0b0ffbda7b7b855917677f072c5ea6e5bc081189c85f6ea53f45121a3293714c}.
-    \end{equation}
-    The selected output contains the native Liquid value commitment
-    \begin{equation}
-        \mathtt{0838c1ec7d277f4dc114f7a72ec578a6da75bafdca40f46c9175151116bf82a581}.
+        \text{issued}=1100=\text{known unspent},\qquad
+        \text{burned}=0,\qquad
+        \text{unresolved}=0.
     \end{equation}
 
-    The host profile derives transaction binding
-    \begin{equation}
-        \mathtt{0b377118ef2ecd980bf66e170ef9b1ad6aa8f6106c854b38e5e6a2a543a00c25}.
-    \end{equation}
-    Rust and Python then generate and verify the vector bound to those bytes.
-    Its statement and proof have SHA-256 digests
-    \begin{align}
-        \mathtt{b9002068800b83aeed0d0700041aaa799ab4868d3aaa69297af65868651d769d},\\
-        \mathtt{28713475623e7cf65d05278ce13a74f093f88c53579a0860a5cc7ef35290f548}.
-    \end{align}
+    A separate local UI check imported the public deployment and requested a report from the issuer service.
+    The first scan stopped incomplete at an unknown predecessor because public import had stored only the latest policy.
+    After repair, the UI fetched and validated the bounded predecessor chain, verified the certificate and report signature, and rendered a complete $1100=1100$ snapshot through block 2608377 with no observed console warning or error.
 
-    This gate used public, read-only ledger data.
-    It did not broadcast a transaction, spend funds, or use a private key.
-    More importantly, the transaction did not contain the proof.
-    The proof commitment $C$ was not shown equal to the displayed native value commitment.
-    Confirmation authenticates the transaction evidence, not a PGC assertion inside it.
+    Scripts and the SDK performed transfers, reissuance, policy update, and blocked-spend rejection.
+    The UI exercised import, report request, signature verification, and rendering.
+    The in-app browser did not expose a download event or file for the signed-JSON button, even after the button's blob URL lifetime was repaired and tested.
+    We therefore do not claim an observed browser download artifact from this run.
 
-
-    \section{Security Considerations}
+    \section{Security considerations}
     \label{sec:security}
 
-    \subsection{Completeness and extraction}
+    The main safety property is narrow.
+    A successful holder spend under the pinned covenant has a native audit proof for each regulated output, tied to the transaction and active policy.
+    Given the audit secret, Equation~\ref{eq:recovery-target} removes the value blinder.
+    Efficient amount recovery still depends on valid auxiliary data or a tractable search interval.
 
-    Honest responses satisfy Equations~\ref{eq:verify-s}--\ref{eq:verify-y} by substitution.
-    For example,
-    \begin{equation}
-        (a+er)pk_s=apk_s+e(rpk_s)=A_s+eX_s.
-    \end{equation}
-    The other two equations follow identically.
+    The exact-output policy limits future spending of listed outputs.
+    It does not undo confirmed transactions, prove misconduct, identify a recipient, infer intent, or create an owner-wide freeze.
+    Invalid recovery bytes are evidence about submitted bytes only.
 
-    Suppose two accepting transcripts have the same commitments and distinct challenges $e$ and $e'$.
-    Their witnesses can be extracted as
-    \begin{align}
-        r&=(z_r-z'_r)(e-e')^{-1}\pmod q,\\
-        v&=(z_v-z'_v)(e-e')^{-1}\pmod q.
-    \end{align}
-    Thus the interactive protocol has unconditional special soundness.
-    Knowledge soundness of the Fiat--Shamir proof is considered in the random-oracle model.
+    Report completeness depends on one configured provider and a bounded scan.
+    Block-link and outspend cross-checks against the same provider are useful consistency checks, not independent confirmation or an SPV proof.
+    Reorganizations after the reported snapshot can change ledger state.
 
-    The witness is unique for a valid statement.
-    Since $pk_s$ is a non-identity point in a prime-order group, $X_s=rpk_s$ fixes $r$.
-    Then $Y-rG=vH$ fixes $v$.
-    This uniqueness does not require a discrete-log assumption.
+    Separate derivation paths limit accidental cross-use, but one signer mnemonic remains the common root for holder, issuer, audit, and report keys.
+    Compromise of that mnemonic compromises all derived roles.
+    The audit-service credential export contains audit and report secrets plus issuer-recorded openings; it does not contain the issuer or holder signing secret.
+    Production use needs a sharper key-custody design, independent cryptographic and implementation review, side-channel analysis, longer-lived indexing, provider diversity, and operational recovery procedures.
 
-    \subsection{Zero knowledge and confidentiality}
-
-    For any challenge and responses, a special honest-verifier simulator can compute
-    \begin{align}
-        A_s&=z_rpk_s-eX_s, & A_r&=z_rpk_r-eX_r,\\
-        B&=z_rG+z_vH-eY.
-    \end{align}
-    The interactive protocol is therefore perfect special honest-verifier zero knowledge.
-    The implemented non-interactive proof relies on the random-oracle model.
-    Its stronger Fiat--Shamir and non-malleability claims require the conditions studied by Faust et al. \cite{faust-fiat-shamir}.
-
-    Zero knowledge does not by itself establish payment confidentiality.
-    Confidentiality of the source PGC encryption against parties holding neither recipient secret key is attributed to PGC's divisible-DDH analysis \cite{pgc}.
-    This project has not supplied an independent proof of that theorem.
-    The ledger still reveals its ordinary public fields, and the current module performs no decryption or receiver scanning.
-
-    \subsection{Host and consensus boundary}
-
-    A verifier accepts only the bytes in Equation~\ref{eq:statement}.
-    An untrusted host can supply an arbitrary transaction binding, a point unrelated to the selected output, or a false description of the network.
-    The all-zero rejection catches only a default value.
-    It does not authenticate a nonzero digest.
-
-    A complete Liquid construction must derive the statement from introspected transaction fields and verify the proof within the authorized spending path.
-    The present PoC has no Simplicity program and no onchain verifier.
-    It provides no transaction authorization, signature check, replay policy beyond the supplied binding, or proof that either public key is owned by a participant.
-
-    \subsection{Native commitment equality}
-
-    A Liquid confidential output uses an asset-dependent generator $H_A$ and has a value commitment of form
-    \begin{equation}
-        C_L=sG+vH_A.
-        \label{eq:liquid-commitment}
-    \end{equation}
-    The implemented PGC body is $Y=rG+vH$.
-    Byte equality $C=Y$ cannot establish that these two different-base commitments contain the same $v$.
-
-    A future relation must add Equation~\ref{eq:liquid-commitment} to the statement and use a response for $s$ together with the existing responses for $r$ and $v$.
-    It must also bind the asset generator and output location.
-    Until that relation is implemented and reviewed, the testnet evidence cannot be described as native Liquid commitment equality.
-
-    \subsection{Range and conservation}
-
-    The witness value $v$ is a scalar.
-    The proof does not establish that it is a nonnegative integer in an application range.
-    It also proves no input-output balance, sender solvency, conservation, or absence of inflation.
-    The full PGC protocol composes additional mechanisms for these purposes \cite{pgc}.
-    A ledger integration must specify those mechanisms rather than infer them from equal-value consistency.
-
-    \subsection{Parameters and implementation}
-
-    Security assumes that no participant knows $\log_G(H)$ when $Y$ is also treated as a Pedersen commitment.
-    The transparent derivation makes the parameter reproducible, but the even-prefix try-and-increment procedure is project-specific.
-    A later version should use a standardized hash-to-curve method and change every affected version and transcript tag.
-
-    The code rejects malformed encodings before group equations and zeroizes the witness, derived nonces, auxiliary-randomness copy, and nonce preimage within its ownership boundary \cite{pgc-spec}.
-    Nevertheless, the surrounding prover has not received a complete constant-time or memory-hygiene audit.
-    In particular, its scalar helper can reveal whether $v=0$ through timing.
-    Production use requires a dedicated side-channel review and an explicit range policy.
-
-
-    \section{Future Work}
-
-    The immediate protocol task is a cross-base equality proof connecting the PGC ciphertext body to Liquid's native value commitment.
-    The statement must bind the asset generator, commitment, transaction output, and network without relying on caller assertions.
-    A Simplicity verifier can then be specified and costed against the available jets and execution limits \cite{simplicity}.
-
-    A complete payment protocol also requires range proofs, balance and conservation rules, transaction authorization, account or UTXO state transitions, receiver scanning, and key management.
-    The auditor-oriented sketch should be reconciled with these rules before implementing its recovery ciphertext or bounded-discrete-log fallback.
-    Independent cryptographic review and a full constant-time implementation remain necessary before deployment.
-
+    The test evidence is one successful network execution plus bounded local and regtest cases.
+    It does not prove confidentiality for every environment, complete recovery against malicious senders, absence of inflation outside the scanned state, or freedom from protocol defects.
 
     \section{Conclusion}
 
-    The PGC equal-value relation can be instantiated reproducibly on secp256k1 and bound to a host-supplied ledger context.
-    The Rust and Python implementations agree across four vectors, including one derived from a confirmed Liquid testnet transaction and output.
-    This establishes an offchain consistency result for the supplied statement.
-    Native Liquid commitment equality and onchain enforcement remain separate, unimplemented protocol steps.
+    The second DAMP generation connects selective audit to the native Liquid value commitment and enforces that relation in the Simplicity spending path.
+    Holders retain autonomous transfer authorization, while the issuer receives an authenticated recovery path and a bounded algebraic fallback.
+    Exact-output policy and fail-closed reporting keep governance and audit conclusions narrow.
 
+    Fresh Liquid testnet evidence shows the intended lifecycle and a complete signed conservation report.
+    It also found two ordinary integration defects in recovery metadata and public policy history, both covered by tests after repair.
+    The remaining signed-JSON browser artifact gap is stated rather than inferred away.
+    That combination is useful research evidence, but it is not a production-security claim.
 
     \section*{AI Disclosure}
 
     Parts of this work were prepared with AI assistants.
-    The assistants helped analyze source material, draft the paper, and review the implementation evidence under the authors' direction.
-    The protocol design, the paper's structure, and all final decisions are the authors'.
-    The authors reviewed the generated content and take full responsibility for the final output.
+    The assistants helped analyze source material, run tests, draft the paper, and review implementation evidence under the authors' direction.
+    The authors reviewed the generated content and take responsibility for the final text.
 
-        {\small\sloppy
+    {\small\sloppy
     \bibliographystyle{unsrt}
     \bibliography{references}
     }
-
 \end{document}

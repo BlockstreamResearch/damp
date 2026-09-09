@@ -1,4 +1,4 @@
-import type { SignerNetwork } from "./amp-signer";
+import type { SignerNetwork } from "./damp-signer";
 import { esploraUrlForDeployment, liquidTestnetEsploraUrl } from "./esplora";
 
 export const liquidTestnetWaterfallsUrl = "https://waterfalls.liquidwebwallet.org/liquidtestnet/api";

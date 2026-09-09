@@ -3,8 +3,9 @@ import { z } from "zod";
 export const HASH = /^[0-9a-f]{64}$/;
 export const SCRIPT = /^(?:[0-9a-f]{2})+$/;
 export const OUTPOINT = /^[0-9a-f]{64}:[0-9]+$/;
-export const registrySchema = "simplicity-amp-registry-v1" as const;
-export const protocolId = "simplicity-amp/v0.1" as const;
+export const registrySchema = "simplicity-damp-registry-v1" as const;
+export const protocolId = "simplicity-damp/v0.2" as const;
+export const maximumAssetBaseUnits = (1n << 63n) - 1n;
 export const supportedTreeDepths = [4, 5, 6] as const;
 
 const hash = z.string().regex(HASH);
@@ -17,7 +18,7 @@ export const assetMetadataSchema = z.object({
 
 export const deploymentManifestSchema = z.object({
   schema: z.literal(registrySchema),
-  protocol: z.enum([protocolId, "simplicity-amp/v0.2"]),
+  protocol: z.literal(protocolId),
   network: z.enum(["liquid-testnet", "elements-regtest"]),
   policyAsset: hash,
   regulatedAsset: hash,
@@ -34,7 +35,7 @@ export const deploymentManifestSchema = z.object({
   userProgramHash: hash,
   governanceProgramHash: hash,
   contractBundleHash: hash,
-  audit: z.object({publicKey:z.string().regex(/^0[23][0-9a-f]{64}$/),epoch:z.number().int().positive().max(Number.MAX_SAFE_INTEGER)}).strict().optional(),
+  audit: z.object({publicKey:z.string().regex(/^0[23][0-9a-f]{64}$/),epoch:z.number().int().positive().max(Number.MAX_SAFE_INTEGER)}).strict(),
 }).strict().superRefine((deployment, context) => {
   if (new Set([deployment.policyAsset, deployment.regulatedAsset, deployment.verifierAsset]).size !== 3) {
     context.addIssue({
@@ -42,10 +43,7 @@ export const deploymentManifestSchema = z.object({
       message: "Policy, regulated, and verifier assets must be distinct.",
     });
   }
-  if ((deployment.protocol === "simplicity-amp/v0.2") !== Boolean(deployment.audit)) {
-    context.addIssue({code:"custom",message:"Only v0.2 requires a native audit key."});
-  }
-  if (deployment.audit && BigInt(deployment.issuedSupply) > 9223372036854775807n) {
+  if (BigInt(deployment.issuedSupply) > maximumAssetBaseUnits) {
     context.addIssue({code:"custom",message:"Initial amount exceeds the application cap."});
   }
   const managed = deployment.supplyMode === "issuer-managed";
@@ -131,7 +129,7 @@ export type TreeDepth = z.infer<typeof treeDepthSchema>;
 
 export const policySnapshotSchema = z.object({
   schema: z.literal(registrySchema),
-  protocol: z.enum([protocolId, "simplicity-amp/v0.2"]),
+  protocol: z.literal(protocolId),
   deploymentId: hash,
   sequence: z.number().int().nonnegative(),
   parentPolicyRoot: hash.nullable(),
@@ -160,7 +158,7 @@ export type PolicySnapshot = z.infer<typeof policySnapshotSchema>;
 
 export function smallestTreeDepth(entryCount: number): TreeDepth {
   const depth = supportedTreeDepths.find((candidate) => entryCount <= 2 ** candidate);
-  if (!depth) throw new Error("DAMP v0.1 supports at most 64 blacklist entries.");
+  if (!depth) throw new Error("DAMP supports at most 64 blacklist entries.");
   return depth;
 }
 

@@ -1,3 +1,4 @@
+import { manifestFixture } from "../test/fixtures";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,8 +12,7 @@ import {
 const hash = "11".repeat(32);
 const xonly = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 const manifest = {
-  schema: "simplicity-amp-registry-v1",
-  protocol: "simplicity-amp/v0.1",
+  ...manifestFixture(),
   network: "liquid-testnet",
   policyAsset: "01".repeat(32),
   regulatedAsset: "02".repeat(32),
@@ -32,6 +32,16 @@ const manifest = {
 } as const;
 
 describe("registry schemas", () => {
+  it("requires native audit parameters and the current application cap", () => {
+    const { audit: _audit, ...missingAudit } = manifestFixture();
+    expect(deploymentManifestSchema.safeParse(missingAudit).success).toBe(false);
+    expect(deploymentManifestSchema.safeParse(manifestFixture({
+      audit: { ...manifestFixture().audit, epoch: 0 },
+    })).success).toBe(false);
+    expect(deploymentManifestSchema.safeParse(manifestFixture({
+      issuedSupply: (1n << 63n).toString(),
+    })).success).toBe(false);
+  });
   it("rejects mainnet and unknown manifest fields", () => {
     expect(() => deploymentManifestSchema.parse({ ...manifest, network: "liquid-mainnet" })).toThrow();
     expect(() => deploymentManifestSchema.parse({ ...manifest, verifierProgramHash: hash })).toThrow();

@@ -37,7 +37,7 @@ describe("test-only debug signer profiles", () => {
     localStorage.setItem(debugSignerProfilesStorageKey, "not json");
     expect(loadDebugSignerProfiles()).toEqual([]);
     localStorage.clear();
-    localStorage.setItem("simplicity-amp:signer-profiles:v1", JSON.stringify({
+    localStorage.setItem("simplicity-damp:signer-profiles:v1", JSON.stringify({
       version: 1,
       profiles: [{ id: "liquid-testnet:aabbccdd", fingerprint: "aabbccdd", network: "liquid-testnet", label: "Legacy" }],
     }));

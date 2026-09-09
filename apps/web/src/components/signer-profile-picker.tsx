@@ -1,7 +1,7 @@
 import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 
-import type { SignerProfile } from "../lib/amp-signer";
+import type { SignerProfile } from "../lib/damp-signer";
 import { networkLabel } from "../lib/domain";
 
 type ProfileSummary = Pick<SignerProfile, "id" | "fingerprint" | "label" | "network">;

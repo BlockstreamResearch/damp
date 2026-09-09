@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { displaySupplyToBaseUnits, maximumAssetBaseUnits, reissueSchema, sendSchema, setupFormDefaults, setupSchema } from "./form-schemas";
+import { bootstrapRecoverySchema, displaySupplyToBaseUnits, reissueSchema, sendSchema, setupFormDefaults, setupSchema } from "./form-schemas";
+import { maximumAssetBaseUnits, protocolId } from "./domain";
 
 describe("workflow field validation", () => {
   it("returns setup errors on the exact fields that need correction", () => {
@@ -14,13 +15,30 @@ describe("workflow field validation", () => {
     expect(setupFormDefaults("liquid-testnet").network).toBe("liquid-testnet");
   });
 
+  it("accepts only the current recovery format", () => {
+    const recovery = {
+      protocol: protocolId,
+      name: "Audited asset",
+      ticker: "AUDT",
+      precision: 0,
+      supply: "1000",
+      supplyMode: "issuer-managed",
+      network: "liquid-testnet",
+      deploymentSalt: "11".repeat(32),
+      policyAsset: "22".repeat(32),
+      fundingAddresses: ["address-one-is-long-enough", "address-two-is-long-enough"],
+    };
+    expect(bootstrapRecoverySchema.safeParse(recovery).success).toBe(true);
+    expect(bootstrapRecoverySchema.safeParse({ ...recovery, protocol: "unsupported-protocol" }).success).toBe(false);
+  });
+
   it("converts the user-entered display supply to exact base units", () => {
     expect(displaySupplyToBaseUnits("500", 0)).toBe(500n);
     expect(displaySupplyToBaseUnits("500", 2)).toBe(50_000n);
     expect(displaySupplyToBaseUnits("1", 8)).toBe(100_000_000n);
   });
 
-  it("rejects a display supply that overflows the signer's u64 base-unit amount", () => {
+  it("rejects a display supply above the application amount cap", () => {
     expect(displaySupplyToBaseUnits(maximumAssetBaseUnits.toString(), 0)).toBe(maximumAssetBaseUnits);
     expect(() => displaySupplyToBaseUnits("184467440738", 8)).toThrow(/too large/i);
     expect(setupSchema.safeParse({ name: "Asset", ticker: "AST", precision: 8, supply: "184467440738", supplyMode: "fixed", network: "liquid-testnet" }).error?.issues[0]?.path).toEqual(["supply"]);

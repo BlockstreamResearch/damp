@@ -22,7 +22,7 @@ import {
   signTransfer,
   signerSnapshot,
   subscribeSigner,
-} from "../lib/amp-signer";
+} from "../lib/damp-signer";
 import {
   broadcastTransaction,
   liveAnchorUtxo,
@@ -151,7 +151,7 @@ export function WalletDashboard() {
       return;
     }
     const result = await wallet.refetch();
-    if (result.error) setFeeMessage(result.error instanceof Error ? result.error.message : String(result.error));
+    if (result.error) setFeeMessage(userFacingError(result.error));
     else if (result.data?.syncError) setFeeMessage(`Showing the last good wallet state: ${result.data.syncError}`);
     else setFeeMessage(`Wallet synchronized with ${deployment.data ? networkLabel(deployment.data.network) : "the selected network"}.`);
   }
@@ -718,7 +718,7 @@ export function WalletSend() {
           )}
           {message && <p className="inline-message" role="status">{message}</p>}
         </Panel>
-        <aside className="flow-aside"><Panel><h3>Transaction rules</h3><ul className="check-list"><li><Check size={15} /> Verifier at input/output 0</li><li><Check size={15} /> Holder at input 1</li><li><Check size={15} /> At most ten regulated inputs/outputs</li><li><Check size={15} /> Explicit regulated assets and amounts</li></ul><p className="technical-note">Address validation proves compatibility with the selected covenant. It does not prove which deployment manifest the recipient trusts.</p></Panel></aside>
+        <aside className="flow-aside"><Panel><h3>Transaction rules</h3><ul className="check-list"><li><Check size={15} /> Verifier at input/output 0</li><li><Check size={15} /> Holder inputs follow the verifier</li><li><Check size={15} /> At most ten regulated inputs/outputs</li><li><Check size={15} /> Explicit asset IDs, confidential transfer amounts</li></ul><p className="technical-note">Address validation proves compatibility with the selected covenant. It does not prove which deployment manifest the recipient trusts.</p></Panel></aside>
       </div>
     </AppShell>
   );

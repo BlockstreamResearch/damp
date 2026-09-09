@@ -1,3 +1,4 @@
+import { manifestFixture } from "../test/fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -8,8 +9,8 @@ const mocks = vi.hoisted(() => ({
   validatePolicySnapshot: vi.fn(),
 }));
 
-vi.mock("./github", () => ({
-  canonicalRegistryContent: (value: unknown) => `${JSON.stringify(value, null, 2)}\n`,
+vi.mock("./github", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./github")>(),
   fetchCanonicalRegistryFile: mocks.fetchCanonicalRegistryFile,
   registryPathForVerifierScript: vi.fn(() => Promise.resolve("policies/custom/snapshot.json")),
 }));
@@ -19,19 +20,19 @@ vi.mock("./store", () => ({
   putPolicySnapshot: mocks.putPolicySnapshot,
 }));
 
-vi.mock("./amp-signer", () => ({
+vi.mock("./damp-signer", () => ({
   buildBlacklist: vi.fn(),
   preparePolicy: mocks.preparePolicy,
   validatePolicySnapshot: mocks.validatePolicySnapshot,
 }));
 
-import { resolvePolicySnapshot } from "./policy-registry";
+import { resolvePolicyHistory, resolvePolicySnapshot } from "./policy-registry";
 import type { Deployment, PolicySnapshot } from "./domain";
 
 const deploymentId = "09".repeat(32);
 const snapshot: PolicySnapshot = {
-  schema: "simplicity-amp-registry-v1",
-  protocol: "simplicity-amp/v0.1",
+  schema: "simplicity-damp-registry-v1",
+  protocol: "simplicity-damp/v0.2",
   deploymentId,
   sequence: 0,
   parentPolicyRoot: null,
@@ -46,8 +47,7 @@ const snapshot: PolicySnapshot = {
 };
 
 const deployment: Deployment = {
-  schema: "simplicity-amp-registry-v1",
-  protocol: "simplicity-amp/v0.1",
+  ...manifestFixture(),
   network: "elements-regtest",
   policyAsset: "01".repeat(32),
   regulatedAsset: "02".repeat(32),
@@ -98,5 +98,46 @@ describe("policy registry source binding", () => {
     await expect(resolvePolicySnapshot(deployment, snapshot.verifierScriptPubkey)).resolves.toEqual(snapshot);
     expect(mocks.validatePolicySnapshot).toHaveBeenCalledWith(snapshot);
     expect(mocks.putPolicySnapshot).toHaveBeenCalledWith(snapshot, expect.any(String), "example/custom-registry");
+  });
+
+  it("loads and validates the complete predecessor chain for reporting", async () => {
+    const parentHash = await crypto.subtle.digest("SHA-256", Uint8Array.from([0x51]));
+    const parentScriptHash = [...new Uint8Array(parentHash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const latest: PolicySnapshot = {
+      ...snapshot,
+      sequence: 1,
+      parentPolicyRoot: snapshot.policyRoot,
+      parentVerifierScriptHash: parentScriptHash,
+      policyRoot: "21".repeat(32),
+      verifierProgramHash: "22".repeat(32),
+      verifierScriptPubkey: "52",
+    };
+    mocks.fetchCanonicalRegistryFile.mockResolvedValue(`${JSON.stringify(snapshot, null, 2)}\n`);
+    mocks.preparePolicy.mockResolvedValueOnce({
+      policyRoot: snapshot.policyRoot,
+      verifierProgramHash: snapshot.verifierProgramHash,
+      verifierScriptPubkey: snapshot.verifierScriptPubkey,
+    });
+
+    await expect(resolvePolicyHistory(deployment, latest)).resolves.toEqual([snapshot, latest]);
+    expect(mocks.fetchCanonicalRegistryFile).toHaveBeenCalledWith(
+      `policies/${deploymentId}/${parentScriptHash}.json`,
+      fetch,
+      "example/custom-registry",
+    );
+    expect(mocks.putPolicySnapshot).toHaveBeenCalledWith(snapshot, parentScriptHash, "example/custom-registry");
+  });
+
+  it("rejects a predecessor that does not match the successor policy root", async () => {
+    const parentScriptHash = "aa".repeat(32);
+    const latest: PolicySnapshot = {
+      ...snapshot,
+      sequence: 1,
+      parentPolicyRoot: "ff".repeat(32),
+      parentVerifierScriptHash: parentScriptHash,
+      verifierScriptPubkey: "52",
+    };
+    mocks.fetchCanonicalRegistryFile.mockResolvedValue(`${JSON.stringify(snapshot, null, 2)}\n`);
+    await expect(resolvePolicyHistory(deployment, latest)).rejects.toThrow(/successor commitment/i);
   });
 });

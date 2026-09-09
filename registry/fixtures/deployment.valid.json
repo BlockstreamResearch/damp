@@ -1,20 +1,24 @@
 {
-  "schema": "simplicity-amp-registry-v1",
-  "protocol": "simplicity-amp/v0.1",
+  "schema": "simplicity-damp-registry-v1",
+  "protocol": "simplicity-damp/v0.2",
   "network": "elements-regtest",
   "policyAsset": "0101010101010101010101010101010101010101010101010101010101010101",
-  "regulatedAsset": "0202020202020202020202020202020202020202020202020202020202020202",
-  "verifierAsset": "0303030303030303030303030303030303030303030303030303030303030303",
+  "regulatedAsset": "87d94a7e8975f55d949b24091ee7754d37d3c25e611a2548e7b524ba985e8d0e",
+  "verifierAsset": "81c628cd3170001ae60b4cfaba1c5b2cf12130da2a0b7ae21a7086aff1f5a050",
   "verifierAssetAmount": 1,
-  "issuerPublicKey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-  "deploymentSalt": "0404040404040404040404040404040404040404040404040404040404040404",
+  "issuerPublicKey": "c75953dad619b2f87def2576a0bf4c3979a263361ac7ce0e0c2f8d632151000c",
+  "deploymentSalt": "e729b921c6ac70bd16e3d8fbaaccc643c69036029dd7ef1c85ff17cd23ba7d11",
   "genesisAnchor": "0505050505050505050505050505050505050505050505050505050505050505:0",
   "asset": { "name": "Regulated Asset", "ticker": "RGA", "precision": 8 },
-  "issuedSupply": "100000000",
+  "issuedSupply": "1000",
   "supplyMode": "fixed",
   "reissuanceToken": null,
   "reissuanceEntropy": null,
-  "userProgramHash": "0606060606060606060606060606060606060606060606060606060606060606",
-  "governanceProgramHash": "0707070707070707070707070707070707070707070707070707070707070707",
-  "contractBundleHash": "609c15ed449ab1209ebefd437ab02832db759a3a5d6938d4a02c018186d2fac2"
+  "userProgramHash": "1b947cb45577cad0aff98fd00c7915c1ee907f3a897544645d6634c5abda2a1a",
+  "governanceProgramHash": "0284409753deb32514fe9d28fa548bca6559bb06ec1e98d1390843c6a49ea3bd",
+  "contractBundleHash": "7eefff87a27f0616366375f5776b9febda2a78c0c57b9a9b4c63eaa84c103919",
+  "audit": {
+    "publicKey": "039fa11437e0f7696bd66b151b7e5f26e952279369c32941ed7bec68327b16814e",
+    "epoch": 1
+  }
 }

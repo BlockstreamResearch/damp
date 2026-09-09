@@ -8,8 +8,8 @@ const currentSigner = vi.hoisted(() => ({
   revision: 1,
 }));
 
-vi.mock("./amp-signer", async () => {
-  const actual = await vi.importActual<typeof import("./amp-signer")>("./amp-signer");
+vi.mock("./damp-signer", async () => {
+  const actual = await vi.importActual<typeof import("./damp-signer")>("./damp-signer");
   return {
     ...actual,
     signerSnapshot: () => ({ connected: true, fingerprint: currentSigner.fingerprint, profileId: currentSigner.profileId, network: currentSigner.network }),
@@ -25,7 +25,7 @@ vi.mock("./store", () => ({
   },
 }));
 
-import type { DerivedWalletAddress, InspectedUtxo, SpendableUtxo } from "./amp-signer";
+import type { DerivedWalletAddress, InspectedUtxo, Utxo } from "./damp-signer";
 import {
   assetBalances,
   discoverWalletSnapshot,
@@ -88,7 +88,7 @@ function dependencies(input: {
     fetchTransaction: () => Promise.resolve("00"),
     fetchOutspend: input.outspend ?? (() => Promise.resolve({ exists: false, spent: false })),
     fetchTipHeight: () => Promise.resolve(100),
-    inspect: input.inspect ?? ((utxos: SpendableUtxo[]) => Promise.resolve(utxos.map((utxo): InspectedUtxo => ({
+    inspect: input.inspect ?? ((utxos: Utxo[]) => Promise.resolve(utxos.map((utxo): InspectedUtxo => ({
       txid: utxo.txid,
       vout: utxo.vout,
       assetId: policyAsset,
@@ -123,7 +123,7 @@ describe("wallet discovery", () => {
     currentSigner.fingerprint = fingerprint;
     currentSigner.profileId = profileId;
     currentSigner.revision = 1;
-    localStorage.setItem("simplicity-amp:regtest-esplora", "http://esplora.test/api");
+    localStorage.setItem("simplicity-damp:regtest-esplora", "http://esplora.test/api");
   });
 
   it("extends both branches through a full unused gap after the last used address", async () => {
@@ -282,7 +282,7 @@ describe("wallet state and persistence", () => {
     currentSigner.fingerprint = fingerprint;
     currentSigner.profileId = profileId;
     currentSigner.revision = 1;
-    localStorage.setItem("simplicity-amp:regtest-esplora", "http://esplora.test/api");
+    localStorage.setItem("simplicity-damp:regtest-esplora", "http://esplora.test/api");
   });
 
   it("aggregates assets without counting spent outputs and selects only confirmed sources", async () => {

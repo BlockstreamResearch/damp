@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { validateDeployment } from "./amp-signer";
+import { validateDeployment } from "./damp-signer";
 import { publicManifest, type Deployment } from "./domain";
 import { canonicalRegistryContent, fetchCanonicalDeploymentCatalog, type CanonicalDeployment } from "./github";
 import { getActiveDeploymentId, listDeployments, setActiveDeploymentId } from "./store";
