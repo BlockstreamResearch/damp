@@ -30,7 +30,7 @@ vi.mock("./policy-registry", () => ({
 }));
 
 vi.mock("./github", () => ({
-  deploymentRegistryPath: (deploymentId: string) => `deployments/${deploymentId}.json`,
+  deploymentRegistryPath: (deploymentId: string) => `registry/deployments/${deploymentId}.json`,
   verifyCanonicalRegistryFile: vi.fn(),
 }));
 
@@ -116,7 +116,7 @@ describe("role-neutral deployment import", () => {
       resolvePolicy: vi.fn(() => Promise.resolve(snapshot)),
     });
 
-    expect(verifyCanonicalManifest).toHaveBeenCalledWith(`deployments/${deploymentId}.json`, manifest);
+    expect(verifyCanonicalManifest).toHaveBeenCalledWith(`registry/deployments/${deploymentId}.json`, manifest);
     expect(result.deployment.publication).toBe("published");
     expect(result.deployment.issuerDerivationIndex).toBeUndefined();
     expect(publicImportHasIssuerAuthority(result.deployment)).toBe(false);

@@ -27,6 +27,19 @@ fn registry_fixtures_round_trip_with_the_same_identity() {
 }
 
 #[test]
+fn policy_publication_path_is_relative_to_the_repository_root() {
+    let policy: PolicySnapshot = serde_json::from_value(snapshot_json()).unwrap();
+    assert_eq!(
+        policy.registry_path(),
+        format!(
+            "registry/policies/{}/{}.json",
+            policy.deployment_id(),
+            policy.verifier_script_hash()
+        )
+    );
+}
+
+#[test]
 fn manifest_cannot_deserialize_invalid_values_or_cross_field_combinations() {
     for (field, value) in [
         ("protocol", json!("unsupported")),

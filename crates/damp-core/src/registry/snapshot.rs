@@ -142,7 +142,7 @@ impl PolicySnapshot {
     }
     pub fn registry_path(&self) -> String {
         format!(
-            "policies/{}/{}.json",
+            "registry/policies/{}/{}.json",
             self.deployment_id,
             self.verifier_script_hash()
         )

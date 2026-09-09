@@ -71,3 +71,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm schema:test
+      - name: Verify published registry
+        run: pnpm registry:check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

@@ -16,7 +16,7 @@ describe("RegistryPathRow", () => {
   });
 
   it("renders and copies the exact canonical destination path", async () => {
-    const path = `policies/${"ab".repeat(32)}/${"cd".repeat(32)}.json`;
+    const path = `registry/policies/${"ab".repeat(32)}/${"cd".repeat(32)}.json`;
     render(<RegistryPathRow label="Initial D4 policy" path={path} />);
 
     expect(screen.getByText(path)).toHaveTextContent(path);
@@ -28,7 +28,7 @@ describe("RegistryPathRow", () => {
 
   it("reports clipboard failures without altering the value", async () => {
     const notice = vi.fn();
-    const path = `deployments/${"ef".repeat(32)}.json`;
+    const path = `registry/deployments/${"ef".repeat(32)}.json`;
     writeText.mockRejectedValueOnce(new Error("denied"));
     render(<RegistryPathRow label="Deployment manifest" path={path} onNotice={notice} />);
 

@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./github", async (importOriginal) => ({
   ...await importOriginal<typeof import("./github")>(),
   fetchCanonicalRegistryFile: mocks.fetchCanonicalRegistryFile,
-  registryPathForVerifierScript: vi.fn(() => Promise.resolve("policies/custom/snapshot.json")),
+  registryPathForVerifierScript: vi.fn(() => Promise.resolve("registry/policies/custom/snapshot.json")),
 }));
 
 vi.mock("./store", () => ({
@@ -86,7 +86,7 @@ describe("policy registry source binding", () => {
     mocks.fetchCanonicalRegistryFile.mockResolvedValue(undefined);
     await expect(resolvePolicySnapshot(deployment, snapshot.verifierScriptPubkey)).rejects.toThrow(/not published/i);
     expect(mocks.fetchCanonicalRegistryFile).toHaveBeenCalledWith(
-      "policies/custom/snapshot.json",
+      "registry/policies/custom/snapshot.json",
       fetch,
       "example/custom-registry",
     );
@@ -121,7 +121,7 @@ describe("policy registry source binding", () => {
 
     await expect(resolvePolicyHistory(deployment, latest)).resolves.toEqual([snapshot, latest]);
     expect(mocks.fetchCanonicalRegistryFile).toHaveBeenCalledWith(
-      `policies/${deploymentId}/${parentScriptHash}.json`,
+      `registry/policies/${deploymentId}/${parentScriptHash}.json`,
       fetch,
       "example/custom-registry",
     );

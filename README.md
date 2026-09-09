@@ -48,6 +48,11 @@ endpoint. This repository includes the report client and signature verification,
 not an HTTP report server. Registry publication is manual; the UI downloads
 canonical JSON and checks the published bytes before proceeding.
 
+The official registry is [`main/registry`](https://github.com/BlockstreamResearch/damp/tree/main/registry).
+Deployment discovery reads `registry/deployments` directly. Manifests and policy
+snapshots use the [registry layout](registry/README.md); no deployment list ships
+with the app.
+
 Offline checks:
 
 ```bash
@@ -63,6 +68,9 @@ pnpm --dir apps/web build
 ```
 
 These commands do not establish a fresh network deployment or a browser download.
+
+`pnpm registry:check` separately checks the live official registry. CI and Pages
+run it to verify that discovery can fetch canonical published manifests.
 
 ## Rebuild the contracts
 

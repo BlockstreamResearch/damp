@@ -5,11 +5,11 @@ It contains no signing keys, audit secrets or private output openings.
 
 ## Record paths
 
-- `deployments/{deploymentId}.json` identifies a deployment. Its manifest binds
+- `registry/deployments/{deploymentId}.json` identifies a deployment. Its manifest binds
   the network, asset IDs, issuer and audit keys, initial supply, genesis anchor
   and fixed contract commitments. Managed supply also records the reissuance
   token and entropy; fixed supply sets both fields to `null`.
-- `policies/{deploymentId}/{scriptHash}.json` describes one verifier anchor.
+- `registry/policies/{deploymentId}/{scriptHash}.json` describes one verifier anchor.
   `scriptHash` is SHA-256 of the verifier script bytes, not its hex text. The
   snapshot contains the blacklist, Merkle commitment, tree depth, executable
   verifier commitment and complete anchor script.
@@ -24,6 +24,12 @@ and do not affect the Merkle commitment. Trees at depths 4, 5 and 6 hold at most
 16, 32 and 64 entries. Bootstrap starts at depth 4.
 
 ## Publish and verify
+
+Paths are relative to the repository root. The official registry lives at
+[`BlockstreamResearch/damp`, `main/registry`](https://github.com/BlockstreamResearch/damp/tree/main/registry).
+The app discovers manifests from that branch's `registry/deployments` directory
+through the GitHub API. It does not bundle deployment IDs. Custom GitHub
+registries use the same directory layout on their default branch.
 
 Download the JSON from the issuer UI and publish those exact bytes at the
 displayed registry path. The configured registry uses `VITE_GITHUB_REGISTRY_REF`,
@@ -46,3 +52,9 @@ validation alone does not establish on-chain policy or ownership.
 Run `pnpm schema:test` from the repository root to check both synthetic regtest
 fixtures. Run `cargo test --workspace` for registry, source-bundle and signer
 checks. The fixtures are deterministic test inputs, not network receipts.
+
+Run `pnpm registry:check` to check the live official registry directory and the
+canonical bytes of each listed manifest. CI and Pages run this network check
+separately from the mocked unit tests. It does not verify chain state or key
+ownership. GitHub API limits and outages can prevent discovery; the app reports
+those failures without falling back to an old catalog.

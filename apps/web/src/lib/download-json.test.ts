@@ -35,8 +35,8 @@ describe("downloadJson", () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     const content = { schema: "test", value: 1 };
-    expect(downloadCanonicalRegistryFile("deployments/test.json", content)).toEqual({
-      filename: "test.json", path: "deployments/test.json",
+    expect(downloadCanonicalRegistryFile("registry/deployments/test.json", content)).toEqual({
+      filename: "test.json", path: "registry/deployments/test.json",
     });
     expect(await (create.mock.calls[0][0] as Blob).text()).toBe(canonicalRegistryContent(content));
     expect(revoke).not.toHaveBeenCalled();

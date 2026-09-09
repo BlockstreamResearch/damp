@@ -41,6 +41,10 @@ jobs:
       - run: pnpm wasm
       - run: pnpm test
       - run: pnpm typecheck
+      - name: Verify published registry
+        run: pnpm registry:check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: pnpm --dir apps/web build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

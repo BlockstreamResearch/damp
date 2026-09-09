@@ -10,6 +10,7 @@
     "dev": "pnpm run wasm && pnpm --dir apps/web dev",
     "build": "pnpm run wasm && pnpm --dir apps/web build",
     "schema:test": "ajv validate --spec=draft2020 -s registry/schemas/deployment.schema.json -d registry/fixtures/deployment.valid.json && ajv validate --spec=draft2020 -s registry/schemas/policy-snapshot.schema.json -d registry/fixtures/policy.valid.json",
+    "registry:check": "pnpm --dir apps/web exec vitest run src/lib/github.live.test.ts --mode registry-live",
     "typecheck": "pnpm --dir apps/web typecheck",
     "test": "pnpm --dir apps/web test"
   },
