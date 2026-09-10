@@ -12,6 +12,7 @@ import {
   discoverWalletSnapshot,
   scanWaterfallsAddress,
   walletDiscoveryLimits,
+  waterfallsRequestTimeoutMs,
   WalletDiscoveryCancelledError,
   WalletDiscoverySafetyError,
   type WalletSyncAddress,
@@ -75,6 +76,145 @@ function waterfallsBody(
 }
 
 describe("Waterfalls Liquid testnet wallet discovery", () => {
+  it.each([408, 429, 500, 502, 503])("uses the backup after HTTP %s and keeps it for both batch windows", async (status) => {
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const request = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (String(input).startsWith(source.baseUrl)) return new Response(null, { status });
+      expect(String(input).startsWith(source.backupBaseUrl!)).toBe(true);
+      expect(url.pathname).toBe("/v4/waterfalls");
+      const requested = url.searchParams.get("addresses")!.split(",");
+      return Response.json({ ...waterfallsBody([]), txs_seen: { addresses: requested.map(() => []) } });
+    });
+    const snapshot = await discoverWalletSnapshot({
+      profileId, network: "liquid-testnet", scope: "base", source, request,
+      dependencies: { deriveAddress: (branch, index) => Promise.resolve(derivedAddress(branch, index)), inspect: () => Promise.resolve([]) },
+    });
+    expect(snapshot.addresses).toHaveLength(20);
+    expect(request.mock.calls.map(([input]) => String(input).startsWith(source.baseUrl))).toEqual([true, false, false]);
+  });
+
+  it("retries a network failure and tries the primary again on the next synchronization", async () => {
+    const { address } = fixtureAddress();
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const request = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockImplementation(async () => Response.json(waterfallsBody([])));
+    await scanWaterfallsAddress(source, address, request);
+    await scanWaterfallsAddress(source, address, request);
+    expect(request.mock.calls.map(([input]) => String(input).startsWith(source.baseUrl))).toEqual([true, false, true]);
+  });
+
+  it("reports an unavailable backup instead of returning an empty wallet", async () => {
+    const { address } = fixtureAddress();
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const request = vi.fn<typeof fetch>(async () => new Response(null, { status: 503 }));
+    await expect(scanWaterfallsAddress(source, address, request)).rejects.toThrow("Waterfalls backup is unavailable");
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves cancellation while the backup is in flight", async () => {
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const controller = new AbortController();
+    let backupStarted!: () => void;
+    const started = new Promise<void>((resolve) => { backupStarted = resolve; });
+    const request = vi.fn<typeof fetch>((input, init) => {
+      if (String(input).startsWith(source.baseUrl)) return Promise.resolve(new Response(null, { status: 502 }));
+      backupStarted();
+      return new Promise((_resolve, reject) => {
+        init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+      });
+    });
+    const result = discoverWalletSnapshot({
+      profileId, network: "liquid-testnet", scope: "base", source, request, signal: controller.signal,
+      dependencies: { deriveAddress: (branch, index) => Promise.resolve(derivedAddress(branch, index)) },
+    });
+    const checked = expect(result).rejects.toBeInstanceOf(WalletDiscoveryCancelledError);
+    await started;
+    controller.abort();
+    await checked;
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { status: 400, body: "Bad request" },
+    { status: 404, body: "Not found" },
+    { status: 200, body: "not-json" },
+    { status: 200, body: "{}" },
+  ])("does not hide an invalid primary response with failover: $status $body", async ({ status, body }) => {
+    const { address } = fixtureAddress();
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const request = vi.fn<typeof fetch>(async () => new Response(body, { status }));
+    await expect(scanWaterfallsAddress(source, address, request)).rejects.toThrow();
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out a stalled primary request without exhausting the shared synchronization deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const { address } = fixtureAddress();
+      const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+      const request = vi.fn<typeof fetch>((input, init) => {
+        if (!String(input).startsWith(source.baseUrl)) return Promise.resolve(Response.json(waterfallsBody([])));
+        return new Promise((_resolve, reject) => {
+          init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+        });
+      });
+      const result = scanWaterfallsAddress(source, address, request);
+      const checked = expect(result).resolves.toMatchObject({ hasActivity: false, utxos: [] });
+      await vi.advanceTimersByTimeAsync(waterfallsRequestTimeoutMs);
+      await checked;
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls[0][1]!.signal!.aborted).toBe(true);
+      expect(request.mock.calls[1][1]!.signal!.aborted).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a backup UTXO view at a different tip from primary history", async () => {
+    const { address } = fixtureAddress();
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const request = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.searchParams.has("utxo_only") && String(input).startsWith(source.baseUrl)) return new Response(null, { status: 502 });
+      return Response.json(waterfallsBody([{ txid, height: 0, v: 1 }], {
+        hash: String(input).startsWith(source.baseUrl) ? blockHash : "12".repeat(32),
+      }));
+    });
+    await expect(scanWaterfallsAddress(source, address, request)).rejects.toThrow("chain tip changed");
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+
+  it("counts backup traffic against the shared fallback request limit", async () => {
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const request = vi.fn<typeof fetch>(async (input) => String(input).startsWith(source.baseUrl)
+      ? new Response(null, { status: 503 })
+      : Response.json(waterfallsBody([{ txid, height: 0, v: 1 }])));
+    await expect(discoverWalletSnapshot({
+      profileId, network: "liquid-testnet", scope: "base", source, request, gapLimit: 1,
+      dependencies: { deriveAddress: (branch, index) => Promise.resolve(derivedAddress(branch, index)) },
+    })).rejects.toMatchObject({ code: "WALLET_DISCOVERY_SAFETY_LIMIT", limit: "fallback-requests" });
+    expect(request).toHaveBeenCalledTimes(1 + walletDiscoveryLimits.maxFallbackRequests);
+  });
+
+  it.runIf(import.meta.env.MODE === "waterfalls-live")("scans synthetic address batches through the real backup API", async () => {
+    const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
+    const request = vi.fn<typeof fetch>((input, init) => String(input).startsWith(source.baseUrl)
+      ? Promise.resolve(new Response(null, { status: 502 }))
+      : fetch(input, init));
+    const snapshot = await discoverWalletSnapshot({
+      profileId, network: "liquid-testnet", scope: "base", source, request,
+      dependencies: { deriveAddress: (branch, index) => Promise.resolve(derivedAddress(branch, index)), inspect: () => Promise.resolve([]) },
+    });
+    expect(snapshot.addresses).toHaveLength(20);
+    expect(snapshot.utxos).toEqual([]);
+    expect(snapshot.tipHeight).toBeGreaterThan(0);
+    expect(snapshot.tipHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(request.mock.calls.map(([input]) => String(input).startsWith(source.baseUrl))).toEqual([true, false, false]);
+  });
+
   it("accepts the strict live v4 shape where full history omits v and uses block_timestamp", async () => {
     const unconfidential = liveWaterfallsFixture.address;
     const confidentialAddress = liquidAddress.toConfidential(
@@ -250,7 +390,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
     });
   });
 
-  it("reconstructs omitted paginated positions from bounded Waterfalls raw transactions", async () => {
+  it.each([false, true])("reconstructs omitted positions from Waterfalls raw transactions, backup=%s", async (useBackup) => {
     const { address, unconfidential } = fixtureAddress();
     const source = walletDiscoverySource("liquid-testnet") as Extract<ReturnType<typeof walletDiscoverySource>, { provider: "waterfalls-v4" }>;
     const funding = fundingTransaction(address.scriptPubkey);
@@ -268,6 +408,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
         }]);
       }
       if (url.pathname.endsWith(`/tx/${fundingTxid}/raw`)) {
+        if (useBackup && String(input).startsWith(source.baseUrl)) return new Response(null, { status: 502 });
         return new Response(Buffer.from(funding.toHex(), "hex"));
       }
       const page = Number(url.searchParams.get("page"));
@@ -286,6 +427,7 @@ describe("Waterfalls Liquid testnet wallet discovery", () => {
       utxos: [{ txid: fundingTxid, vout: 0, status: { confirmed: true, block_height: outputHeight } }],
     });
     expect(request.mock.calls.some(([input]) => String(input).endsWith(`/tx/${fundingTxid}/raw`))).toBe(true);
+    expect(request.mock.calls.some(([input]) => String(input).startsWith(source.backupBaseUrl!))).toBe(useBackup);
   });
 
   it("rejects a fallback that omits one of several Waterfalls-proven outputs", async () => {

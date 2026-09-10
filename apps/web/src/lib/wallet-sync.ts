@@ -39,6 +39,7 @@ const maxWaterfallsPages = 20;
 const maxJsonResponseBytes = 1_000_000;
 const maxTransactionHexBytes = 2_000_000;
 const transactionFetchConcurrency = 8;
+export const waterfallsRequestTimeoutMs = 8_000;
 
 /**
  * One synchronization shares these limits across both wallet branches and all
@@ -242,6 +243,7 @@ class WalletDiscoveryWorkBudget {
   private readonly parentTransactions = new Set<string>();
   private readonly transactionHex = new Map<string, Promise<string>>();
   private fallbackRequests = 0;
+  private waterfallsBaseUrl?: string;
 
   constructor(source: WalletDiscoverySource, signal?: AbortSignal) {
     this.source = source;
@@ -332,6 +334,50 @@ class WalletDiscoveryWorkBudget {
     });
   }
 
+  /** Retry transport failures, not invalid data. Keep the backup for this sync only. */
+  async fetchWaterfalls(request: typeof fetch, path: string, init: RequestInit) {
+    if (this.source.provider !== "waterfalls-v4") throw new Error("Expected a Waterfalls discovery source.");
+    const primary = this.source.baseUrl.replace(/\/$/, "");
+    const backup = this.source.backupBaseUrl?.replace(/\/$/, "");
+    const current = this.waterfallsBaseUrl ?? primary;
+    const endpoints = backup && backup !== current ? [current, backup] : [current];
+    for (let index = 0; index < endpoints.length; index += 1) {
+      const base = endpoints[index];
+      const controller = new AbortController();
+      const timeoutError = new Error("Waterfalls request timed out.");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeout = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            controller.abort(timeoutError);
+            reject(timeoutError);
+          }, waterfallsRequestTimeoutMs);
+        });
+        const response = await Promise.race([
+          this.fetch((input, options) => request(input, {
+            ...options,
+            signal: AbortSignal.any([this.controller.signal, controller.signal]),
+          }), `${base}${path}`, init),
+          timeout,
+        ]);
+        if (response.status !== 408 && response.status !== 429 && response.status < 500) return response;
+        void response.body?.cancel().catch(() => undefined);
+        throw new Error(`Waterfalls request failed (${response.status}).`);
+      } catch (error) {
+        this.assertActive();
+        if (error instanceof WalletDiscoveryCancelledError || error instanceof WalletDiscoverySafetyError) throw error;
+        if (index + 1 === endpoints.length) {
+          if (base === backup) throw new Error("Waterfalls backup is unavailable; retry wallet synchronization later.", { cause: error });
+          throw error;
+        }
+        this.waterfallsBaseUrl = backup;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw new Error("No Waterfalls discovery endpoint is configured.");
+  }
+
   private readonly cancel = () => {
     if (this.failure) return;
     this.failure = new WalletDiscoveryCancelledError();
@@ -341,8 +387,8 @@ class WalletDiscoveryWorkBudget {
   private isFallback(input: RequestInfo | URL) {
     if (this.source.provider !== "waterfalls-v4") return false;
     const url = String(input);
-    return [this.source.utxoFallbackUrl, this.source.outspendFallbackUrl]
-      .some((base) => url.startsWith(base.replace(/\/$/, "")));
+    return [this.source.backupBaseUrl, this.source.utxoFallbackUrl, this.source.outspendFallbackUrl]
+      .some((base) => base !== undefined && url.startsWith(`${base.replace(/\/$/, "")}/`));
   }
 
   private charge(limit: WalletDiscoveryLimit, current: number, count: number, maximum: number) {
@@ -905,7 +951,6 @@ async function scanWaterfallsAddressWithBudget(
 ): Promise<AddressScanResult> {
   const decoded = decodeWaterfallsAddress(address);
 
-  const base = source.baseUrl.replace(/\/$/, "");
   const history = new Set<string>();
   const historyEvidence = new Map<string, z.infer<typeof waterfallsTxSeenSchema>>();
   const historyRecords: Array<z.infer<typeof waterfallsTxSeenSchema>> = [];
@@ -918,7 +963,7 @@ async function scanWaterfallsAddressWithBudget(
 
   while (true) {
     if (page >= maxWaterfallsPages) throw new Error(`Waterfalls history exceeded ${maxWaterfallsPages} pages.`);
-    const response = await getWaterfallsPage(request, base, decoded.unconfidentialAddress, page, false, budget);
+    const response = await getWaterfallsPage(request, decoded.unconfidentialAddress, page, false, budget);
     tip = requireConsistentWaterfallsTip(tip, response);
     budget.retainHistoryEntries(response.txs_seen.addresses[0].length);
     for (const item of response.txs_seen.addresses[0]) {
@@ -991,7 +1036,7 @@ async function scanWaterfallsAddressWithBudget(
         budget,
       );
     } else {
-      const response = await getWaterfallsPage(request, base, decoded.unconfidentialAddress, 0, true, budget);
+      const response = await getWaterfallsPage(request, decoded.unconfidentialAddress, 0, true, budget);
       requireConsistentWaterfallsTip(tip, response);
       if (response.has_more?.length) throw new Error("Waterfalls unexpectedly truncated a UTXO-only response.");
       const seen = new Set<string>();
@@ -1043,7 +1088,7 @@ async function scanWaterfallsAddressesWithBudget(
   const decoded = addresses.map(decodeWaterfallsAddress);
   const requested = decoded.map((value) => value.unconfidentialAddress);
   const query = new URLSearchParams({ addresses: requested.join(","), page: "0" });
-  const response = await budget.fetch(request, `${source.baseUrl.replace(/\/$/, "")}/v4/waterfalls?${query}`, {
+  const response = await budget.fetchWaterfalls(request, `/v4/waterfalls?${query}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   });
@@ -1096,7 +1141,6 @@ function decodeWaterfallsAddress(address: WalletSyncAddress) {
 
 async function getWaterfallsPage(
   request: typeof fetch,
-  baseUrl: string,
   unconfidentialAddress: string,
   page: number,
   utxoOnly: boolean,
@@ -1104,7 +1148,7 @@ async function getWaterfallsPage(
 ) {
   const query = new URLSearchParams({ addresses: unconfidentialAddress, page: String(page) });
   if (utxoOnly) query.set("utxo_only", "true");
-  const response = await budget.fetch(request, `${baseUrl}/v4/waterfalls?${query}`, {
+  const response = await budget.fetchWaterfalls(request, `/v4/waterfalls?${query}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   });
@@ -1363,7 +1407,7 @@ async function fetchTransactionFromSource(
 ) {
   return budget.fetchTransaction(txid, async () => {
     if (source.provider === "waterfalls-v4") {
-      const response = await budget.fetch(request, `${source.baseUrl.replace(/\/$/, "")}/tx/${txid}/raw`, {
+      const response = await budget.fetchWaterfalls(request, `/tx/${txid}/raw`, {
         cache: "no-store",
         headers: { Accept: "application/octet-stream" },
       });
