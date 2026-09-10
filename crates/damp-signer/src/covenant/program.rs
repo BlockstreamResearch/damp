@@ -711,18 +711,18 @@ mod tests {
         let expected = [
             (
                 TreeDepth::D4,
-                "31d8abe4a802c463ef7fc7ef33bb36674a4a25aad7e0d73eb4f60834b228b992",
-                "51205ffd3be295d450cd89b32bfd92e9c51d022462d0ac5503a01c30c7a5756a1433",
+                "be9dc0ab3418046779b0e63b4aacbb27828859280cf42d23cb353ec8335cbc9f",
+                "5120903228cd15b1cba8abe43a4ce1f2d070f5dab41ecfd71b69232d63cb73c5b99c",
             ),
             (
                 TreeDepth::D5,
-                "68f80fbadf051385e830bf7928a641ffddae93ca701bd5463a0d4e8421004753",
-                "5120af38d405d025d525f770aac9022a4c387296f8a8fb58750c23632525bc84e6f3",
+                "783234b4c17d64ac1f468d2d19e04349dda71d524d33f45d5168d528463587b1",
+                "5120144e6683946cd04410409c0875b986b6b2f14e4e7c51c13d125b042e716f469a",
             ),
             (
                 TreeDepth::D6,
-                "af00240d51e62669f85a879aa5cd7c9e37c2bffe2c52a1e33d70d9d4eceaf7c8",
-                "5120ba0fa730f2fb7c185cbd69b26864d10edf2f5da1232d3e62c72421266ee0aac1",
+                "c0df6f6b43da4e14f2b3c61c0f41a38c7a2cc402e02856f5d70aaeed523e3705",
+                "5120311856a6b8c06937230afa113ed4df99ebb7e8ca4272e3e6b6e8d2f02739d8e9",
             ),
         ];
         for (depth, verifier_hash, script) in expected {

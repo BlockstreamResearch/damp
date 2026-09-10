@@ -67,6 +67,7 @@ const fixtures = (() => {
 })();
 
 const calls = vi.hoisted(() => ({
+  confidentialFees: false,
   walletRefetch: vi.fn(),
   liveRefetch: vi.fn(),
   validateAddress: vi.fn(() => Promise.resolve(fixtures.recipient.ownerPublicKey)),
@@ -77,6 +78,15 @@ const calls = vi.hoisted(() => ({
   saveReceipt: vi.fn(),
   setQueryData: vi.fn(),
 }));
+
+function walletSnapshot() {
+  return calls.confidentialFees ? {
+    ...fixtures.snapshot,
+    utxos: fixtures.snapshot.utxos.map((utxo) => utxo.source === "wallet"
+      ? { ...utxo, assetConfidential: true, valueConfidential: true }
+      : utxo),
+  } : fixtures.snapshot;
+}
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to, ...props }: { children: React.ReactNode; to: string }) => <a href={to} {...props}>{children}</a>,
@@ -117,7 +127,7 @@ vi.mock("../lib/deployment-import", () => ({ persistPublicDeploymentImport: vi.f
 
 vi.mock("../lib/wallet-query", () => ({
   walletSyncQueryKeys: { wallet: (profileId: string, network: string) => ["wallet-sync", profileId, network] },
-  useDeploymentWalletSync: () => ({ data: { snapshot: fixtures.snapshot }, error: null, isPending: false, isFetching: false, refetch: calls.walletRefetch }),
+  useDeploymentWalletSync: () => ({ data: { snapshot: walletSnapshot() }, error: null, isPending: false, isFetching: false, refetch: calls.walletRefetch }),
   walletSyncPresentation: vi.fn(),
 }));
 
@@ -126,7 +136,7 @@ vi.mock("../lib/wallet-sync", () => ({
   ensureSignerHolderAddress: vi.fn(() => Promise.resolve(fixtures.ownAddress)),
   feeFundingState: vi.fn(),
   nextFundingAddress: vi.fn(),
-  synchronizeDeploymentWallet: vi.fn(() => Promise.resolve(fixtures.snapshot)),
+  synchronizeDeploymentWallet: vi.fn(() => Promise.resolve(walletSnapshot())),
 }));
 
 vi.mock("../lib/signer-operation-state", () => ({ hasPendingSignerOperation: () => false, setSignerOperationPending: vi.fn() }));
@@ -149,8 +159,9 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  calls.confidentialFees = false;
   calls.validateAddress.mockReset().mockResolvedValue(fixtures.recipient.ownerPublicKey);
-  calls.walletRefetch.mockReset().mockResolvedValue({ data: { snapshot: fixtures.snapshot }, error: null });
+  calls.walletRefetch.mockReset().mockImplementation(() => Promise.resolve({ data: { snapshot: walletSnapshot() }, error: null }));
   calls.liveRefetch.mockReset().mockResolvedValue({ data: { anchor: { txid: fixtures.hash("b"), confirmations: 2, scriptPubkey: "51" }, policy: fixtures.policy }, error: null });
   calls.signTransfer.mockReset().mockResolvedValue({ txid: fixtures.hash("e"), transaction: "00" });
   calls.broadcast.mockReset().mockResolvedValue(fixtures.hash("e"));
@@ -175,6 +186,20 @@ async function openReview() {
 }
 
 describe("WalletSend progressive validation", () => {
+  it("reviews confidential fee inputs without preparation and waits for explicit signing", async () => {
+    calls.confidentialFees = true;
+    await openReview();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(calls.signTransfer).not.toHaveBeenCalled();
+    expect(calls.broadcast).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Sign and broadcast/ }));
+    await waitFor(() => expect(calls.broadcast).toHaveBeenCalledOnce());
+    expect(calls.signTransfer).toHaveBeenCalledOnce();
+    expect(calls.signTransfer).toHaveBeenCalledWith(expect.objectContaining({
+      feeUtxos: [expect.objectContaining({ txid: fixtures.hash("d"), vout: 1 })],
+    }));
+  });
+
   it.each(["anchor", "signer", "broadcast"])("shows %s failures on the review screen after loading ends", async (stage) => {
     await openReview();
     const error = `Controlled ${stage} failure`;
@@ -206,7 +231,7 @@ describe("WalletSend progressive validation", () => {
     render(<WalletSend />);
     expect(screen.getByRole("heading", { name: "Build a regulated transfer" })).toBeInTheDocument();
     expect(screen.getByText(/does not prove which deployment manifest/i)).toBeInTheDocument();
-    expect(screen.getByText("Explicit asset IDs, confidential transfer amounts")).toBeInTheDocument();
+    expect(screen.getByText("Explicit output asset IDs, confidential transfer amounts")).toBeInTheDocument();
     expect(screen.queryByText(/explicit transfer amounts/i)).not.toBeInTheDocument();
     const recipient = screen.getByLabelText(/Recipient confidential address/);
     const amount = screen.getByLabelText(/^Amount/);

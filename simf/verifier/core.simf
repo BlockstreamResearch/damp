@@ -56,18 +56,23 @@ fn scan_input(
                 None => true,
                 Some(_issued: bool) => false,
             });
-            let asset_id: u256 = unwrap_right::<(u1, u256)>(asset);
-            match jet::eq_256(asset_id, param::REGULATED_ASSET_ID) {
-                false => Right(summary),
-                true => {
-                    let (explicit_asset, amount): (u256, u64) =
-                        input_asset_and_amount(index);
-                    assert_eq_256(explicit_asset, param::REGULATED_ASSET_ID);
-                    assert!(jet::lt_64(0, amount));
-                    Right((
-                        safe_add_32(regulated_input_count, 1),
-                        safe_add_64(regulated_input_amount, amount),
-                    ))
+            // Assume issuance and governance keep regulated balances explicit
+            // and user-locked. The output scan preserves that confinement, so
+            // confidential asset inputs cannot be regulated balances.
+            match asset {
+                Left(_commitment: (u1, u256)) => Right(summary),
+                Right(asset_id: u256) => match jet::eq_256(asset_id, param::REGULATED_ASSET_ID) {
+                    false => Right(summary),
+                    true => {
+                        let (explicit_asset, amount): (u256, u64) =
+                            input_asset_and_amount(index);
+                        assert_eq_256(explicit_asset, param::REGULATED_ASSET_ID);
+                        assert!(jet::lt_64(0, amount));
+                        Right((
+                            safe_add_32(regulated_input_count, 1),
+                            safe_add_64(regulated_input_amount, amount),
+                        ))
+                    },
                 },
             }
         },

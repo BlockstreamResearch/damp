@@ -218,7 +218,14 @@ mod tests {
             let policy = PolicySet::new(depth, [])?;
             let commitment = policy.commitment();
             let anchor = protocol.anchor(commitment)?;
-            for count in [1usize, 2, 10] {
+            for (count, confidential_fee) in [
+                (1usize, false),
+                (2, false),
+                (10, false),
+                (1, true),
+                (2, true),
+                (10, true),
+            ] {
                 let mut pset = PartiallySignedTransaction::new_v2();
                 let mut inputs = HashMap::new();
                 let mut proofs = Vec::new();
@@ -233,24 +240,38 @@ mod tests {
                     let outpoint =
                         OutPoint::new(Txid::from_byte_array([i as u8 + 1; 32]), i as u32);
                     let mut input = Input::from_prevout(outpoint);
-                    input.witness_utxo = Some(TxOut {
+                    let mut spent = TxOut {
                         asset: Asset::Explicit(a),
                         value: Amount::Explicit(v),
                         script_pubkey: script,
                         ..Default::default()
-                    });
+                    };
+                    let mut opening = TxOutSecrets::new(
+                        a,
+                        AssetBlindingFactor::zero(),
+                        v,
+                        ValueBlindingFactor::zero(),
+                    );
+                    if confidential_fee && i == count + 1 {
+                        let (blinded, asset_bf, value_bf, _) = TxOut::new_last_confidential(
+                            &mut rand::thread_rng(),
+                            secp,
+                            v,
+                            a,
+                            spent.script_pubkey.clone(),
+                            owner_public,
+                            &[opening],
+                            &[],
+                        )?;
+                        assert!(blinded.asset.is_confidential());
+                        spent = blinded;
+                        opening = TxOutSecrets::new(a, asset_bf, v, value_bf);
+                    }
+                    input.witness_utxo = Some(spent);
                     input.asset = Some(a);
                     input.amount = Some(v);
                     pset.add_input(input);
-                    inputs.insert(
-                        i,
-                        TxOutSecrets::new(
-                            a,
-                            AssetBlindingFactor::zero(),
-                            v,
-                            ValueBlindingFactor::zero(),
-                        ),
-                    );
+                    inputs.insert(i, opening);
                     if i > 0 && i <= count {
                         proofs.push(IndexedInputPolicyProof::new(
                             i as u32,
@@ -342,7 +363,7 @@ mod tests {
                     }
                 }
                 println!(
-                    "native depth={depth:?} regulated outputs={count} anchor stack bytes={}",
+                    "native depth={depth:?} regulated outputs={count} confidential fee={confidential_fee} anchor stack bytes={}",
                     elements::encode::serialize(&stack).len()
                 );
                 pset.inputs_mut()[0].final_script_witness = Some(stack);

@@ -20,8 +20,21 @@ Transfers support up to ten regulated inputs and ten regulated outputs. The
 application amount cap is `2^63-1`. Audit reports trust one configured chain
 provider and disclose incomplete coverage.
 
+Ordinary transfers assume that issuance and issuer governance keep every
+regulated balance explicit and locked behind `user.simf`. The verifier preserves
+this confinement by checking every output asset ID and requiring regulated
+outputs to use the user script and carry an audit proof. A confidential asset
+input therefore cannot be a regulated balance under this assumption. Wallet
+L-BTC inputs can be fully confidential and pay fees directly, without a
+preparation transaction. Transfers still prohibit issuance on every input.
+Output asset IDs remain explicit; transfer amounts remain confidential.
+The issuer's governance branch can end confinement, so this assumption does
+not protect against an issuer who signs outside those rules.
+
 The repository supports one current implementation. Old bundles and APIs are
-not supported.
+not supported. Direct confidential fee funding requires a fresh deployment of
+the current contract bundle. Updating the app does not upgrade existing anchors
+or make older manifests compatible.
 
 - [`simf/`](simf/) contains the authored contracts. Sigma verification is in
   [`lib/audit.simf`](simf/lib/audit.simf).

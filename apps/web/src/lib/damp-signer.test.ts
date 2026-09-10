@@ -43,7 +43,7 @@ describe("DAMP signer WebAssembly", () => {
   });
 
   it("matches the canonical deployment identity after parsing", () => {
-    expect(signerModule.validateDeployment(deploymentFixture)).toBe("bb176f81323fbbfadfa6a64280f9ce7fd4a4d339f63ebf0119ed0a9783109761");
+    expect(signerModule.validateDeployment(deploymentFixture)).toBe("ef885297eaa75868748190579b5f91aeb9fd84c385a58858c39991965f04a373");
   });
 
   it("derives stable LWK addresses and builds a D4 blacklist", () => {

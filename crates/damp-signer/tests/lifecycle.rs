@@ -22,7 +22,7 @@ use elements::hashes::Hash as _;
 use elements::{Address, AssetId};
 
 #[test]
-fn non_issuer_holder_transfers_with_compatible_fee_funding() -> anyhow::Result<()> {
+fn non_issuer_holder_transfers_with_confidential_fee_funding() -> anyhow::Result<()> {
     let network = DeploymentNetwork::ElementsRegtest;
     let issuer = Signer::new(MNEMONIC, network)?;
     let holder = Signer::new(
@@ -122,37 +122,36 @@ fn non_issuer_holder_transfers_with_compatible_fee_funding() -> anyhow::Result<(
         "transfer"
     );
 
-    // Faucet-style blinded asset IDs cannot be classified by the current
-    // covenant. This restriction is about fee funding, not issuer authority.
+    // A distinct holder spends faucet-style L-BTC directly. No issuer key or
+    // fee-preparation transaction is needed, and regulated outputs stay explicit.
     let blinded_fee = confidential_funding_utxo(&holder, network, policy_asset, 100_000, 0)?;
-    let error = holder.transfer(request(blinded_fee.clone())).unwrap_err();
+    assert!(blinded_fee.txout().asset.is_confidential());
+    assert!(blinded_fee.txout().value.is_confidential());
+    let direct = request(blinded_fee);
+    let spent = std::iter::once(&direct.verifier_utxo)
+        .chain(&direct.regulated_utxos)
+        .chain(&direct.fee_utxos)
+        .map(|input| input.txout().clone())
+        .collect::<Vec<_>>();
+    let sent = holder.transfer(direct)?;
+    let transaction: elements::Transaction =
+        elements::encode::deserialize(&hex::decode(&sent.transaction)?)?;
+    Signer::verify_transaction(&transaction, &spent, 5250.try_into()?)?;
     assert!(
-        error
-            .to_string()
-            .contains("input asset ID to remain explicit"),
-        "{error}"
+        transaction
+            .output
+            .iter()
+            .all(|output| output.asset.is_explicit())
     );
-
-    // Existing funding preparation preserves wallet ownership and produces
-    // explicit asset IDs with confidential values, which the transfer accepts.
-    let prepared = holder.split_funding(SplitFundingRequest {
-        network,
-        policy_asset: public_asset(policy_asset),
-        source_utxos: vec![blinded_fee],
-        fee: "500".parse()?,
-    })?;
-    let prepared_fee = parent_utxo(
-        &prepared.txid,
-        0,
-        &prepared.transaction,
-        Some(wallet_locator),
-        None,
-    );
-    let sent = holder.transfer(request(prepared_fee))?;
+    assert!(transaction.output[1].value.is_confidential());
+    assert!(transaction.output[2].value.is_confidential());
+    assert!(transaction.output[3].value.is_confidential());
     let recipient = parent_utxo(&sent.txid, 1, &sent.transaction, None, Some(issuer_locator));
     let change = parent_utxo(&sent.txid, 2, &sent.transaction, None, Some(holder_locator));
     assert_eq!(issuer.inspect(&[recipient])?[0].amount, "32");
     assert_eq!(holder.inspect(&[change])?[0].amount, "23");
+    let fee_change = parent_utxo(&sent.txid, 3, &sent.transaction, Some(wallet_locator), None);
+    assert_eq!(holder.inspect(&[fee_change])?[0].amount, "94750");
     Ok(())
 }
 

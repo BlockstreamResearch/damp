@@ -16,7 +16,7 @@
   "reissuanceEntropy": null,
   "userProgramHash": "1b947cb45577cad0aff98fd00c7915c1ee907f3a897544645d6634c5abda2a1a",
   "governanceProgramHash": "0284409753deb32514fe9d28fa548bca6559bb06ec1e98d1390843c6a49ea3bd",
-  "contractBundleHash": "7eefff87a27f0616366375f5776b9febda2a78c0c57b9a9b4c63eaa84c103919",
+  "contractBundleHash": "4b7d3fc7dccb189896b1cafbe1978165acc102d6892b5eb8b4e8a1f60872d596",
   "audit": {
     "publicKey": "039fa11437e0f7696bd66b151b7e5f26e952279369c32941ed7bec68327b16814e",
     "epoch": 1

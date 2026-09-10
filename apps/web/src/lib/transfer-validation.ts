@@ -171,9 +171,10 @@ export function selectTransferFunding(input: {
   }
   const fee = estimateTransferFee(chosen.length);
   const compatibleFeeOutput = (utxo: WalletSyncUtxo) => {
-    // The verifier classifies every input by its explicit asset ID, including fees.
+    // Wallet fee inputs may have confidential asset IDs. Audited transfers
+    // still require positive fee change to balance the value commitments.
     const required = fee + 1n;
-    return !utxo.assetConfidential && BigInt(utxo.amount) >= required;
+    return BigInt(utxo.amount) >= required;
   };
   const confirmedFeeCandidates = snapshot.utxos
     .filter((utxo) => utxo.source === "wallet" && utxo.assetId === deployment.policyAsset && utxo.status === "confirmed")
@@ -187,10 +188,6 @@ export function selectTransferFunding(input: {
   const feeOutput = confirmedFeeCandidates.find(compatibleFeeOutput);
   const pendingFees = total(pendingFeeCandidates);
   if (!feeOutput) {
-    if (confirmedFeeCandidates.some((utxo) => utxo.assetConfidential && BigInt(utxo.amount) > fee)
-      && !pendingFeeCandidates.some(compatibleFeeOutput)) {
-      throw new TransferValidationError("context", "fee-asset-confidential", "The available L-BTC fee outputs have confidential asset IDs. This deployment requires an explicit-asset fee output. Prepare compatible fee funds before transferring; issuer authority is not required.", true);
-    }
     const pendingHint = pendingFeeCandidates.some(compatibleFeeOutput)
       ? " A compatible L-BTC output is pending confirmation."
       : total(confirmedFeeCandidates) >= fee

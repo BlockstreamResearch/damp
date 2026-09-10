@@ -229,13 +229,15 @@ describe("transfer funding selection", () => {
       amount: 50n,
     })).toThrow(/one compatible fee output/i);
 
-    expect(() => selectTransferFunding({
+    const direct = selectTransferFunding({
       snapshot: snapshot([holder, feeUtxo("2", 0, fee + 1n, "confirmed", { asset: true })]),
       deployment,
       policy,
       profileId,
       amount: 50n,
-    })).toThrow(/confidential asset IDs.*explicit-asset fee output.*issuer authority is not required/);
+    });
+    expect(direct.feeUtxos).toHaveLength(1);
+    expect(direct.feeUtxos[0]).toMatchObject({ txid: hash("2"), vout: 0 });
 
     const selected = selectTransferFunding({
       snapshot: snapshot([
@@ -250,7 +252,20 @@ describe("transfer funding selection", () => {
       amount: 50n,
     });
     expect(selected.feeUtxos).toHaveLength(1);
-    expect(selected.feeUtxos[0]).toMatchObject({ txid: hash("3"), vout: 0 });
+    expect(selected.feeUtxos[0]).toMatchObject({ txid: hash("0"), vout: 0 });
+  });
+
+  it("waits for confidential fee confirmation and ignores spent or unrelated assets", () => {
+    const fee = estimateTransferFee(1);
+    const holder = holderUtxo("1", 0, 100n);
+    const confidential = feeUtxo("2", 0, fee + 1n, "confirmed", { asset: true, value: true });
+    const select = (...fees: WalletSyncUtxo[]) => selectTransferFunding({
+      snapshot: snapshot([holder, ...fees]), deployment, policy, profileId, amount: 50n,
+    });
+    expect(() => select({ ...confidential, status: "unconfirmed" })).toThrow(/pending confirmation/i);
+    expect(() => select({ ...confidential, status: "spent" })).toThrow(/No confirmed L-BTC output/i);
+    expect(() => select({ ...confidential, assetId: hash("f") })).toThrow(/No confirmed L-BTC output/i);
+    expect(select(confidential).confirmedFees).toBe(fee + 1n);
   });
 
   it("fails closed for missing or cross-network wallet snapshots", () => {

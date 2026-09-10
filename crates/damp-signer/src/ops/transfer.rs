@@ -18,8 +18,8 @@ use crate::ops::request::TransferRequest;
 use crate::ops::review::OperationReview;
 use crate::ops::review::SignedOperation;
 use crate::transaction::{
-    ValidatedUtxo, add_validated_input, add_wallet_metadata, decode_utxo,
-    finalize_lwk_wallet_inputs, select_fee_funding, select_smallest_sufficient,
+    ValidatedUtxo, add_validated_input, add_wallet_metadata, decode_confidential_wallet_utxo,
+    decode_utxo, finalize_lwk_wallet_inputs, select_fee_funding, select_smallest_sufficient,
     set_lwk_genesis_hash, wallet_address,
 };
 use lwk_signer::SwSigner;
@@ -83,7 +83,7 @@ pub fn sign_transfer(
     let fee_candidates = request
         .fee_utxos
         .iter()
-        .map(|utxo| decode_utxo(signer, utxo, policy_asset))
+        .map(|utxo| decode_confidential_wallet_utxo(signer, utxo, policy_asset))
         .collect::<anyhow::Result<Vec<_>>>()?;
     // The verifier budget is measured for one ordinary policy-asset input in
     // addition to the anchor and regulated inputs. Requiring one sufficiently
