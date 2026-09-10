@@ -246,7 +246,7 @@ button { color: inherit; }
 .policy-balance-error { margin: -18px 0 20px; padding: 12px; display: grid; gap: 6px; border: 1px solid rgba(255,185,177,.45); border-radius: 9px; background: rgba(94,24,19,.25); }
 .policy-balance-error strong { color: #ffd7d2; font-size: 11px; }
 .policy-balance-error span { color: #ebc6c2; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
-.policy-balance-error .button { width: fit-content; margin-top: 3px; color: #fff; border-color: rgba(255,255,255,.35); }
+.policy-balance-error .button { width: fit-content; max-width: 100%; margin-top: 3px; }
 .blacklisted-balance { margin: -18px 0 20px; padding: 11px 12px; display: flex; align-items: flex-start; gap: 9px; border: 1px solid rgba(255,185,177,.45); border-radius: 9px; background: rgba(94,24,19,.25); color: #f4d0cc; font-size: 9px; line-height: 1.5; }
 .blacklisted-balance svg { flex: 0 0 auto; color: #ffb7ad; }
 .blacklisted-balance span { display: grid; gap: 2px; }
@@ -254,9 +254,9 @@ button { color: inherit; }
 .balance-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .balance-actions .primary { color: var(--navy); background: #f7fbff; }
 .balance-actions .primary:hover { background: #e4eff7; }
-.balance-actions .secondary { color: #e9f1f7; border-color: rgba(255,255,255,.3); background: transparent; }
-.balance-actions .secondary:hover { border-color: rgba(255,255,255,.55); background: rgba(255,255,255,.08); }
-.balance-actions .button:focus-visible { outline-color: #9ccbfa; }
+.balance-card .button.secondary { color: #e9f1f7; border-color: rgba(255,255,255,.3); background: transparent; }
+.balance-card .button.secondary:hover { border-color: rgba(255,255,255,.55); background: rgba(255,255,255,.08); }
+.balance-card .button:focus-visible { outline-color: #9ccbfa; }
 .card-rule { height: 1px; margin: 23px 0 18px; background: rgba(255,255,255,.14); }
 .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
 .stat-row span { display: grid; gap: 5px; }
