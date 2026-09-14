@@ -53,6 +53,10 @@ impl TransactionRecord {
     pub const fn encoded_size(&self) -> usize {
         self.encoded_size
     }
+    /// Inspect public chain fields without credentials or amount recovery.
+    pub fn inspect_public(&self) -> super::PublicTransaction {
+        super::inspect(self)
+    }
     pub fn into_transaction(self) -> Transaction {
         self.transaction
     }

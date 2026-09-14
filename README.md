@@ -41,6 +41,8 @@ or make older manifests compatible.
 - [`crates/damp-core/`](crates/damp-core/) contains policy, registry and proof logic.
 - [`crates/damp-signer/`](crates/damp-signer/) constructs and signs transactions,
   checks covenant execution and exposes native and WebAssembly interfaces.
+- [`crates/damp-indexer/`](crates/damp-indexer/README.md) indexes public audit
+  history in resumable Rust batches and provides local access-token setup/reset.
 - [`apps/web/`](apps/web/) is the wallet and issuer UI.
 
 ## Run and test

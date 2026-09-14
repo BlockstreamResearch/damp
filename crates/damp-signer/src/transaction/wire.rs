@@ -1,6 +1,45 @@
 use serde::de::{Error, SeqAccess, Visitor};
 
 use super::TransactionRecord;
+use serde::Deserialize;
+
+pub(crate) fn parse_optional_decimal<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<u64>, D::Error> {
+    Option::<String>::deserialize(decoder)?
+        .map(|text| {
+            let amount: u64 = text.parse().map_err(D::Error::custom)?;
+            if text != amount.to_string() {
+                return Err(D::Error::custom("noncanonical public amount"));
+            }
+            Ok(amount)
+        })
+        .transpose()
+}
+
+pub(crate) fn parse_optional_hex<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<Vec<u8>>, D::Error> {
+    Option::<String>::deserialize(decoder)?
+        .map(|text| parse_hex(&text))
+        .transpose()
+}
+
+fn parse_hex<E: serde::de::Error>(text: &str) -> Result<Vec<u8>, E> {
+    let bytes = hex::decode(text).map_err(E::custom)?;
+    if hex::encode(&bytes) != text {
+        return Err(E::custom("noncanonical public hex"));
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn parse_hex_script<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<elements::Script, D::Error> {
+    Ok(elements::Script::from(parse_hex::<D::Error>(
+        &String::deserialize(decoder)?,
+    )?))
+}
 
 pub(crate) fn bounded_transactions<'de, D, const MAX: usize>(
     decoder: D,

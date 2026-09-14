@@ -1,37 +1,49 @@
 use damp_core::ledger::{AssetId, ConsensusTxid, Outpoint, Txid};
 use elements::{Script, hashes::Hash as _};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{TransactionRecord, wire};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicIssuance {
     pub asset: AssetId,
     pub token: AssetId,
-    #[serde(serialize_with = "wire::optional_decimal")]
+    #[serde(
+        serialize_with = "wire::optional_decimal",
+        deserialize_with = "wire::parse_optional_decimal"
+    )]
     pub amount: Option<u64>,
     pub reissuance: bool,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicInput {
     pub outpoint: Outpoint,
     pub issuance: Option<PublicIssuance>,
-    #[serde(serialize_with = "wire::optional_hex")]
+    #[serde(
+        serialize_with = "wire::optional_hex",
+        deserialize_with = "wire::parse_optional_hex"
+    )]
     pub leaf: Option<Vec<u8>>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicOutput {
     pub outpoint: Outpoint,
     pub asset: Option<AssetId>,
-    #[serde(serialize_with = "wire::optional_decimal")]
+    #[serde(
+        serialize_with = "wire::optional_decimal",
+        deserialize_with = "wire::parse_optional_decimal"
+    )]
     pub amount: Option<u64>,
-    #[serde(serialize_with = "wire::hex_script")]
+    #[serde(
+        serialize_with = "wire::hex_script",
+        deserialize_with = "wire::parse_hex_script"
+    )]
     pub script_pubkey: Script,
     pub unspendable: bool,
 }
 /// Public transaction fields without recovered openings or wallet metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicTransaction {
     pub txid: Txid,
     pub inputs: Vec<PublicInput>,
