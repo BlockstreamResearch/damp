@@ -2,11 +2,11 @@
 \section{Simplicity-to-mathematics correspondence}
 \label{app:code-math}
 
-This appendix maps the native audit verifier in the reference implementation to Section~\ref{sec:construction}.
-The source is \href{https://github.com/BlockstreamResearch/damp/blob/d48f1833c5a5663ed2de48dfb2f7d762a9f3d19c/simf/lib/audit.simf}{\texttt{simf/lib/audit.simf}} at revision \texttt{d48f183}.
+This appendix gives a Simplicity implementation of the checks discussed in this paper and maps the native audit verifier to Section~\ref{sec:construction}.
+The audit module is \texttt{audit.simf}.
 The numbered listings include that module directly.
 The tables explain each source statement and group multiline statements together.
-Blank lines have no semantic role; the tables group declaration delimiters with their enclosing statement.
+Blank lines have no semantic role. The tables group declaration delimiters with their enclosing statement.
 The \texttt{.simf} files are SimplicityHL source compiled into the Simplicity programs executed by the covenant.
 This is a source-level correspondence, not a machine-checked equivalence proof.
 
@@ -40,10 +40,10 @@ This is a source-level correspondence, not a machine-checked equivalence proof.
 Several source names differ from the paper's symbols.
 The local variable \texttt{c} is the point $C$, while \texttt{e} is the challenge $c$.
 The local \texttt{h} is $H_A$, not the transaction digest $h$.
-The argument \texttt{d} is $D$, not the deployment salt $d$; the salt and audit epoch come from \texttt{AUDIT\_DEPLOYMENT} and \texttt{AUDIT\_EPOCH}.
+The argument \texttt{d} is $D$, not the deployment salt $d$. The salt and audit epoch come from \texttt{AUDIT\_DEPLOYMENT} and \texttt{AUDIT\_EPOCH}.
 The variable \texttt{aux} holds $R$, and \texttt{root} is a field element $\rho$ used only to authenticate the native commitment's sign.
 
-Write a compressed curve point as $(\eta,x_C)$, where $\eta$ is the SEC~1 parity bit defined in Section~\ref{sec:statement-proof}.
+Write a compressed curve point as $(\eta,x_C)$, where $\eta$ is the SEC~1 parity bit defined in Section~\ref{sec:recovery-record}.
 \texttt{Ge} denotes an affine point and \texttt{Gej} a Jacobian point.
 The pair \texttt{(point, 1)} embeds an affine point with Jacobian coordinate $Z=1$.
 \texttt{gej\_equiv} compares represented group elements, not their raw Jacobian coordinates.
@@ -54,7 +54,7 @@ The curve's base-field prime is $p_F=2^{256}-2^{32}-977$, distinct from the scal
   \auditmap{1-3}{State the module's purpose and import checked counter addition/subtraction. These imports do not implement a group equation.}
   \auditmap{5-6}{Declare \texttt{point\_ge} and unpack a compressed point into its parity bit and $x$ coordinate.}
   \auditmap{7}{Require $0\leq x<p_F$ by equality with field normalization. Reject a noncanonical coordinate.}
-  \auditmap{8}{Decompress the curve point selected by $(\eta,x)$; \texttt{unwrap} rejects a non-point. This establishes a finite point on secp256k1.}
+  \auditmap{8}{Decompress the curve point selected by $(\eta,x)$. The \texttt{unwrap} operation rejects a non-point. This establishes a finite point on secp256k1.}
   \auditmap{9}{End the point-decoding helper.}
   \auditmap{11-12}{Declare \texttt{hash\_point} and unpack the point to serialize into a SHA-256 state.}
   \auditmap{13}{Select the SEC~1 prefix from parity.}
@@ -102,7 +102,7 @@ For nonzero $y_C$, exactly one of $y_C$ and $-y_C$ has a square root.
 A finite point in this odd-prime-order group cannot have $y_C=0$.
 Thus line 46 accepts only the sign selected by the native prefix, even though line 36 starts from a separately supplied SEC~1 parity bit.
 Changing $C$ to $-C$ while retaining the same native commitment bytes fails this sign check.
-The prover derives the witness $\rho$ from public curve coordinates; it does not reveal the opening of $C$.
+The prover derives the witness $\rho$ from public curve coordinates. It does not reveal the opening of $C$.
 
 \subsection{Construct the Fiat--Shamir challenge}
 
@@ -118,8 +118,8 @@ The challenge uses $\sha(t\mathbin\Vert t\mathbin\Vert m)$ with
 \end{align*}
 Here $\operatorname{asset}(A)$ is the 32-byte consensus-order asset identifier, not its display-order hexadecimal text.
 The encoding $\operatorname{native}(C)$ consists of the native prefix \texttt{08} or \texttt{09} and $x_C$, for 33 bytes in total.
-The fixed role byte \texttt{00} is part of the transcript even though it is not a variable in $x$.
-The \texttt{v3} tag names the challenge format; it does not change the domain word $g=2$.
+The fixed role byte \texttt{00} is part of the transcript even though it is not a variable in $\Gamma$.
+The \texttt{v3} tag names the challenge format. It does not change the domain word $g=2$.
 
 \auditlisting{56}{84}
 \begin{auditmapping}
@@ -167,14 +167,14 @@ The \texttt{v3} tag names the challenge format; it does not change the domain wo
   \auditmap{96}{Return only after both assertions succeed.}
 \end{auditmapping}
 
-The substitution proof in Section~\ref{sec:statement-proof} explains why honest responses pass these exact operations.
+The substitution proof in Section~\ref{sec:proof-messages} explains why honest responses pass these exact operations.
 Neither assertion decrypts $R$, verifies a native range proof, or proves that this transaction was confirmed.
 
 \subsection{Serialize recovery bytes and bind the native range proof}
 
 \auditlisting{98}{130}
 \begin{auditmapping}
-  \auditmap{98}{Represent $R$ as $64+32+4+2=102$ bytes. This tuple splits raw bytes for SHA-256 jets; its boundaries are not the encryption-envelope field boundaries.}
+  \auditmap{98}{Represent $R$ as $64+32+4+2=102$ bytes. This tuple splits raw bytes for SHA-256 jets. Its boundaries are not the encryption-envelope field boundaries.}
   \auditmap{99}{Represent the range-proof body as $79\cdot64+4=5060$ bytes. The ten-byte header is fixed separately.}
   \auditmap{100}{Define one record as $(i,\eta,\rho,D,T_C,T_D,z_v,z_b,R,\mathrm{rangeBody})$. It contains no plaintext witness $(v,b)$.}
   \auditmap{101}{Allocate ten optional record slots, the output bound used by the verifier.}
@@ -186,7 +186,7 @@ Neither assertion decrypts $R$, verifies a native range proof, or proves that th
   \auditmap{109}{Append bytes 100 and 101 of $R$. Integers retain their fixed-width big-endian encoding.}
   \auditmap{110}{Return the hash context after all 102 bytes, without decoding the envelope.}
   \auditmap{112-114}{Define \texttt{range\_chunk}, which appends one 64-byte range-proof body chunk.}
-  \auditmap{116-119}{Declare the range-binding check. Elements consensus verifies the range proof; this code authenticates the required profile.}
+  \auditmap{116-119}{Declare the range-binding check. Elements consensus verifies the range proof. This code authenticates the required profile.}
   \auditmap{120}{Unpack the 79 chunks and four-byte tail.}
   \auditmap{121}{Start a fresh SHA-256 context for the complete range proof.}
   \auditmap{122}{Append header bytes \texttt{60 3e}, selecting exponent zero and 63 mantissa bits.}
@@ -257,20 +257,20 @@ This transaction-level commitment is distinct from the per-proof digest $\sha(R_
   \auditmap{176}{Return after all record and manifest checks succeed.}
 \end{auditmapping}
 
-The coverage argument also uses the caller's output scan.
-In \texttt{simf/lib/assets.simf}, lines 45-60, each confidential regulated output contributes one to that scan; an explicit output contributes its positive explicit value.
-In \texttt{simf/verifier/core.simf}, lines 77-108, the scan requires a positive contribution and an owner-bound script for every regulated output.
+The coverage argument also requires an output scan by the enclosing program.
+Each confidential regulated output must contribute one to that scan. An explicit output must contribute its positive explicit value.
+The scan must require a positive contribution and an owner-bound script for every regulated output.
 Let $J_c$ and $J_e$ be the confidential and explicit regulated-output sets.
 The summary is $|J_c|+\sum_{i\in J_e}v_i$.
 The record checks enforce distinct indices in $J_c$, so $n\leq|J_c|$.
 Equality at line 163 therefore forces $J_e$ to be empty and every member of $J_c$ to have exactly one accepted record.
-The variable names containing \texttt{amount} in the shared scan must not be read as recovered confidential balances.
 
 \subsection{Reachability from the spending program}
 
 The depth-four entrypoint below calls the shared audit module after checking the anchor, input policy proofs, and output scripts.
-The depth-five and depth-six entrypoints have the same audit call at line 24, each using its own policy-proof verifier.
-These line numbers refer to \texttt{simf/verifier\_d4.simf}, not the shared audit module.
+Here depth four refers to the enclosing program's policy-proof structure.
+The policy-proof checks belong to the enclosing program and are outside the audit relation developed here.
+These line numbers refer to \texttt{verifier\_d4.simf}, not the shared audit module.
 
 \lstinputlisting[style=auditcode,firstline=1,lastline=25,firstnumber=1]{../../simf/verifier_d4.simf}
 \begin{auditmapping}
@@ -280,7 +280,7 @@ These line numbers refer to \texttt{simf/verifier\_d4.simf}, not the shared audi
   \auditmap{14}{Enter the SimplicityHL spending program.}
   \auditmap{15}{Consume the fixed 4096-word witness padding, requiring zero words. This is an execution-budget device, not a Sigma equation.}
   \auditmap{16}{Check input/output zero as the verifier anchor and bind the initiating holder input to its owner.}
-  \auditmap{17}{Scan regulated inputs and count those that need policy proofs; do not decrypt their amounts.}
+  \auditmap{17}{Scan regulated inputs and count those that need policy proofs without decrypting their amounts.}
   \auditmap{18-21}{Check the supplied input policy proofs with a bounded ten-slot fold.}
   \auditmap{22}{Require every regulated input to have been checked.}
   \auditmap{23}{Check regulated output scripts and obtain the summary used by the coverage argument above.}
@@ -290,16 +290,13 @@ These line numbers refer to \texttt{simf/verifier\_d4.simf}, not the shared audi
 
 \subsection{Operations outside Simplicity}
 
-\begin{samepage}
 The prover computes $C=vH_A+bG$, $D=bP$, $T_C,T_D$ and $z_v,z_b$ offchain.
-The covenant checks their equations onchain at the lines identified above; the prover does not supply the secret scalars.
-The Rust module \texttt{damp-core::native\_audit::proof} in the reference implementation constructs and rechecks these proof messages \cite{pgc-implementation}.
-\end{samepage}
+The covenant checks their equations onchain at the lines identified above. The prover does not supply the secret scalars.
 
-The recovery module's \texttt{AuditOutput::seal} constructs $R$ using ephemeral ECDH and authenticated encryption.
-\texttt{VerifiedAuditProof::open\_recovery} decrypts it with the issuer key, then checks the recovered opening against both $C$ and $D$.
+The sender constructs $R$ using ephemeral ECDH and authenticated encryption.
+The issuer decrypts it with the audit key, then checks the recovered opening against both $C$ and $D$.
 Neither operation appears in the Simplicity listing.
-Likewise, \texttt{recover\_bounded} computes Equation~\ref{eq:recovery-target} and searches offchain:
+Likewise, bounded recovery computes Equation~\ref{eq:recovery-target} and searches offchain:
 \[
  C-s^{-1}D
  =vH_A+bG-s^{-1}(bsG)
