@@ -769,7 +769,7 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
 .report-requirements summary { width: fit-content; padding: 4px 0; color: var(--muted); font-size: 12px; cursor: pointer; }
 .report-requirements p { max-width: 80ch; margin: 8px 0 0; color: var(--muted); font-size: 12px; }
 .audit-report-panel .report-connection-form { margin: 22px 0 0; gap: 16px; }
-.report-connection-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.report-connection-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 16px; }
 .report-connection-form label { min-width: 0; font-size: 12px; }
 .report-connection-form input { min-width: 0; font-size: 13px; font-weight: 400; }
 .report-connection-form .audit-report-option { align-items: flex-start; font-weight: 500; }

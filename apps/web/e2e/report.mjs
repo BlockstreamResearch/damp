@@ -112,6 +112,14 @@ try {
       if (focus) await focus();
       else await page.evaluate(() => window.scrollTo(0, 0));
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, name + suffix + ' overflow');
+      if (name === 'report-requirements' && width === 1440) {
+        const endpointBox = await page.getByLabel('Report endpoint', { exact: true }).boundingBox();
+        const tokenBox = await page.getByLabel('Access token', { exact: true }).boundingBox();
+        assert.ok(endpointBox && tokenBox);
+        assert.ok(Math.abs(endpointBox.y - tokenBox.y) <= 1, 'Report endpoint and Access token top edges must align');
+        assert.ok(Math.abs(endpointBox.height - tokenBox.height) <= 1, 'Report endpoint and Access token heights must match');
+        metrics.push({ state: 'report-field-alignment', endpoint: endpointBox, token: tokenBox });
+      }
       await page.screenshot({ path: join(evidence, name + suffix + '.png'), fullPage: !focus });
       metrics.push({ state: name + suffix, controls: await page.locator('button:visible').evaluateAll(buttons => buttons.map(button => ({ label: button.textContent.trim(), disabled: button.disabled }))) });
     }
