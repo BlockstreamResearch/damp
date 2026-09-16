@@ -67,7 +67,7 @@ export function esploraUrlForDeployment(deployment: Pick<Deployment, "network">)
   if (deployment.network === "liquid-testnet") return liquidTestnetEsploraUrl;
   const configured = localStorage.getItem("simplicity-damp:regtest-esplora")?.trim();
   if (!configured) {
-    throw new Error("Configure an Elements regtest Esplora URL before importing this deployment.");
+    throw new Error("Open Regtest public provider in deployment import or credential export, save this chain's Esplora API URL, then retry.");
   }
   return configured.replace(/\/$/, "");
 }

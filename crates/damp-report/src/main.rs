@@ -55,7 +55,14 @@ fn run() -> anyhow::Result<()> {
                 &serde_json::to_vec_pretty(&config)?,
             )?;
             println!(
-                "Created private config and access token. Export restricted credentials to audit-credentials.json in this directory, then run damp-report serve CONFIG_FILE. No provider is running yet."
+                "Created private config and access token. In Report, select a deployment, connect its issuer signer and download audit credentials. Run damp-report import-credentials CONFIG_FILE DOWNLOAD_FILE, then damp-report serve CONFIG_FILE. No provider is running yet."
+            );
+        }
+        Some("import-credentials") if args.len() == 3 => {
+            let config = Config::load(Path::new(&args[1]))?;
+            damp_report::credential_import::import(&config, Path::new(&args[2]))?;
+            println!(
+                "Validated and installed restricted credentials with mode 600. Delete the original download and extra copies, then run damp-report serve CONFIG_FILE. The recovery phrase and spending keys were not imported."
             );
         }
         Some("health") if args.len() == 2 => {
@@ -187,7 +194,7 @@ fn run() -> anyhow::Result<()> {
             })?;
         }
         _ => anyhow::bail!(
-            "usage: damp-report init DIRECTORY | serve CONFIG_FILE | health CONFIG_FILE | prepare-export CONFIG_FILE DEPLOYMENT_JSON NEW_DIRECTORY | export-request DEPLOYMENT_JSON [ISSUER_TX_HEX_FILE ...] | verify DEPLOYMENT_JSON SIGNED_REPORT_JSON"
+            "usage: damp-report init DIRECTORY | import-credentials CONFIG_FILE DOWNLOAD_FILE | serve CONFIG_FILE | health CONFIG_FILE | prepare-export CONFIG_FILE DEPLOYMENT_JSON NEW_DIRECTORY | export-request DEPLOYMENT_JSON [ISSUER_TX_HEX_FILE ...] | verify DEPLOYMENT_JSON SIGNED_REPORT_JSON"
         ),
     }
     Ok(())

@@ -396,7 +396,10 @@ export function WalletStatus({ role = "holder" }: { role?: "holder" | "issuer" }
         ? { tone: "success", message: "A new test-only debug signer was generated and saved unencrypted in this browser." }
         : { tone: "success", message: "Test-only debug signer saved and connected. Wallet discovery has started." });
     } catch (error) {
-      setConnectionNotice({ tone: "error", message: userFacingError(error) });
+      const message = userFacingError(error);
+      setConnectionNotice({ tone: "error", message: /invalid signer mnemonic/i.test(message)
+        ? "Check the recovery phrase and word order, then try again. You can also choose a saved signer profile."
+        : message });
     } finally {
       setConnecting(false);
     }
@@ -656,23 +659,23 @@ export function WalletPopoverContent({
   if (!model) {
     const selectedSavedProfile = profiles.find((profile) => profile.id === selectedProfileId);
     return (
-      <div id="damp-signer-wallet-popover" className={`wallet-popover ${role}`} role="dialog" aria-label="DAMP signer wallet" tabIndex={-1} ref={panelRef}>
+      <div id="damp-signer-wallet-popover" className={`wallet-popover wallet-onboarding ${role}`} role="dialog" aria-label="DAMP signer wallet" tabIndex={-1} ref={panelRef}>
         <span className="overline">DAMP Signer SDK</span>
         <h2>No signer connected</h2>
-        <p>Choose a saved disposable debug profile, or add another test-only recovery phrase.</p>
-        <ol>
-          <li>{connectionNetwork === "liquid-testnet" ? "Liquid testnet uses public wallet services; no local Elements node or indexer is needed." : "Use the same Elements regtest chain as the selected deployment and your configured Esplora service."}</li>
-          <li>Type <code>NEW</code> below to create a disposable wallet, or enter its test-only recovery phrase here. Signing happens in this browser.</li>
-          <li>Wait for wallet synchronization, then use the wallet funding controls{connectionNetwork === "liquid-testnet" ? " and testnet faucet" : " for your local chain"}. Import a deployment and use Receive for its regulated-asset address.</li>
+        <p className="wallet-connect-intro">Choose a saved test profile or connect a disposable wallet.</p>
+        <ol className="wallet-onboarding-steps">
+          <li>{connectionNetwork === "liquid-testnet" ? "Testnet uses public wallet services. No local node or indexer is needed." : "Use your deployment's Elements regtest chain and configured Esplora service."}</li>
+          <li>{role === "issuer" ? <>Restore the existing issuer phrase or saved profile. Use <code>NEW</code> only for a new deployment.</> : <>Enter a test-only phrase or type <code>NEW</code> to create a wallet. Signing stays in this browser.</>}</li>
+          <li>{role === "issuer" ? "Credential export needs no funds. Fund and sync the wallet only to create assets or sign transactions." : <>After sync, fund the wallet{connectionNetwork === "liquid-testnet" ? " from the testnet faucet" : " on your local chain"}. Import a deployment, then use Receive for its regulated asset address.</>}</li>
         </ol>
-        {connectionNetwork === "elements-regtest" && <p>Regtest needs your own Elements chain and a browser-accessible Esplora service configured for this browser origin. Follow the <a href="https://github.com/BlockstreamResearch/damp/blob/dev/README.md#run-the-browser">regtest setup guide</a>. The hosted app cannot start these services.</p>}
+        {connectionNetwork === "elements-regtest" && <p className="wallet-network-help">Configure browser-accessible Esplora for this origin. The hosted app cannot start your local services. <a href="https://github.com/BlockstreamResearch/damp/blob/dev/README.md#run-the-browser">Regtest setup guide</a></p>}
         <div className="wallet-connect-form">
           {profiles.length > 0 && <div className="wallet-profile-remembered"><SignerProfilePicker label="Saved debug profile" profiles={profiles} selectedId={selectedProfileId} onSelect={onProfileSelect} onUseDifferentProfile={onUseDifferentProfile} /><small>Choosing a saved profile connects it directly using its browser-stored test phrase; no phrase re-entry is required.</small></div>}
           {selectedSavedProfile ? <p className="saved-profile-connecting" role="status">{connecting ? `Connecting ${selectedSavedProfile.label}…` : `${selectedSavedProfile.label} selected. Wallet synchronization is starting.`}</p> : <form className="wallet-fresh-connect-form" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}>
             <label>Network<select aria-label="Signer network" disabled={connecting || connectionNetworkLocked} value={connectionNetwork} onChange={(event) => onConnectionNetwork(event.target.value as "liquid-testnet" | "elements-regtest")}><option value="liquid-testnet">Liquid testnet</option><option value="elements-regtest">Elements regtest</option></select></label>
             {connectionNetworkLocked && <small>The selected deployment locks the signer network to {networkLabel(connectionNetwork)}.</small>}
             <label>Recovery phrase or NEW<input aria-describedby="wallet-connect-help" autoComplete="off" disabled={connecting} spellCheck={false} type="password" value={mnemonicInput} onChange={(event) => onMnemonicInput(event.target.value)} /></label>
-            <small id="wallet-connect-help"><strong>Debug only:</strong> every profile phrase is saved unencrypted for direct switching and reload testing. Never use a profile that controls real funds. Profiles are different signer phrases, not BIP account indexes.</small>
+            <small id="wallet-connect-help"><strong>Test use only.</strong> Phrases are stored unencrypted in this browser. Never use a wallet with real funds. Profiles are separate recovery phrases, not BIP accounts.</small>
             <button className="button primary wide" type="submit" disabled={connecting}>{connecting ? "Connecting…" : "Connect and save debug signer"}</button>
           </form>}
         </div>

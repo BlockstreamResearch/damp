@@ -121,9 +121,16 @@ impl DampSigner {
     pub fn export_audit_credentials(&self, value: JsValue) -> Result<String, JsError> {
         let serialized = crate::audit::credentials::export_json(
             &self.inner.inner, self.inner.network, from_js(value)?,
-        ).map_err(|_| JsError::new("Credential export failed. Connect this deployment's issuer and supply valid issuer transaction files."))?;
+        ).map_err(|_| JsError::new("Credential export failed. Connect this deployment's issuer signer and retry discovery, or check the offline transaction files."))?;
         Ok(serialized.to_string())
     }
+}
+
+/// Decode public bytes and calculate their identity without accessing any signer keys.
+#[wasm_bindgen(js_name=inspectPublicTransaction)]
+pub fn inspect_public_transaction(transaction: &str) -> Result<JsValue, JsError> {
+    let record: crate::transaction::TransactionRecord = transaction.parse().map_err(js_error)?;
+    to_js(&record.inspect_public())
 }
 
 #[wasm_bindgen(js_name=preparePolicy)]

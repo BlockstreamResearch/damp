@@ -350,6 +350,13 @@ export function exportAuditCredentials(deployment: DeploymentManifest, issuerTra
   return requireSigner(deployment.network).exportAuditCredentials({ deployment, issuerTransactions });
 }
 
+export async function inspectPublicTransaction(transaction: string): Promise<{
+  txid: string;
+  inputs: Array<{ issuance: { asset: string; reissuance: boolean } | null }>;
+}> {
+  return (await loadModule()).inspectPublicTransaction(transaction);
+}
+
 function requireReadySigner(network?: SignerNetwork) {
   const active = requireSigner(network);
   if (!state.walletReady) {

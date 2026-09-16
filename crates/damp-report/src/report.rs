@@ -45,6 +45,9 @@ impl Credentials {
                 "cannot read audit credentials; export restricted credentials and set mode 600"
             )
         })?;
+        Self::from_text(text)
+    }
+    pub(crate) fn from_text(text: Zeroizing<String>) -> anyhow::Result<Self> {
         // Only deserialize the public manifest here. The SDK checks the strict credential schema.
         #[derive(Deserialize)]
         struct Public {

@@ -17,11 +17,7 @@ Open [the local UI](http://127.0.0.1:5173), import the deployment and policy, an
 
 The hosted Pages wallet needs no local process for ordinary testnet transfers. Pages cannot start a local node or report service. Issuers publish public manifests and policies using the [registry layout](registry/README.md).
 
-For regtest wallet use, configure your chain's public Esplora URL in the browser console, then reload. Reporting uses Elements RPC directly and needs no Esplora.
-
-```js
-localStorage.setItem("simplicity-damp:regtest-esplora", "http://127.0.0.1:3002/api")
-```
+For regtest, open **Regtest public provider** in deployment import and save your chain's browser-accessible Esplora API URL, using HTTPS or loopback HTTP. Get it from the operator of your Elements node. The report service can use the node's RPC directly; browser import and automatic credential discovery use Esplora.
 
 ## Signed reports
 
@@ -30,33 +26,25 @@ cargo build --release -p damp-report -p damp-indexer -p simplicity-damp-signer -
 ./target/release/damp-report init "$HOME/.damp-audit"
 ```
 
-Copy the issuer's public manifest to `deployment.json`. The new private `~/.damp-audit/config.json` defaults to Liquid testnet's public Esplora, port 8778, and browser origin `http://127.0.0.1:5173`. Public Esplora sees queried transaction IDs and supplies trusted inclusion data. A local node is optional for testnet and required for regtest. To use one, replace only the config's `provider` object:
+The new private `~/.damp-audit/config.json` defaults to Liquid testnet's public Esplora, port 8778, and browser origin `http://127.0.0.1:5173`. In Report, select or import the issuer's public deployment, open **Export issuer audit credentials**, connect its existing issuer signer, then click **Discover and download credentials**. Public transactions are fetched and validated automatically. No wallet funding is needed.
+
+```sh
+./target/release/damp-report import-credentials "$HOME/.damp-audit/config.json" "$HOME/Downloads/audit-credentials.json"
+rm "$HOME/Downloads/audit-credentials.json"
+./target/release/damp-report serve "$HOME/.damp-audit/config.json"
+```
+
+Use the actual download filename. Import validates the scoped keys and issuer certificate, creates a mode-600 copy and refuses to overwrite files. Delete other download copies too. These credentials reveal amounts and sign reports but cannot spend; never publish them or send them to a remote service. Refresh after each issuer reissuance. Stop the service, set a new `credentials` filename in its config, repeat discovery/import, then restart. Keep old credentials private.
+
+Testnet needs no local node. For regtest, or to use a testnet node, replace only the config's `provider` object with your actual loopback RPC port and cookie path:
 
 ```json
 {"kind":"rpc","port":18884,"cookie":"/absolute/node/datadir/liquidregtest/.cookie"}
 ```
 
-Use the actual RPC port and cookie path. For testnet the cookie is under `liquidtestnet`. The node must be unpruned, have `txindex=1`, and finish chain and transaction-index sync. RPC stays on 127.0.0.1. Keep the config and cookie owner-only. The service checks the network and refuses mismatches.
+For testnet the cookie is under `liquidtestnet`. The node must be unpruned, have `txindex=1`, and finish chain and transaction-index sync. Keep the config and cookie owner-only. The service checks the network and refuses mismatches.
 
-Gather public bootstrap and reissuance transactions, with no wallet or audit key:
-
-```sh
-./target/release/damp-report prepare-export "$HOME/.damp-audit/config.json" deployment.json issuer-export
-```
-
-Choose one credential export method:
-
-- In the browser, connect the deployment's issuer signer, open Report → Export issuer audit credentials, select all `issuer-export/*.hex` files, and download `audit-credentials.json`. Move it into `~/.damp-audit/`, run `chmod 600 ~/.damp-audit/audit-credentials.json`, and delete extra download copies.
-- Offline, use the issuer's existing owner-only mnemonic file. The first path below is that file, never the phrase itself. Copy the resulting restricted file to the service's private directory if exporting on another computer.
-
-```sh
-./target/release/damp-audit export-audit-credentials /private/issuer-wallet liquid-testnet issuer-export/request.json "$HOME/.damp-audit/audit-credentials.json"
-./target/release/damp-report serve "$HOME/.damp-audit/config.json"
-```
-
-Use `elements-regtest` instead of `liquid-testnet` for regtest. The export contains deployment-scoped audit and report keys, an issuer certificate, and issuer output openings. It can reveal amounts and sign reports, but cannot spend. Never publish it or send it to a remote service. Refresh it after issuer reissuance. Stop your report service before gathering refreshed export inputs, then restart with the new credentials. The CLI refuses to overwrite a file; retain the old export privately and choose a new output filename when refreshing, then update `credentials` in the config.
-
-In Report, enter `http://127.0.0.1:8778/report` and the value from the private `~/.damp-audit/access-token` file. Generate, inspect completeness and gaps, then download signed JSON. Requesting a report needs no browser signer. Verify a downloaded file independently:
+In Report, enter `http://127.0.0.1:8778/report` and the value from the private `~/.damp-audit/access-token` file. Generate, inspect completeness and gaps, then download signed JSON. Requesting a report needs no browser signer. To verify a downloaded file independently, save the issuer's public manifest as `deployment.json`:
 
 ```sh
 ./target/release/damp-report health "$HOME/.damp-audit/config.json"
@@ -71,6 +59,17 @@ Authenticated `GET /health` reports configuration and active progress. Provider 
 `indexMaxMiB` limits persistent history, default 10240 MiB. Report data is limited to 3 MB. Missing history, openings, resource exhaustion or a changed snapshot cannot produce a complete report. Preserve old index directories; use a new `indexDir` when deployment, provider, network, decoder or schema differs. The decoder identity hashes the executable, so rebuilding or replacing the binary may require a new index directory. Chain inclusion trusts the configured provider, with block-link and applicable outspend checks, not SPV proofs.
 
 The exported child keys rely on keeping DAMP derivation-subtree extended public keys private. Do not add exports of those xpubs; a leaf secret plus its parent xpub can reveal sibling keys. The ordinary wallet descriptor uses a separate derivation subtree.
+
+### Offline export
+
+For an offline issuer signer or unavailable browser Esplora, save the issuer's public manifest as `deployment.json`. Gather public transactions through the provider in the service config, then export with the existing private issuer mnemonic file. The first path below is that file, never the phrase itself.
+
+```sh
+./target/release/damp-report prepare-export "$HOME/.damp-audit/config.json" deployment.json issuer-export
+./target/release/damp-audit export-audit-credentials /private/issuer-wallet liquid-testnet issuer-export/request.json "$HOME/.damp-audit/audit-credentials.json"
+```
+
+Use `elements-regtest` for regtest. Alternatively, choose all generated `issuer-export/*.hex` files under Report → Export issuer audit credentials → Offline transaction files. Manual selection cannot establish complete history; missing inputs prevent a complete report. The CLI refuses to overwrite credentials.
 
 ## Protocol limits
 

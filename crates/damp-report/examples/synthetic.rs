@@ -13,9 +13,19 @@ fn main() -> anyhow::Result<()> {
     fs::DirBuilder::new().mode(0o700).create(dir)?;
     let fixture = fixture()?;
     let rpc = Rpc::start(fixture.clone());
+    let public_transactions: Vec<_> = fixture
+        .transactions
+        .iter()
+        .map(|raw| {
+            raw.parse::<damp_signer::transaction::TransactionRecord>()
+                .map(|tx| tx.inspect_public())
+        })
+        .collect::<Result<_, _>>()?;
     private(
         &dir.join("fixture.json"),
-        &serde_json::to_vec(&json!({"request":fixture.request,"mnemonic":MNEMONIC}))?,
+        &serde_json::to_vec(
+            &json!({"request":fixture.request,"mnemonic":MNEMONIC,"transactions":fixture.transactions,"publicTransactions":public_transactions}),
+        )?,
     );
     private(
         &dir.join("deployment.json"),

@@ -5,7 +5,7 @@ import { deploymentFixture } from "../test/fixtures";
 import type { PolicySnapshot } from "../lib/domain";
 
 const mocks = vi.hoisted(() => ({
-  active: vi.fn(), policies: vi.fn(), history: vi.fn(), build: vi.fn(), verify: vi.fn(),
+  active: vi.fn(), policies: vi.fn(), history: vi.fn(), build: vi.fn(), verify: vi.fn(), signer: { connected: false, profiles: [], walletReady: false },
 }));
 vi.mock("../lib/deployments", () => ({ useActiveDeployment: mocks.active }));
 vi.mock("../lib/store", () => ({ listDeploymentPolicies: mocks.policies, getDraft: vi.fn(), putDraft: vi.fn() }));
@@ -14,7 +14,7 @@ vi.mock("../lib/audit-report-job", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/audit-report-job")>(),
   buildAuditReport: mocks.build,
 }));
-vi.mock("../lib/damp-signer", () => ({ verifyAuditReport: mocks.verify, signerSnapshot: vi.fn() }));
+vi.mock("../lib/damp-signer", () => ({ verifyAuditReport: mocks.verify, signerSnapshot: () => mocks.signer, subscribeSigner: () => () => {} }));
 vi.mock("@tanstack/react-router", () => ({ Link: ({ children }: { children: ReactNode }) => <a>{children}</a> }));
 vi.mock("../components/ui", () => ({
   AppShell: ({ children }: { children: ReactNode }) => <main>{children}</main>,

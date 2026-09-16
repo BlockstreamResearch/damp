@@ -97,15 +97,27 @@ button { color: inherit; }
 .wallet-popover-anchor { position: relative; z-index: 60; }
 .wallet-popover { position: absolute; z-index: 100; top: calc(100% + 9px); right: 0; width: min(360px, calc(100vw - 32px)); max-height: min(610px, calc(100vh - 125px)); padding: 20px; overflow: auto; border: 1px solid #d3d0c8; border-radius: 13px; outline: none; background: var(--paper); box-shadow: 0 18px 50px rgba(20, 27, 27, .18); }
 .wallet-popover.issuer { border-color: #d6c4a7; box-shadow: 0 18px 50px rgba(64, 43, 15, .22); }
+.wallet-popover.wallet-onboarding { max-height: min(740px, calc(100dvh - 175px)); }
 .wallet-popover.issuer .overline { color: var(--amber-dark); }
 .wallet-popover.issuer .button.primary { background: var(--amber-dark); }
 .wallet-popover:focus-visible { box-shadow: 0 0 0 3px rgba(20, 105, 220, .16), 0 18px 50px rgba(20, 27, 27, .18); }
 .wallet-popover h2 { margin: 5px 0 0; font-family: Georgia, "Times New Roman", serif; font-size: 19px; font-weight: 500; }
 .wallet-popover > p { margin: 12px 0 17px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.wallet-popover .wallet-connect-intro { margin: 10px 0 14px; font-size: 12px; }
+.wallet-onboarding-steps { margin: 0; padding: 0 0 0 19px; display: grid; gap: 8px; color: #4e5752; font-size: 12px; line-height: 1.5; }
+.wallet-onboarding-steps li { padding-left: 3px; }
+.wallet-onboarding-steps li::marker { color: var(--amber-dark); font-weight: 600; }
+.wallet-onboarding-steps code { font-size: 11px; font-weight: 600; }
+.wallet-popover .wallet-network-help { margin: 12px 0 0; font-size: 11px; }
+.wallet-network-help a { color: var(--amber-dark); text-decoration: underline; text-underline-offset: 3px; }
 .wallet-connect-form { margin-top: 15px; display: grid; gap: 10px; }
 .wallet-fresh-connect-form { display: grid; gap: 10px; }
-.wallet-connect-form label { display: grid; gap: 6px; color: #3d4545; font-size: 9px; font-weight: 700; }
-.wallet-connect-form small { color: var(--muted); font-size: 8px; line-height: 1.45; }
+.wallet-connect-form label { display: grid; gap: 6px; color: #3d4545; font-size: 11px; font-weight: 700; }
+.wallet-connect-form small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.wallet-connect-form .wallet-profile-picker-label { font-size: 11px; }
+.wallet-connect-form input, .wallet-connect-form select { font-size: 13px; }
+.wallet-connect-form .button { font-size: 12px; }
+.wallet-connect-form :is(input, select, button):focus-visible { outline: 2px solid var(--amber-dark); outline-offset: 3px; }
 .saved-profile-connecting { margin: 0 !important; padding: 10px 11px; border-left: 2px solid var(--blue); color: #31556f !important; background: #edf5fa; font-size: 9px !important; }
 .wallet-profile-remembered, .wallet-profile-overview { display: grid; gap: var(--space-tight); }
 .wallet-profile-overview { margin-top: var(--space-control); }
@@ -181,6 +193,7 @@ button { color: inherit; }
 .wallet-popover-status.progress { border-left-color: var(--amber); background: #fff4dd; color: #79500c !important; }
 .wallet-popover-status.success { border-left-color: var(--green); background: #e8f4eb; color: #246441 !important; }
 .wallet-popover-status.error { border-left-color: var(--danger); background: #f9ebe8; color: #7f3027 !important; }
+.wallet-popover > .wallet-popover-status { font-size: 12px; }
 .wallet-popover-faucet { margin-top: 12px; padding: 11px; border: 1px solid #e1d6bf; border-radius: 9px; background: #fff9ed; }
 .wallet-popover-faucet p { margin: 0 0 9px; color: #6f6048; font-size: 9px; line-height: 1.5; }
 .wallet-popover-actions { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -642,6 +655,7 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
   .wallet-status { min-width: 42px; width: 42px; min-height: 42px; height: 42px; padding: 0; justify-content: center; }
   .wallet-status > span:last-child { display: none; }
   .wallet-popover { position: fixed; top: 78px; right: 16px; left: 16px; width: auto; max-height: calc(100vh - 160px); }
+  .wallet-popover.wallet-onboarding { max-height: calc(100dvh - 160px); }
   .wallet-profile-actions .text-button, .wallet-profile-manage-trigger, .back-link, .setup-chooser-return { min-height: 44px; }
   .wallet-popover-actions .button, .wallet-profile-editor .button, .wallet-profile-confirm .button, .copy-action { min-height: 44px; }
   .publish-steps .button { min-height: 44px; }
@@ -744,4 +758,78 @@ legend { margin-bottom: 8px; font-size: 10px; font-weight: 700; }
 .audit-report-panel section { margin-top: 28px; }
 .audit-report-panel caption { text-align: left; padding: 12px; font-size: 13px; font-weight: 600; }
 .audit-report-panel details { margin-top: 18px; }
+.audit-report-panel .report-setup { margin-top: 18px; }
+.report-intro { max-width: 75ch; margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.report-first-use { margin: 0 0 10px; max-width: 85ch; color: #535d59; font-size: 12px; line-height: 1.6; }
+.report-service-command { padding: 12px 14px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f8f6f1; }
+.report-service-command span { color: #4e5752; font-size: 12px; }
+.report-service-command code { overflow-wrap: anywhere; font-size: 12px; }
+.report-service-command a { margin-left: auto; color: var(--amber-dark); font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.audit-report-panel .report-requirements { margin-top: 10px; }
+.report-requirements summary { width: fit-content; padding: 4px 0; color: var(--muted); font-size: 12px; cursor: pointer; }
+.report-requirements p { max-width: 80ch; margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+.audit-report-panel .report-connection-form { margin: 22px 0 0; gap: 16px; }
+.report-connection-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.report-connection-form label { min-width: 0; font-size: 12px; }
+.report-connection-form input { min-width: 0; font-size: 13px; font-weight: 400; }
+.report-connection-form .audit-report-option { align-items: flex-start; font-weight: 500; }
+.report-connection-form .audit-report-option input { margin: 2px 0 0; accent-color: var(--amber-dark); }
+.report-connection-form .audit-report-option small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.report-form-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.report-form-actions .button { min-height: 44px; }
+.audit-report-panel .inline-message { font-size: 12px; }
+.report-history-note { max-width: 90ch; margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.audit-report-panel .credential-export { margin-top: 22px; border: 1px solid var(--line); border-radius: 10px; background: #fcfbf8; }
+.credential-export > summary { padding: 14px 16px; color: #3d4545; font-size: 13px; font-weight: 600; cursor: pointer; }
+.credential-export > summary::marker { color: var(--amber-dark); }
+.credential-export-body { padding: 0 16px 16px; display: grid; gap: 12px; }
+.credential-export-body > p { max-width: 85ch; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.credential-export-warning { padding: 12px 14px; border-left: 2px solid #ae792f; background: #f7f0e3; color: #69502b; font-size: 12px; line-height: 1.55; }
+.credential-export-warning p { max-width: 85ch; margin: 5px 0 0; }
+.credential-export-warning code { overflow-wrap: anywhere; font-size: 11px; }
+.credential-export-files { min-width: 0; display: grid; gap: 7px; color: #3d4545; font-size: 12px; font-weight: 600; }
+.credential-export-files input { min-width: 0; height: auto; min-height: 44px; padding: 5px; font-size: 12px; font-weight: 400; }
+.credential-export-files input::file-selector-button { margin-right: 12px; padding: 8px 11px; border: 1px solid #d9c9ae; border-radius: 5px; color: #684814; background: #f8f1e5; font: inherit; font-weight: 600; cursor: pointer; }
+.credential-export-files input::file-selector-button:hover { background: #f0e4cc; }
+.credential-export-body .credential-file-help { margin-top: -6px; font-size: 11px; }
+.credential-export-body > .button { justify-self: start; min-height: 44px; }
+.credential-export-body .credential-export-message { max-width: none; padding: 10px 12px; border-left: 2px solid #6986a0; color: #4e5a60; background: #edf2f4; overflow-wrap: anywhere; }
+.credential-export-body .credential-export-message.error { border-color: var(--danger); color: #7f3027; background: #f9ebe8; }
+.audit-report-panel :is(input, button, summary, a):focus-visible { outline: 2px solid var(--amber-dark); outline-offset: 3px; }
 @media (max-width: 600px) { .audit-report-panel { padding: 16px; } }
+@media (max-width: 600px) {
+  .report-connection-fields label { scroll-margin-bottom: 100px; }
+  .report-connection-fields { grid-template-columns: minmax(0, 1fr); }
+  .report-service-command { align-items: flex-start; gap: 7px; }
+  .report-service-command code { flex-basis: 100%; }
+  .report-service-command a { margin-left: 0; }
+  .report-form-actions .button, .credential-export-body > .button { width: 100%; }
+  .credential-export > summary { padding: 13px 12px; }
+  .credential-export-body { padding: 0 12px 12px; }
+  .credential-export-warning { padding: 10px 12px; }
+}
+
+.credential-install { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
+.credential-install > span { font-weight: 600; font-size: 12px; }
+.credential-install code, .credential-offline code { overflow-wrap: anywhere; font-size: 11px; }
+.credential-install code { display: block; background: var(--surface-subtle, #f3f1eb); padding: 10px 12px; border-radius: 6px; }
+.credential-offline { border-top: 1px solid var(--line); padding-top: 12px; }
+.credential-offline > summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.credential-signer-needed { display: grid; gap: 10px; }
+.credential-install p, .credential-signer-needed p { margin: 0; font-size: 12px; line-height: 1.6; color: #535d59; }
+.credential-install a, .credential-offline a { color: #8b5200; text-decoration: underline; text-underline-offset: 3px; }
+.credential-signer-needed .button { justify-self: start; }
+.report-connection-fields small { font-weight: 400; font-size: 11px; line-height: 1.5; color: #535d59; }
+.regtest-provider-settings { margin: 14px 0; max-width: 600px; gap: 10px; }
+.regtest-provider-settings p { margin: 0; font-size: 12px; line-height: 1.5; }
+.regtest-provider-settings label { font-size: 12px; }
+.regtest-provider-settings .button { justify-self: start; }
+.regtest-provider-settings input { min-width: 0; width: 100%; }
+@media (max-width: 700px) {
+  .audit-report-panel caption { display: block; padding: 12px 0; }
+  .audit-report-panel .blacklist-table tr { display: block; }
+  .audit-report-panel .blacklist-table td,
+  .audit-report-panel .blacklist-table td:last-child { display: grid; grid-template-columns: 68px minmax(0, 1fr); padding: 5px 0; font-size: 11px; }
+  .audit-report-panel .blacklist-table td:last-child::before { display: block; }
+  .audit-report-panel .blacklist-table td > span { min-width: 0; overflow-wrap: anywhere; }
+}

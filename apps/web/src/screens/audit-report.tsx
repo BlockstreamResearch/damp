@@ -193,7 +193,7 @@ export function AuditReport() {
   function download() {
     if (!signed || !deployment) return;
     downloadJson(
-      signed,
+      { reportJson: signed.reportJson, signature: signed.signature },
       `damp-report-${deployment.deploymentId.slice(0, 12)}.json`,
     );
   }
@@ -243,92 +243,97 @@ export function AuditReport() {
           label="Native confidential audit"
           title="Recover and reconcile"
         />
-        <section aria-label="Report setup">
-          <p>Start the local Rust service with <code>damp-report serve CONFIG_FILE</code>, then enter its URL and access token. <a href="https://github.com/BlockstreamResearch/damp/blob/dev/README.md#signed-reports">Setup and credential commands</a></p>
-          <p>Pages cannot start local processes. Testnet can use public Esplora; regtest needs a local archival Elements node. A browser signer is needed only to export issuer credentials.</p>
+        <section className="report-setup" aria-label="Report setup">
+          <p className="report-intro">Recover confidential amounts for a confirmed snapshot. This page verifies the issuer certificate and report signature. No transaction is broadcast.</p>
+          <p className="report-first-use">First time: export issuer credentials below, import the download using the setup commands, then start the service.</p>
+          <div className="report-service-command">
+            <span>After importing credentials</span>
+            <code>damp-report serve CONFIG_FILE</code>
+            <a href="https://github.com/BlockstreamResearch/damp/blob/dev/README.md#signed-reports">Setup commands</a>
+          </div>
+          <details className="report-requirements">
+            <summary>Service and network requirements</summary>
+            <p>Pages cannot start local processes. Testnet can use public Esplora; regtest needs a local archival Elements node. A browser signer is needed only to export issuer credentials.</p>
+          </details>
         </section>
         {active.error ? (
           <p role="alert">{userFacingError(active.error)}</p>
         ) : active.isPending ? (
           <p>Loading deployments…</p>
         ) : !deployment ? (
-          <p>Select a deployment to build a report.</p>
+          <div className="generate-record"><p>Select a deployment to build a report. Import its public manifest and policy in Setup.</p><Link className="button secondary" to="/admin/setup">Open deployment setup</Link></div>
         ) : (
           <>
-            <AuditCredentialExport key={deployment.deploymentId} deployment={publicManifest(deployment)} />
-            <p>The service recovers amounts and signs a confirmed snapshot. This page verifies the issuer certificate and report signature. No transaction is broadcast.</p>
             <form
-              className="form-stack"
+              className="form-stack report-connection-form"
               onSubmit={(e) => {
                 e.preventDefault();
                 void generate();
               }}
             >
-              <label>
-                Report endpoint
-                <input
-                  type="url"
-                  disabled={busy}
-                  value={endpoint}
-                  onChange={(e) => { setEndpoint(e.target.value); setMessage(""); setReport(undefined); setSigned(undefined); }}
-                  autoComplete="off"
-                  placeholder="http://127.0.0.1:PORT/report"
-                  required
-                />
-              </label>
-              <label>
-                Access token
-                <input
-                  type="password"
-                  disabled={busy}
-                  value={token}
-                  onChange={(e) => { setToken(e.target.value); setMessage(""); setReport(undefined); setSigned(undefined); }}
-                  autoComplete="off"
-                />
-              </label>
+              <div className="report-connection-fields">
+                <label>
+                  Report endpoint
+                  <input
+                    type="url"
+                    disabled={busy}
+                    value={endpoint}
+                    onChange={(e) => { setEndpoint(e.target.value); setMessage(""); setReport(undefined); setSigned(undefined); }}
+                    autoComplete="off"
+                    placeholder="http://127.0.0.1:PORT/report"
+                    required
+                  />
+                </label>
+                <label>
+                  Access token
+                  <input
+                    type="password"
+                    aria-label="Access token"
+                    aria-describedby="report-token-help"
+                    onFocus={e => e.currentTarget.closest("label")?.scrollIntoView?.({ block: "nearest" })}
+                    disabled={busy}
+                    value={token}
+                    onChange={(e) => { setToken(e.target.value); setMessage(""); setReport(undefined); setSigned(undefined); }}
+                    autoComplete="off"
+                  />
+                  <small id="report-token-help">From the access-token file created by damp-report init in your private service directory.</small>
+                </label>
+              </div>
               <label className="audit-report-option">
                 <input
                   type="checkbox"
                   checked={fallback}
                   onChange={(e) => setFallback(e.target.checked)}
                 />{" "}
-                Try bounded recovery for missing or invalid data, up to
-                1,048,576 base units
+                <span>Try bounded recovery<small>Search up to 1,048,576 base units for missing or invalid data.</small></span>
               </label>
-              <button
-                className="button issuer-primary"
-                disabled={busy || !endpoint.trim() || !token}
-                aria-busy={busy}
-              >
-                {busy
-                  ? "Scanning confirmed history…"
-                  : "Generate signed report"}
-              </button>
-              {busy ? (
+              <div className="report-form-actions">
                 <button
-                  className="button secondary"
-                  type="button"
-                  onClick={() => request.current?.abort()}
+                  className="button issuer-primary"
+                  disabled={busy || !endpoint.trim() || !token}
+                  aria-busy={busy}
                 >
-                  Cancel report
+                  {busy
+                    ? "Scanning confirmed history…"
+                    : "Generate signed report"}
                 </button>
-              ) : null}
+                {busy ? (
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => request.current?.abort()}
+                  >
+                    Cancel report
+                  </button>
+                ) : null}
+              </div>
             </form>
-            {!message && <p role="status" className="inline-message">{!endpoint.trim() || !token ? "Setup incomplete. Supply a local report service URL and its access token. No connection has been checked." : "Connection not checked. Generate a report to check authentication, provider readiness and history coverage."}</p>}
-            <p>
-              The service indexes all retained blocks from bootstrap through a
-              fixed confirmed snapshot in resumable batches. Node sync, index
-              progress, and report recovery are separate steps. Missing history
-              or resource limits prevent a complete report; they do not
-              establish a recovery-data failure.
-            </p>
+            {!message && <p role="status" className="inline-message">{!endpoint.trim() || !token ? "Setup incomplete. Enter the local service URL and access token. No connection has been checked." : "Connection not checked. Generate a report to check authentication, provider readiness and history coverage."}</p>}
+            {message && <p role="status" className="inline-message">{message}</p>}
+            <p className="report-history-note">History scans resume from saved progress. Node sync, indexing and recovery are separate steps. Missing history or resource limits prevent a complete report; they do not prove invalid recovery data.</p>
+            <AuditCredentialExport key={deployment.deploymentId} deployment={publicManifest(deployment)} />
           </>
         )}
-        {message ? (
-          <p role="status" className="inline-message">
-            {message}
-          </p>
-        ) : null}
         {report && deployment ? (
           <section aria-label="Verified issuer report">
             <SectionHeading
@@ -396,31 +401,31 @@ export function AuditReport() {
                 <tbody>
                   {report.outputs.map((row) => (
                     <tr key={row.outpoint}>
-                      <td>
+                      <td data-label="Output">
                         <code title={row.outpoint}>
                           {shortHash(row.outpoint, 10, 6)}
                         </code>
                       </td>
-                      <td>
+                      <td data-label="Amount"><span>
                         {row.amount === null
                           ? "Unknown"
                           : formatUnits(row.amount, deployment.asset.precision)}
                         {row.applicationBounds === "outside-application-cap" ? (
                           <small> Outside application cap</small>
                         ) : null}
-                      </td>
-                      <td>
+                      </span></td>
+                      <td data-label="Recovery"><span>
                         {row.recoveryStatus}
                         <small> Auxiliary: {row.auxiliaryStatus}</small>
-                      </td>
-                      <td>
+                      </span></td>
+                      <td data-label="State">
                         {row.spent
                           ? "Spent"
                           : row.blocked
                             ? "Blocked"
                             : "Unspent"}
                       </td>
-                      <td>
+                      <td data-label="Action">
                         {row.blockEligible ? (
                           <button
                             type="button"
