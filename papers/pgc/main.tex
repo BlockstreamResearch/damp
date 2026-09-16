@@ -22,30 +22,31 @@ Liquid Regulated Assets}
     \maketitle
 
     \begin{abstract}
-        We describe a confidential audit construction for regulated assets on Liquid.
-        Each regulated output carries a proof that its native Elements value commitment and an issuer audit handle use the same blinding factor.
-        The Simplicity spending program verifies the proof and binds it to the transaction, output index, asset, deployment, audit epoch, output script, and recovery bytes.
-        Holders transfer assets without issuer participation.
-        The issuer can recover amounts from authenticated auxiliary data or attempt a bounded discrete-log fallback, while other observers retain Liquid's ordinary amount confidentiality.
+        We describe a confidential compliance construction for regulated assets on Liquid.
+        Each regulated output carries a proof that allows a third-party auditor to retrospectively recover transferred amounts for regulatory reporting.
+        Both fast (optimistic) and slow (bounded discrete-log) fallback methods are provided.
+        The Simplicity spending program verifies the proof and asserts that the native Elements value commitment and an auditor handle use the same blinding factor.
+        Holders transfer assets without issuer participation, retaining Liquid's ordinary amount confidentiality.
     \end{abstract}
 
 
     \section{Introduction}
 
     Liquid confidential transactions hide asset amounts from public observers while preserving ledger balance rules \cite{liquid}.
-    Regulated assets may also need selective audit and a policy that restricts future spending.
-    This paper's construction borrows the audit goal and twisted-ElGamal intuition of PGC \cite{pgc}, but it does not adopt PGC's account system or its equal-value proof.
+    Regulated assets, however, may need selective third-party audit and full transaction history reporting for compliance reasons.
+    Native Liquid confidential transactions do not provide such functionality.
+    This paper borrows the audit goal and twisted-ElGamal construction of PGC \cite{pgc}, but it does not adopt PGC's account system or its equal-value proof.
     Instead, it proves a relation over the value commitment already present in an Elements output.
     The covenant and consensus therefore check the same value commitment.
 
     The onchain Simplicity program verifies a native commitment proof for every regulated output \cite{simplicity}.
     The enclosing covenant authorizes the holder and enforces the asset's spending policy.
     Issuer-only recovery runs offchain and does not participate in holder transfer authorization.
-    This construction may be useful to asset-management protocols such as DAMP \cite{damp-paper}.
 
     We state the audit relation, its transaction binding, recovery rules, and confidentiality limits.
-    Appendix~\ref{app:code-math} gives a Simplicity implementation of the checks discussed in this paper and maps its numbered source listings to the mathematics.
+    Appendix~\ref{app:code-math} gives a SimplicityHL implementation of the checks described in this paper.
 
+    This construction may be useful to asset-management protocols such as DAMP \cite{damp-paper}.
 
     \section{Elements confidential-assets prerequisites}
     \label{sec:elements}
@@ -57,7 +58,7 @@ Liquid Regulated Assets}
         H_A=\texttt{hash\_to\_curve}(A)\in\mathcal{G},
     \]
     whose discrete logarithm relative to $G$ is unknown.
-    Write a Pedersen value commitment as $\operatorname{Com}_{H}(v,b)=vH+bG$.
+    We write a Pedersen value commitment as $\operatorname{Com}_{H}(v,b)=vH+bG$.
     Its additive structure permits balance checks through
     \[
         \operatorname{Com}_{H}(v_1,b_1)+\operatorname{Com}_{H}(v_2,b_2)
@@ -77,14 +78,14 @@ Liquid Regulated Assets}
     \]
     Asset surjection proofs establish the relation between input and output asset types \cite{liquid,confidential-assets}.
     Here the regulated output instead carries the explicit identifier $A$ and a confidential amount.
-    The verifier requires this explicit asset field and derives the unblinded generator $H_A$ from it.
+    The verifier requires this explicit asset field and derives the unblinded generator $H_A$ from it respectively.
     Thus the native value commitment used throughout this paper is
     \begin{equation}
         C=vH_A+bG,
         \label{eq:commitment}
     \end{equation}
     for amount $v$ and nonzero value blinder $b$.
-    The regulated asset type remains public.
+    The regulated asset id remains public.
 
     A native confidential value field encodes $C=(x_C,y_C)$ as
     \[
@@ -104,9 +105,7 @@ Liquid Regulated Assets}
         \mathsf{value}_i=\operatorname{Confidential}\bigl(\operatorname{enc}_{\mathrm{native}}(C)\bigr),
         \qquad H_A=\texttt{hash\_to\_curve}(A).
     \]
-    Here the field constructors denote the required native encodings, not the jets' bit-level types.
-    A missing output or an incorrect field variant causes rejection.
-    The remaining transaction data come from the jets \cite{simplicity-jets}:
+    The remaining transaction data comes from the jets \cite{simplicity-jets}:
     \[
         \begin{aligned}
             \mathsf{scriptHash}_i&=\operatorname{unwrap}(\texttt{output\_script\_hash}(i)),\\
@@ -141,10 +140,8 @@ Liquid Regulated Assets}
     Recovering $v$ from this point is a discrete-log search over an application range.
 
     The enclosing covenant must require one audit record for every regulated output and preserve the regulated asset's spending conditions.
-    Holder authorization and policy governance are assumptions of this audit construction.
-    An exact-output policy is an enclosing-covenant rule that restricts future spending of listed outputs.
-    For audit reporting, an offchain issuer process indexes a bounded chain interval from a configured provider, recovers amounts and reconciles the resulting state.
-    Its report may be signed to authenticate the issuer's result. The proof below does not establish that the provider supplied a complete chain history.
+    For audit reporting, an offchain issuer process indexes the chain from a configured provider, recovers amounts, and reconstructs the resulting state.
+    Its report may be signed to authenticate the final result.
 
     Figure~\ref{fig:flow} shows the protocol lifecycle and the audit check.
 
@@ -176,7 +173,7 @@ Liquid Regulated Assets}
     \label{sec:statement-proof}
 
     Let $R$ denote the public recovery byte string defined below.
-    For each regulated output, collect its public context in
+    For each regulated output, we collect its public context in
     \begin{equation}
         \Gamma=(d,g,e,P,h,i,A,C,S,\sha(R)).
         \label{eq:statement}
@@ -244,7 +241,7 @@ Liquid Regulated Assets}
                                   \mathbin\Vert\operatorname{SEC1}(T_C)\mathbin\Vert\operatorname{SEC1}(T_D)\bigr)
         \right)\bmod q.
     \]
-    The fixed domain-separation tag is \texttt{DAMP/audit/autonomous/v3}.
+    The fixed domain-separation tag is \texttt{DAMP/audit/v2}.
     The encoding uses the field order in Equation~\ref{eq:statement}, fixed-width integers, the native Elements encoding of $C$, and a fixed output-role byte \texttt{00} immediately before $\sha(R)$.
     Appendix~\ref{app:code-math} gives the exact byte order and corresponding source lines.
     The responses are
@@ -308,7 +305,7 @@ Liquid Regulated Assets}
     The covenant accepts the endpoint $2^{63}$ because the pinned native range-proof header and commitment binding establish that interval.
     The Sigma relation alone does not establish a range.
     If recovery yields $v=2^{63}$, it flags the amount as exceeding the application's maximum of $2^{63}-1$, even though the covenant accepts that endpoint.
-
+    That being said, we recommend issuance total supply up to $2^{56}$ sats.
 
     \section{Recovery and confidentiality}
     \label{sec:recovery}
@@ -328,7 +325,7 @@ Liquid Regulated Assets}
 
     If the fast path fails, the issuer can use Equation~\ref{eq:recovery-target} and search for $v$ in a bounded interval.
     Table~\ref{tab:dlog-64} reproduces Table~6 of \emph{Discrete Logarithm Solvers on secp256k1: Algorithms and Benchmark Results}, dated August~24, 2026 \cite{dlog-benchmark}.
-    The source benchmarks secrets in $[0,2^{64})$ against $G$, a range containing the native range-proof interval $[1,2^{63}]$ used here.
+    The source benchmarks secrets in $[0,2^{64})$ against $G$ with a range containing the native range-proof interval $[1,2^{63}]$.
     Recovery here uses $H_A$, so any precomputed table must use that asset generator.
     The reported timings are external benchmark results, not measurements of this audit construction.
 
@@ -367,7 +364,8 @@ Liquid Regulated Assets}
     The reported 243.071-second average therefore understates the mean cost of a solve attempt, and the worst successful solve, 593.449 seconds, nearly reaches the timeout.
     The source describes BL12 as a randomized Las Vegas algorithm with an unbounded runtime tail.
     Its testing-environment section is unfilled, so the hardware and toolchain are unspecified.
-    A timeout leaves the amount unknown. These results do not guarantee complete recovery.
+    A timeout leaves the amount unknown.
+    These results do not guarantee complete recovery, so a lesser bound of 56 bits is recommended.
 
     \subsection{What remains confidential}
 
@@ -384,43 +382,31 @@ Liquid Regulated Assets}
 
     \section{Audit key rotation}
 
-    TBD. Audit key rotation remains unresolved in this paper.
+    Audit key rotation remains unresolved in this paper.
 
     \section{Security considerations}
     \label{sec:security}
 
-    A successful holder spend under an enclosing covenant that enforces the stated coverage requirement has a native audit proof for each regulated output, tied to the transaction.
-    Given the audit secret, Equation~\ref{eq:recovery-target} removes the value blinder.
-    Efficient amount recovery still depends on valid auxiliary data or a tractable search interval.
-
-    The exact-output policy limits future spending of listed outputs.
-    It does not undo confirmed transactions, prove misconduct, identify a recipient, infer intent, or create an owner-wide freeze.
-    Invalid recovery bytes are evidence about submitted bytes only.
-
-    Report completeness depends on one configured provider and a bounded scan.
-    Block-link and outspend cross-checks against the same provider are useful consistency checks, not independent confirmation or an SPV proof.
-    Reorganizations after the reported snapshot can change ledger state.
+    A successful holder spend has a native audit proof for each regulated output, tied to the transaction.
+    Leaking the audit secret, Equation~\ref{eq:recovery-target} removes the value blinder, making the amount permanently visible to everyone.
 
     Production use needs a sharper key-custody design, independent review of the cryptography and Simplicity checks, side-channel analysis, longer-lived indexing, provider diversity, and operational recovery procedures.
-
-    The construction does not prove confidentiality for every environment, complete recovery against malicious senders, absence of inflation outside the scanned state, or freedom from protocol defects.
 
     \section{Conclusion}
 
     The construction connects selective audit to the native Liquid value commitment and enforces that relation in the Simplicity spending path.
     Holders authorize transfers without issuer participation, while the issuer can recover amounts through authenticated decryption or bounded discrete-log search.
-    Policy checks concern future spending of listed outputs, and audit conclusions apply only to the scanned state.
 
-    The appendix gives the Simplicity checks and their mathematical correspondence.
+    The appendix gives the SimplicityHL checks and their mathematical correspondence.
     The external 64-bit benchmark illustrates both the cost and the timeout risk of discrete-log recovery when authenticated recovery data is unavailable.
-    These results do not establish production security.
+    A 56-bit asset total supply bound is recommended.
 
 
     \section*{AI disclosure}
 
     Parts of this work were prepared with AI assistants.
-    The assistants helped analyze source material, draft the paper, and review the Simplicity checks under the authors' direction.
-    The authors reviewed the generated content and take responsibility for the final text.
+    The assistants helped analyze source material, draft the paper, and review the SimplicityHL code under the authors' direction.
+    The authors reviewed the generated content and take responsibility for the final result.
 
         {\small\sloppy
     \bibliographystyle{unsrt}

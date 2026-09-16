@@ -2,7 +2,7 @@
 \section{Simplicity-to-mathematics correspondence}
 \label{app:code-math}
 
-This appendix gives a Simplicity implementation of the checks discussed in this paper and maps the native audit verifier to Section~\ref{sec:construction}.
+This appendix gives a SimplicityHL implementation of the checks discussed in this paper and maps the native audit verifier to Section~\ref{sec:construction}.
 The audit module is \texttt{audit.simf}.
 The numbered listings include that module directly.
 The tables explain each source statement and group multiline statements together.
@@ -43,7 +43,7 @@ The local \texttt{h} is $H_A$, not the transaction digest $h$.
 The argument \texttt{d} is $D$, not the deployment salt $d$. The salt and audit epoch come from \texttt{AUDIT\_DEPLOYMENT} and \texttt{AUDIT\_EPOCH}.
 The variable \texttt{aux} holds $R$, and \texttt{root} is a field element $\rho$ used only to authenticate the native commitment's sign.
 
-Write a compressed curve point as $(\eta,x_C)$, where $\eta$ is the SEC~1 parity bit defined in Section~\ref{sec:recovery-record}.
+We write a compressed curve point as $(\eta,x_C)$, where $\eta$ is the SEC~1 parity bit defined in Section~\ref{sec:recovery-record}.
 \texttt{Ge} denotes an affine point and \texttt{Gej} a Jacobian point.
 The pair \texttt{(point, 1)} embeds an affine point with Jacobian coordinate $Z=1$.
 \texttt{gej\_equiv} compares represented group elements, not their raw Jacobian coordinates.
@@ -106,15 +106,15 @@ The prover derives the witness $\rho$ from public curve coordinates. It does not
 
 \subsection{Construct the Fiat--Shamir challenge}
 
-Let $t=\sha(\mathtt{DAMP/audit/autonomous/v3})$.
+Let $t=\sha(\mathtt{DAMP/audit/v2})$.
 The challenge uses $\sha(t\mathbin\Vert t\mathbin\Vert m)$ with
 \begin{align*}
- m={}&d\mathbin\Vert\operatorname{BE}_4(2)\mathbin\Vert\operatorname{BE}_8(e)
-       \mathbin\Vert\operatorname{SEC1}(P)\mathbin\Vert h\mathbin\Vert\operatorname{BE}_4(i)\\
-    &\mathbin\Vert\operatorname{asset}(A)\mathbin\Vert\operatorname{native}(C)
-       \mathbin\Vert S\mathbin\Vert\mathtt{00}\mathbin\Vert\sha(R)\\
-    &\mathbin\Vert\operatorname{SEC1}(D)\mathbin\Vert\operatorname{SEC1}(T_C)
-       \mathbin\Vert\operatorname{SEC1}(T_D).
+  m={}&d\mathbin\Vert\operatorname{BE}_4(2)\mathbin\Vert\operatorname{BE}_8(e)
+  \mathbin\Vert\operatorname{SEC1}(P)\mathbin\Vert h\mathbin\Vert\operatorname{BE}_4(i)\\
+  &\mathbin\Vert\operatorname{asset}(A)\mathbin\Vert\operatorname{native}(C)
+  \mathbin\Vert S\mathbin\Vert\mathtt{00}\mathbin\Vert\sha(R)\\
+  &\mathbin\Vert\operatorname{SEC1}(D)\mathbin\Vert\operatorname{SEC1}(T_C)
+  \mathbin\Vert\operatorname{SEC1}(T_D).
 \end{align*}
 Here $\operatorname{asset}(A)$ is the 32-byte consensus-order asset identifier, not its display-order hexadecimal text.
 The encoding $\operatorname{native}(C)$ consists of the native prefix \texttt{08} or \texttt{09} and $x_C$, for 33 bytes in total.
@@ -152,7 +152,7 @@ The \texttt{v3} tag names the challenge format. It does not change the domain wo
 \subsection{Check the two group equations}
 
 \noindent\begin{minipage}{\linewidth}
-\auditlisting{86}{96}
+           \auditlisting{86}{96}
 \end{minipage}
 \begin{auditmapping}
   \auditmap{86-87}{State the common-blinder relation and its two verification equations in source notation.}
@@ -208,10 +208,10 @@ It commits even unsupported or invalid recovery envelopes without checking wheth
 
 For the accepted ordered records $(i_1,R_1),\ldots,(i_n,R_n)$, define
 \[
- M=\sha\!\left(
-   \operatorname{BE}_4(i_1)\mathbin\Vert R_1\mathbin\Vert\cdots
-   \mathbin\Vert\operatorname{BE}_4(i_n)\mathbin\Vert R_n
-   \mathbin\Vert\operatorname{BE}_4(n)\right).
+  M=\sha\!\left(
+            \operatorname{BE}_4(i_1)\mathbin\Vert R_1\mathbin\Vert\cdots
+            \mathbin\Vert\operatorname{BE}_4(i_n)\mathbin\Vert R_n
+            \mathbin\Vert\operatorname{BE}_4(n)\right).
 \]
 The final transaction output must have script bytes $\mathtt{6a20}\mathbin\Vert M$.
 These are \texttt{OP\_RETURN}, a 32-byte push, and $M$.
@@ -295,12 +295,12 @@ The covenant checks their equations onchain at the lines identified above. The p
 
 The sender constructs $R$ using ephemeral ECDH and authenticated encryption.
 The issuer decrypts it with the audit key, then checks the recovered opening against both $C$ and $D$.
-Neither operation appears in the Simplicity listing.
+Neither operation appears in the SimplicityHL listing.
 Likewise, bounded recovery computes Equation~\ref{eq:recovery-target} and searches offchain:
 \[
- C-s^{-1}D
- =vH_A+bG-s^{-1}(bsG)
- =vH_A.
+  C-s^{-1}D
+  =vH_A+bG-s^{-1}(bsG)
+  =vH_A.
 \]
 The inverse $s^{-1}$ is a scalar inverse modulo $q$ and exists for a nonzero audit secret.
 The equation removes the blinder but does not solve the discrete logarithm for $v$.
