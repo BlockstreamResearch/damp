@@ -11,12 +11,15 @@ impl Cancellation {
     pub fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
-    pub(crate) fn check(&self) -> Result<()> {
+    pub fn check(&self) -> Result<()> {
         if self.0.load(Ordering::Acquire) {
             Err(Error::Cancelled)
         } else {
             Ok(())
         }
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
     }
 }
 

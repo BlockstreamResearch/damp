@@ -60,6 +60,7 @@ button { color: inherit; }
 .network-status { min-width: 0; display: flex; align-items: center; }
 .network-label { white-space: nowrap; }
 .network-dot, .status-light { width: 8px; height: 8px; margin-right: 5px; border-radius: 50%; display: inline-block; background: #2aa964; box-shadow: 0 0 0 3px rgba(42,169,100,.12); }
+.network-dot { background: #a6a9a5; box-shadow: none; }
 .status-light.muted { background: #9ca29e; box-shadow: none; }
 .rail-bottom a { padding-left: 0; font-size: 11px; }
 .rail-bottom .switch-role { margin-top: 8px; padding: 9px 10px; border: 1px solid rgba(255,255,255,.14); color: #e2e9ef; }

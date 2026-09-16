@@ -1,3 +1,4 @@
+import { AuditCredentialExport } from "../components/audit-credential-export";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { z } from "zod";
@@ -18,6 +19,7 @@ import { downloadJson } from "../lib/download-json";
 import {
   auditProgressMessage,
   buildAuditReport,
+  reportEndpoint,
 } from "../lib/audit-report-job";
 import type { BlacklistEntry, PolicySnapshot } from "../lib/domain";
 
@@ -71,7 +73,7 @@ type SignedReport = {
 export function AuditReport() {
   const active = useActiveDeployment();
   const deployment = active.data;
-  const [endpoint, setEndpoint] = useState("");
+  const [endpoint, setEndpoint] = useState("http://127.0.0.1:8778/report");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<Report>();
@@ -103,19 +105,8 @@ export function AuditReport() {
     setSigned(undefined);
     try {
       if (!endpoint.trim()) throw new Error("Enter a report endpoint.");
-      const url = new URL(endpoint.trim());
-      if (
-        url.protocol !== "http:" ||
-        url.hostname !== "127.0.0.1" ||
-        url.pathname !== "/report" ||
-        url.username ||
-        url.password ||
-        url.search ||
-        url.hash
-      )
-        throw new Error(
-          "Use a report endpoint at http://127.0.0.1:PORT/report.",
-        );
+      const url = reportEndpoint(endpoint);
+      setMessage("Checking deployment policy, then connecting to the local service…");
       const storedPolicies = await listDeploymentPolicies(
         deployment.deploymentId,
       );
@@ -185,7 +176,9 @@ export function AuditReport() {
       if (current !== generation.current) return;
       setReport(parsed);
       setSigned(result);
-      setMessage("Report ready. Certificate and report signatures verified.");
+      setMessage(parsed.complete
+        ? "Report ready for this snapshot. Certificate and report signatures verified. This is not a continuous service health check."
+        : "Report needs attention. Signatures verified, but coverage or recovery is incomplete. Review the gaps below before relying on its totals.");
     } catch (error) {
       if (current === generation.current)
         setMessage(
@@ -250,6 +243,10 @@ export function AuditReport() {
           label="Native confidential audit"
           title="Recover and reconcile"
         />
+        <section aria-label="Report setup">
+          <p>Start the local Rust service with <code>damp-report serve CONFIG_FILE</code>, then enter its URL and access token. <a href="https://github.com/BlockstreamResearch/damp/blob/dev/README.md#signed-reports">Setup and credential commands</a></p>
+          <p>Pages cannot start local processes. Testnet can use public Esplora; regtest needs a local archival Elements node. A browser signer is needed only to export issuer credentials.</p>
+        </section>
         {active.error ? (
           <p role="alert">{userFacingError(active.error)}</p>
         ) : active.isPending ? (
@@ -258,14 +255,8 @@ export function AuditReport() {
           <p>Select a deployment to build a report.</p>
         ) : (
           <>
-            <p>
-              Enter an issuer-operated report endpoint to scan confirmed
-              transactions, recover amounts, and check supply. This application
-              verifies signed reports but does not include a report server.
-              Only loopback HTTP endpoints are accepted. The endpoint needs
-              scoped audit and report keys, never spending keys. Transfers
-              proceed independently of reporting.
-            </p>
+            <AuditCredentialExport key={deployment.deploymentId} deployment={publicManifest(deployment)} />
+            <p>The service recovers amounts and signs a confirmed snapshot. This page verifies the issuer certificate and report signature. No transaction is broadcast.</p>
             <form
               className="form-stack"
               onSubmit={(e) => {
@@ -277,8 +268,9 @@ export function AuditReport() {
                 Report endpoint
                 <input
                   type="url"
+                  disabled={busy}
                   value={endpoint}
-                  onChange={(e) => setEndpoint(e.target.value)}
+                  onChange={(e) => { setEndpoint(e.target.value); setMessage(""); setReport(undefined); setSigned(undefined); }}
                   autoComplete="off"
                   placeholder="http://127.0.0.1:PORT/report"
                   required
@@ -288,8 +280,9 @@ export function AuditReport() {
                 Access token
                 <input
                   type="password"
+                  disabled={busy}
                   value={token}
-                  onChange={(e) => setToken(e.target.value)}
+                  onChange={(e) => { setToken(e.target.value); setMessage(""); setReport(undefined); setSigned(undefined); }}
                   autoComplete="off"
                 />
               </label>
@@ -321,6 +314,7 @@ export function AuditReport() {
                 </button>
               ) : null}
             </form>
+            {!message && <p role="status" className="inline-message">{!endpoint.trim() || !token ? "Setup incomplete. Supply a local report service URL and its access token. No connection has been checked." : "Connection not checked. Generate a report to check authentication, provider readiness and history coverage."}</p>}
             <p>
               The service indexes all retained blocks from bootstrap through a
               fixed confirmed snapshot in resumable batches. Node sync, index

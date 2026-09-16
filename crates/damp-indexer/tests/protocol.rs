@@ -7,6 +7,24 @@ use std::{
 };
 use support::{Chain, scope};
 
+#[test]
+fn help_explains_setup_and_pipe_eof_keeps_stdout_clean() {
+    let binary = env!("CARGO_BIN_EXE_damp-indexer");
+    let help = Command::new(binary).arg("--help").output().unwrap();
+    assert!(help.status.success());
+    let text = String::from_utf8(help.stdout).unwrap();
+    assert!(text.contains("not an HTTP server"));
+    assert!(text.contains("No mnemonic"));
+    let session = Command::new(binary)
+        .arg("session")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(session.status.success());
+    assert!(session.stdout.is_empty());
+    assert!(session.stderr.is_empty());
+}
+
 struct Session {
     child: Child,
     input: ChildStdin,

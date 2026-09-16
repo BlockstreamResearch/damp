@@ -115,6 +115,15 @@ impl DampSigner {
     pub fn reissue(&self, value: JsValue) -> Result<JsValue, JsError> {
         to_js(&self.inner.reissue(from_js(value)?).map_err(js_error)?)
     }
+
+    /// Only deployment-scoped recovery/report keys and selected issuer openings leave WASM.
+    #[wasm_bindgen(js_name=exportAuditCredentials)]
+    pub fn export_audit_credentials(&self, value: JsValue) -> Result<String, JsError> {
+        let serialized = crate::audit::credentials::export_json(
+            &self.inner.inner, self.inner.network, from_js(value)?,
+        ).map_err(|_| JsError::new("Credential export failed. Connect this deployment's issuer and supply valid issuer transaction files."))?;
+        Ok(serialized.to_string())
+    }
 }
 
 #[wasm_bindgen(js_name=preparePolicy)]

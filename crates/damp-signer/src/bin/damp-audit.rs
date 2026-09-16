@@ -32,7 +32,10 @@ fn main() -> anyhow::Result<()> {
         println!("{{\"created\":true}}");
         return Ok(());
     }
-    anyhow::ensure!(args.len() == 3, "network is required");
+    anyhow::ensure!(
+        args.len() == 3 || (args[0] == "export-audit-credentials" && args.len() == 5),
+        "network is required; export optionally takes REQUEST_JSON and NEW_OUTPUT_FILE"
+    );
     let network = match args[2].as_str() {
         "elements-regtest" => DeploymentNetwork::ElementsRegtest,
         "liquid-testnet" => DeploymentNetwork::LiquidTestnet,
@@ -49,16 +52,36 @@ fn main() -> anyhow::Result<()> {
     let mnemonic =
         zeroize::Zeroizing::new(fs::read_to_string(&path).context("read private wallet file")?);
     let mut input = String::new();
-    std::io::stdin()
-        .take(32 * 1024 * 1024)
-        .read_to_string(&mut input)?;
+    if args.len() == 5 {
+        fs::File::open(&args[3])?
+            .take(32 * 1024 * 1024 + 1)
+            .read_to_string(&mut input)?;
+    } else {
+        std::io::stdin()
+            .take(32 * 1024 * 1024 + 1)
+            .read_to_string(&mut input)?;
+    }
+    anyhow::ensure!(input.len() <= 32 * 1024 * 1024, "request exceeds 32 MiB");
     let request = serde_json::from_str(&input)?;
     if args[0] == "export-audit-credentials" {
         anyhow::ensure!(
             !mnemonic.trim_start().starts_with('{'),
             "export requires the offline issuer mnemonic"
         );
-        let serialized = export_audit_credentials_json(mnemonic.trim(), network, request)?;
+        let serialized = export_audit_credentials_json(mnemonic.trim(), network, request)
+            .map_err(|_| anyhow::anyhow!("credential export failed; check issuer wallet, deployment and transaction inputs"))?;
+        if args.len() == 5 {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            options.open(&args[4])?.write_all(serialized.as_bytes())?;
+            println!("{{\"exported\":true}}");
+            return Ok(());
+        }
         std::io::stdout().write_all(serialized.as_bytes())?;
         println!();
         return Ok(());

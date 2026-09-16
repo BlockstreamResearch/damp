@@ -346,6 +346,10 @@ export function requireSigner(network?: SignerNetwork) {
   return signer;
 }
 
+export function exportAuditCredentials(deployment: DeploymentManifest, issuerTransactions: string[]): string {
+  return requireSigner(deployment.network).exportAuditCredentials({ deployment, issuerTransactions });
+}
+
 function requireReadySigner(network?: SignerNetwork) {
   const active = requireSigner(network);
   if (!state.walletReady) {

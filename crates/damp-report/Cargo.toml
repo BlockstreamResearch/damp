@@ -1,0 +1,30 @@
+[package]
+name = "damp-report"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91.0"
+license = "MIT OR Apache-2.0"
+description = "Local authenticated DAMP audit reporting service"
+
+[dependencies]
+damp-core = { package = "simplicity-damp-core", path = "../damp-core" }
+damp-signer = { package = "simplicity-damp-signer", path = "../damp-signer" }
+damp-indexer = { path = "../damp-indexer" }
+anyhow = "1.0.101"
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+hex = "0.4.3"
+rand = "0.8.5"
+zeroize = "1.9.0"
+libc = "0.2"
+rustix = { version = "1.1", features = ["process"] }
+num-bigint = "0.4"
+
+[dev-dependencies]
+tempfile = "=3.25.0"
+elements = { version = "0.25.3", features = ["serde"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }

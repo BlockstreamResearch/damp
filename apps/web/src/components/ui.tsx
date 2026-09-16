@@ -124,7 +124,7 @@ export function AppShell({
           })}
         </nav>
         <div className="rail-bottom">
-          <span className="network-status" aria-label={`${currentNetworkLabel} network`}>
+          <span className="network-status" aria-label={`${currentNetworkLabel} network`} title="Selected network only. Connection and synchronization are checked by each operation.">
             <span className="network-dot" aria-hidden="true" />
             <span className="network-label">{currentNetworkLabel}</span>
           </span>
@@ -660,6 +660,12 @@ export function WalletPopoverContent({
         <span className="overline">DAMP Signer SDK</span>
         <h2>No signer connected</h2>
         <p>Choose a saved disposable debug profile, or add another test-only recovery phrase.</p>
+        <ol>
+          <li>{connectionNetwork === "liquid-testnet" ? "Liquid testnet uses public wallet services; no local Elements node or indexer is needed." : "Use the same Elements regtest chain as the selected deployment and your configured Esplora service."}</li>
+          <li>Type <code>NEW</code> below to create a disposable wallet, or enter its test-only recovery phrase here. Signing happens in this browser.</li>
+          <li>Wait for wallet synchronization, then use the wallet funding controls{connectionNetwork === "liquid-testnet" ? " and testnet faucet" : " for your local chain"}. Import a deployment and use Receive for its regulated-asset address.</li>
+        </ol>
+        {connectionNetwork === "elements-regtest" && <p>Regtest needs your own Elements chain and a browser-accessible Esplora service configured for this browser origin. Follow the <a href="https://github.com/BlockstreamResearch/damp/blob/dev/README.md#run-the-browser">regtest setup guide</a>. The hosted app cannot start these services.</p>}
         <div className="wallet-connect-form">
           {profiles.length > 0 && <div className="wallet-profile-remembered"><SignerProfilePicker label="Saved debug profile" profiles={profiles} selectedId={selectedProfileId} onSelect={onProfileSelect} onUseDifferentProfile={onUseDifferentProfile} /><small>Choosing a saved profile connects it directly using its browser-stored test phrase; no phrase re-entry is required.</small></div>}
           {selectedSavedProfile ? <p className="saved-profile-connecting" role="status">{connecting ? `Connecting ${selectedSavedProfile.label}…` : `${selectedSavedProfile.label} selected. Wallet synchronization is starting.`}</p> : <form className="wallet-fresh-connect-form" onSubmit={(event) => { event.preventDefault(); onConnect(mnemonicInput); }}>

@@ -45,11 +45,14 @@ describe("audit report interaction", () => {
   });
   afterEach(cleanup);
 
-  it("requires an explicit endpoint and token without contacting a default server", () => {
+  it("requires an explicit action and token before contacting the local service", () => {
     render(<AuditReport />);
-    expect(screen.getByLabelText("Report endpoint")).toHaveValue("");
+    expect(screen.getByLabelText("Report endpoint")).toHaveValue("http://127.0.0.1:8778/report");
+    expect(screen.getByRole("status")).toHaveTextContent("Setup incomplete");
+    expect(screen.getByRole("region", { name: "Report setup" })).toHaveTextContent("damp-report serve");
     const generate = screen.getByRole("button", { name: "Generate signed report" });
     expect(generate).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Report endpoint"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("Access token"), { target: { value: "test-token" } });
     expect(generate).toBeDisabled();
     fireEvent.click(generate);
@@ -57,6 +60,7 @@ describe("audit report interaction", () => {
     expect(mocks.policies).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Report endpoint"), { target: { value: "http://127.0.0.1:43210/report" } });
     expect(generate).toBeEnabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Connection not checked");
   });
 
   it("rejects non-loopback endpoints before sending credentials or requesting policies", async () => {
@@ -90,7 +94,7 @@ describe("audit report interaction", () => {
     expect(screen.getByRole("button", { name: "Generate signed report" })).toBeEnabled();
   });
 
-  it("verifies both signatures before enabling the signed download", async () => {
+  it.each([true, false])("verifies both signatures and distinguishes report completeness: %s", async (complete) => {
     const certificateJson = JSON.stringify({
       schema: "damp-audit-report-authorization/v1", deploymentId: deployment.deploymentId,
       network: deployment.network, reportPublicKey: "report-key",
@@ -98,7 +102,7 @@ describe("audit report interaction", () => {
     });
     const reportJson = JSON.stringify({
       schema: "damp-audit-report/v2", deploymentId: deployment.deploymentId,
-      network: deployment.network, complete: true, throughHeight: 100, minimumConfirmations: 2,
+      network: deployment.network, complete, throughHeight: 100, minimumConfirmations: 2,
       anchor: "anchor", policyRoot: null, tip: { height: 101, hash: "tip" },
       supply: { issued: "1100", knownUnspent: "1100", burned: "0", unresolvedOutputs: 0, conservation: "1100 = 1100" },
       outputs: [], gaps: [], limits: [],
@@ -113,5 +117,9 @@ describe("audit report interaction", () => {
       [reportJson, "report-signature", "report-key"],
     ]);
     expect(screen.getByText("1100 = 1100")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(complete ? "Report ready for this snapshot" : "Report needs attention");
+    fireEvent.change(screen.getByLabelText("Access token"), { target: { value: "replacement-token" } });
+    expect(screen.getByRole("status")).toHaveTextContent("Connection not checked");
+    expect(screen.queryByRole("button", { name: "Download signed JSON" })).not.toBeInTheDocument();
   });
 });

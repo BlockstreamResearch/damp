@@ -163,6 +163,12 @@ pub fn execute(
     );
     let id = credentials.deployment.deployment_id();
     crate::network::require_network(network, credentials.deployment.network())?;
+    let audit_secret = Secret(SecretKey::from_str(&credentials.audit_secret)?);
+    anyhow::ensure!(
+        audit_secret.0.public_key(&Secp256k1::new())
+            == credentials.deployment.audit().public_key.public_key(),
+        "credential audit key does not match deployment"
+    );
     let certificate: Value = serde_json::from_str(&credentials.certificate_json)?;
     verify(
         &credentials.certificate_json,

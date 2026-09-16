@@ -14,6 +14,34 @@ pub struct HistoryIndex {
 }
 
 impl HistoryIndex {
+    /// Explicit cancellation releases the old snapshot without deleting public history.
+    /// This also works before a new job has contacted its provider or loaded its scope.
+    pub fn discard_pending(directory: &Path) -> Result<()> {
+        if !directory.try_exists()? {
+            return Ok(());
+        }
+        private::check(directory, true)?;
+        let lock = private::file(&directory.join("history.lock"))?;
+        fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| Error::Locked)?;
+        let path = directory.join("history.sqlite3");
+        if !path.try_exists()? {
+            return Ok(());
+        }
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            let p = directory.join(format!("history.sqlite3{suffix}"));
+            if p.try_exists()? || p.is_symlink() {
+                private::check(&p, false)?;
+            }
+        }
+        let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let version: u32 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version != 2 {
+            return Err(Error::Schema);
+        }
+        db.execute("DELETE FROM metadata WHERE key='pending'", [])?;
+        Ok(())
+    }
+
     pub fn open(directory: &Path, scope: &Scope, max_bytes: u64) -> Result<Self> {
         private::directory(directory)?;
         let lock = private::file(&directory.join("history.lock"))?;

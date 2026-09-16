@@ -32,6 +32,7 @@
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
     "jsdom": "latest",
+    "playwright": "1.62.1",
     "typescript": "latest",
     "vite": "latest",
     "vite-plugin-node-polyfills": "0.28.0",
