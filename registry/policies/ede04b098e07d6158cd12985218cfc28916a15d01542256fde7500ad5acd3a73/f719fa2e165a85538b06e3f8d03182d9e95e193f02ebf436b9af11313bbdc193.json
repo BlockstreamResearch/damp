@@ -1,0 +1,21 @@
+{
+  "schema": "simplicity-damp-registry-v1",
+  "protocol": "simplicity-damp/v0.2",
+  "deploymentId": "ede04b098e07d6158cd12985218cfc28916a15d01542256fde7500ad5acd3a73",
+  "sequence": 1,
+  "parentPolicyRoot": "57c67efc5b0b29e0a19c6129e472b269952b9bfa9390d709f0c4ab3989991fa1",
+  "parentVerifierScriptHash": "b881379e2608bdb6a85f090431cf96a7e414c8c46b4aec7d8f055a929dece9a3",
+  "treeDepth": 4,
+  "setRoot": "c366b367c52dc21dee0f4fc2ead3ea3484b9a15fc4a2866e9d8fc072cfb32ba5",
+  "entryCount": 1,
+  "policyRoot": "62aa1ec1208910ca2758d77f800ba3e47dff4a8cea1303a8761dd066638573ab",
+  "verifierProgramHash": "33ed71462c02ac1db5edcb9ef101468c3b47b54229c361eae17e7ddf30d4eb25",
+  "verifierScriptPubkey": "51209f24ccbe6fa2045498648ee9f96cd2de0b0617689a4a3cb15a70c51ff5479270",
+  "entries": [
+    {
+      "txid": "60aa53689b5973df58b364166a7cb8c3463f7e82aa1d7764039203051500de2c",
+      "vout": 1,
+      "note": "Added from Report"
+    }
+  ]
+}
