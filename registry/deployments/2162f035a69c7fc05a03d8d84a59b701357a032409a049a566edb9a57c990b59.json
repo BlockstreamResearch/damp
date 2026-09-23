@@ -1,0 +1,28 @@
+{
+  "schema": "simplicity-damp-registry-v1",
+  "protocol": "simplicity-damp/v0.2",
+  "network": "liquid-testnet",
+  "policyAsset": "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49",
+  "regulatedAsset": "0129701343d8bea90b64d1931a3f2c966cf7cebf03530e108124f7c8b97b0402",
+  "verifierAsset": "78ab94e461e814c56f66560e48e6a6846488a0091f0a82f4a03df1685a5c42e0",
+  "verifierAssetAmount": 1,
+  "issuerPublicKey": "d0306af72b5dd209329d7dd337735ad99f9f837ea3e84d7da402d983eefe6ea5",
+  "deploymentSalt": "65b467072581b430cd5f0cc30fa1736a8e5d0ea005f2b7dbf0e6ecd45c8696fa",
+  "genesisAnchor": "a374c3979e646a60b117f5530e6669050f8a47ac0bd6b10b9cdacbf8c8d55ca9:0",
+  "asset": {
+    "name": "RWT-4",
+    "ticker": "RWT-4",
+    "precision": 2
+  },
+  "issuedSupply": "400000",
+  "supplyMode": "issuer-managed",
+  "reissuanceToken": "6a2d9b7248a1466fedd5872b68a6121aa5cc01f7e2d264979a009d955a0748e2",
+  "reissuanceEntropy": "89cefb58bedef8fd6f9b7fe6d25deed0cb232de0bfdab7b7983369e8162c45e2",
+  "userProgramHash": "b57fa9692e4e1193379bfb8a3ca9d65f6ee44a47e55e46a4b4c15d5ffc54e7b9",
+  "governanceProgramHash": "056579f7bf4ed4d71aa49c5af79a5647d0d3848cc2f0ebd51cdc2cc1b3ed4985",
+  "contractBundleHash": "4b7d3fc7dccb189896b1cafbe1978165acc102d6892b5eb8b4e8a1f60872d596",
+  "audit": {
+    "publicKey": "0218391fc52a19f1ff5463ef39aef3f94dcc9125e28f37ed09ffb36677fb5d8306",
+    "epoch": 1
+  }
+}
